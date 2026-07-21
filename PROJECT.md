@@ -1,8 +1,8 @@
 # ROS 2 Bag Analyser — Project Definition
 
-**Status:** Building block 1 completed and user-accepted
+**Status:** Building blocks 1 and 2 complete and user-accepted
 
-**Repository baseline:** Completed archive catalog vertical slice
+**Repository baseline:** Front-preview and initial-timeline vertical slice
 
 **Initial environment:** Ubuntu 22.04 under WSL2, ROS 2 Humble
 
@@ -138,6 +138,14 @@ Front-camera data dominates the database size. Preview generation is expensive,
 must not block ordinary web requests, and must produce reusable derived media.
 The preferred V0 topic is configurable even though the current archive uses one
 known topic name.
+
+The accepted figure-eight check showed regular camera header cadence but
+irregular ROS database record cadence. At user-reported stutters, consecutive
+record timestamps were separated by approximately 0.245–0.422 seconds while
+the corresponding header stamps were generally separated by approximately
+0.05 seconds. All 3,051 source messages became 3,051 preview frames with the
+same interval sequence. The visible holds therefore describe source record-time
+jitter, not frames discarded by preview generation.
 
 ### 3.5 External top-down camera
 

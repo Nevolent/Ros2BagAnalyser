@@ -189,6 +189,42 @@ def safe_filesystem_text(value: str) -> str:
     return "".join(escaped)
 
 
+def filesystem_text_from_safe(value: str) -> str:
+    """Reverse ``safe_filesystem_text`` without treating encoded text as a path."""
+    decoded: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] != "%":
+            decoded.append(value[index])
+            index += 1
+            continue
+        if value.startswith("%25", index):
+            decoded.append("%")
+            index += 3
+            continue
+        if value.startswith("%u", index) and index + 6 <= len(value):
+            raw_codepoint = value[index + 2 : index + 6]
+            if all(character in "0123456789abcdefABCDEF" for character in raw_codepoint):
+                codepoint = int(raw_codepoint, 16)
+                if 0xD800 <= codepoint <= 0xDFFF:
+                    decoded.append(chr(codepoint))
+                    index += 6
+                    continue
+        if index + 3 <= len(value):
+            raw_byte = value[index + 1 : index + 3]
+            if all(character in "0123456789abcdefABCDEF" for character in raw_byte):
+                byte = int(raw_byte, 16)
+                if 0x80 <= byte <= 0xFF:
+                    decoded.append(chr(0xDC00 + byte))
+                    index += 3
+                    continue
+        raise UnsafeSourcePath(
+            "stored_source_path_invalid",
+            "A stored source path has invalid filesystem escaping.",
+        )
+    return "".join(decoded)
+
+
 def source_file_identity(details: os.stat_result) -> SourceFileIdentity:
     return SourceFileIdentity(
         device_id=details.st_dev,

@@ -6,11 +6,11 @@ and present two cameras and one telemetry signal on a shared timeline.
 
 ## Current status
 
-Building block 1 is complete and was accepted by the user on 2026-07-21. It
-provides the read-only scanner, two-table PostgreSQL catalog,
-rescan/list/detail API, archive table, recording detail view, and synthetic test
-suite. Building blocks 2–5 have not started. The discarded local prototype is
-not a dependency or compatibility target.
+Building blocks 1 and 2 are complete and user-accepted. The current vertical
+slice includes the front-camera preview processor, four-table PostgreSQL model,
+serial worker, validated derived artifact store, request/poll/range API, front
+player, and initial global timeline. Building blocks 3–5 have not started. The
+discarded local prototype is not a dependency or compatibility target.
 
 ## V0 proof
 
@@ -69,8 +69,10 @@ and production deployment are outside V0.
 
 ## Development
 
-Building block 1 requires Python 3.10 and PostgreSQL. Create an isolated Python
-environment and install the locked dependencies and editable package:
+The current implementation requires Python 3.10, PostgreSQL, FFmpeg and
+ffprobe, plus a ROS 2 Humble Python environment for the worker. Create an
+isolated Python environment and install the locked dependencies and editable
+package:
 
 ```bash
 python3 -m venv .venv
@@ -86,27 +88,64 @@ development paths below as application constants.
 export ROS_BAG_ANALYSER_ARCHIVE_ROOT=/path/to/read-only/archive
 export ROS_BAG_ANALYSER_DERIVED_ROOT=/path/to/separate/derived-data
 export ROS_BAG_ANALYSER_DATABASE_URL=postgresql://user:password@localhost/database
+export ROS_BAG_ANALYSER_FRONT_TOPIC=/kuupkulgur_v1/sensors/front_camera/image_raw
+export ROS_BAG_ANALYSER_PREVIEW_PROFILE=h264-720p-v1
 ```
 
-Apply the two-table catalog migration and run the local application:
+The topic and profile shown are the defaults. `ROS_BAG_ANALYSER_FFMPEG` and
+`ROS_BAG_ANALYSER_FFPROBE` may identify explicit executables; otherwise both
+are resolved from `PATH` at startup.
+
+Apply both migrations, then run the API and serial worker in separate sourced
+shells:
 
 ```bash
 .venv/bin/rosbag-analyser-migrate
 .venv/bin/rosbag-analyser
+
+# In a second shell with the same settings:
+source /opt/ros/humble/setup.bash
+.venv/bin/rosbag-analyser-worker
 ```
 
 Open `http://127.0.0.1:8000`. The application does not scan automatically;
 existing catalog rows load from PostgreSQL and the browser's **Rescan archive**
-button starts a bounded read-only scan.
+button starts a bounded read-only scan. Open a readable recording and select
+**Generate preview**. The request returns immediately; only the separate worker
+reads image messages and creates media. Ready files are stored below the
+configured derived root, never in the archive.
 
-Run routine tests without PostgreSQL or the real archive:
+The supported Building block 2 input is one configured
+`sensor_msgs/msg/Image` topic using `bgr8`. The fixed `h264-720p-v1` profile is
+an MP4/H.264/yuv420p preview, bounded to 1280 × 720. ROS record timestamps drive
+frame timing and measured coverage; equal record timestamps collapse to the
+last frame at that time. Failed and interrupted attempts require an explicit
+retry.
+
+Irregular ROS record timestamps remain visible in the preview. A gap makes the
+player hold the preceding image until the next recorded frame, so source
+record-time jitter can look like a brief freeze even when camera header stamps
+are regular. This preserves the accepted synchronization clock; smoothing the
+preview with header timestamps or an assumed constant frame rate would change
+that contract.
+
+Run routine tests without PostgreSQL, ROS, or the real archive:
 
 ```bash
-.venv/bin/python -m pytest -m "not postgres and not real_archive"
+.venv/bin/python -m pytest -m "not postgres and not real_archive and not ros"
 ```
 
-PostgreSQL tests reset both catalog tables. Use only a dedicated disposable
-database named `rosbag_analyser_test` or beginning with
+The generated ROS-message test requires the sourced Humble environment. Plugin
+autoload is disabled here because the system ROS pytest bundle may include
+unrelated optional launch-test plugins:
+
+```bash
+source /opt/ros/humble/setup.bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest tests/ros
+```
+
+PostgreSQL tests reset all four application tables. Use only a dedicated
+disposable database named `rosbag_analyser_test` or beginning with
 `rosbag_analyser_test_`, and opt in to that reset explicitly:
 
 ```bash
@@ -117,7 +156,7 @@ export ROS_BAG_ANALYSER_ALLOW_TEST_DATABASE_RESET=1
 
 The required-suite flag makes missing PostgreSQL configuration fail rather than
 silently skip. The fixture verifies the configured name against PostgreSQL's
-`current_database()` before applying the migration or truncating tables.
+`current_database()` before applying migrations or truncating tables.
 
 ## Building block 1 acceptance
 
@@ -158,3 +197,43 @@ implementation and synthetic test suite. The opt-in real-archive run and manual
 browser checklist were not executed during this review; they remain available
 as additional environment-specific evidence. Generic tests never access
 `/mnt/d/Rosbags`.
+
+## Building block 2 acceptance
+
+The safe synthetic suite covers source selection, malformed and oversized
+images, bounded frame streaming, variable record-time mapping, keyframes, cache
+invalidation, invalid-artifact recovery, confined atomic publication, worker
+success/failure/interruption, consistent API states, and conditional byte
+ranges. The generated ROS test covers real Humble serialization without using a
+recording archive.
+
+The environment-specific review remains opt-in. It was explicitly approved and
+completed for Building block 2 on 2026-07-21. For any future revalidation,
+capture a before-and-after inventory of names, sizes, and modification times and
+compare it exactly as source-immutability evidence.
+
+1. On one short readable recording, request the preview and observe
+   `not requested` → `queued`/`processing` → `ready`.
+2. Play, pause, and seek near the beginning, middle, and end; confirm the global
+   elapsed time and explicit outside-coverage state remain honest. Let playback
+   reach the global end and confirm both the clock and video stop.
+3. Reload, rescan, and restart the API and worker; confirm the same ready output
+   is reused and repeated requests create no duplicate active job or artifact.
+4. Open the damaged recording; confirm it is unavailable and creates no job.
+5. For one approved longer recording, start the worker with
+   `/usr/bin/time -v .venv/bin/rosbag-analyser-worker`, request exactly one
+   preview, and stop after it reaches `ready`. Record the worker's logged
+   processing duration and output size plus `Maximum resident set size` from
+   `time`; then repeat the play/seek/reload/reuse checks above.
+6. Compare the after-inventory with the before-inventory for both recordings.
+
+The accepted run covered a short playable and seekable preview, restart and
+request reuse, one longer bounded-memory render, the damaged recording, a
+disposable PostgreSQL 14 database, and unchanged source metadata. It also
+confirmed that reported short-preview freezes reproduce gaps already present in
+ROS record timestamps rather than dropped preview frames. Exact evidence is
+recorded in [ROADMAP.md](ROADMAP.md).
+
+Future access to or processing of the real archive requires separate explicit
+approval. Building block 3 must not begin until its exact boundary is explicitly
+approved.

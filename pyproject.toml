@@ -5,11 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rosbag-analyser"
 version = "0.1.0"
-description = "Read-only ROS 2 recording archive catalog"
+description = "Read-only ROS 2 recording archive preview analyser"
 requires-python = ">=3.10"
 dependencies = [
     "anyio==3.7.1",
+    "av==16.1.0",
     "fastapi==0.116.1",
+    "numpy==2.2.6",
     "psycopg[binary]==3.3.4",
     "PyYAML==6.0.3",
     "uvicorn==0.51.0",
@@ -24,6 +26,7 @@ dev = [
 [project.scripts]
 rosbag-analyser = "rosbag_analyser.api.app:main"
 rosbag-analyser-migrate = "rosbag_analyser.persistence.migrate:main"
+rosbag-analyser-worker = "rosbag_analyser.worker:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -42,4 +45,5 @@ pythonpath = ["src"]
 markers = [
     "postgres: requires a disposable PostgreSQL database",
     "real_archive: requires explicit opt-in access to a real recording archive",
+    "ros: requires a sourced ROS 2 Humble environment",
 ]

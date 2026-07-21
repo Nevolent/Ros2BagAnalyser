@@ -5,6 +5,10 @@ const pageTitle = document.querySelector("#page-title");
 const rescanButton = document.querySelector("#rescan-button");
 const statusMessage = document.querySelector("#status-message");
 const recordingMatch = window.location.pathname.match(/^\/recordings\/(\d+)\/?$/);
+let previewPollTimer = null;
+let timelineAnimation = null;
+const PREVIEW_RETRY_DELAY_MS = 2000;
+const VIDEO_DRIFT_TOLERANCE_SECONDS = 0.1;
 
 rescanButton.hidden = Boolean(recordingMatch);
 
@@ -89,6 +93,17 @@ function formatBytes(value) {
   return `${amount.toFixed(unit === 0 ? 0 : 2)} ${units[unit]}`;
 }
 
+function formatElapsed(seconds) {
+  const bounded = Math.max(0, seconds);
+  const minutes = Math.floor(bounded / 60);
+  const remainder = bounded - minutes * 60;
+  return `${minutes}:${remainder.toFixed(3).padStart(6, "0")}`;
+}
+
+function formatSignedElapsed(seconds) {
+  return `${seconds < 0 ? "−" : ""}${formatElapsed(Math.abs(seconds))}`;
+}
+
 function renderArchive(items) {
   setPageTitle("Recording archive");
   rescanButton.hidden = false;
@@ -169,6 +184,12 @@ function renderRecording(recording) {
   overview.append(metadata);
   content.append(overview);
 
+  const preview = node("section", null, "panel preview-panel");
+  preview.id = "front-preview-panel";
+  preview.append(node("h2", "Front-camera preview"));
+  preview.append(node("p", "Loading preview state…", "preview-state"));
+  content.append(preview);
+
   const components = node("section", null, "panel");
   components.append(node("h2", "Source components"));
   const list = node("div", null, "component-list");
@@ -190,6 +211,240 @@ function renderRecording(recording) {
   });
   components.append(list);
   content.append(components);
+  loadFrontPreview(recording.id);
+}
+
+function stopPreviewActivity() {
+  if (previewPollTimer !== null) {
+    window.clearTimeout(previewPollTimer);
+    previewPollTimer = null;
+  }
+  if (timelineAnimation !== null) {
+    window.cancelAnimationFrame(timelineAnimation);
+    timelineAnimation = null;
+  }
+}
+
+async function loadFrontPreview(recordingId) {
+  stopPreviewActivity();
+  try {
+    const preview = await requestJson(`/api/recordings/${recordingId}/front-preview`);
+    renderFrontPreview(recordingId, preview);
+  } catch (error) {
+    const panel = document.querySelector("#front-preview-panel");
+    if (panel) {
+      const retry = node("button", "Retry preview status");
+      retry.type = "button";
+      retry.addEventListener("click", () => loadFrontPreview(recordingId));
+      panel.replaceChildren(
+        node("h2", "Front-camera preview"),
+        node("p", "status unavailable", "preview-state preview-state-failed"),
+        node("p", error.message, "diagnostic-block"),
+        retry,
+      );
+      previewPollTimer = window.setTimeout(
+        () => loadFrontPreview(recordingId),
+        PREVIEW_RETRY_DELAY_MS,
+      );
+    }
+  }
+}
+
+function renderFrontPreview(recordingId, preview) {
+  const panel = document.querySelector("#front-preview-panel");
+  if (!panel) return;
+  stopPreviewActivity();
+  panel.replaceChildren(node("h2", "Front-camera preview"));
+  const stateLabel = preview.state.replaceAll("_", " ");
+  panel.append(node("p", stateLabel, `preview-state preview-state-${preview.state}`));
+
+  if (preview.diagnostic) {
+    panel.append(node("p", preview.diagnostic.message, "diagnostic-block"));
+  }
+
+  if (preview.state === "not_requested" || preview.state === "failed") {
+    const action = node("button", preview.state === "failed" ? "Retry preview" : "Generate preview");
+    action.type = "button";
+    action.addEventListener("click", async () => {
+      action.disabled = true;
+      showStatus("Requesting front-camera preview…");
+      try {
+        const result = await requestJson(`/api/recordings/${recordingId}/front-preview`, { method: "POST" });
+        renderFrontPreview(recordingId, result);
+        showStatus(result.state === "ready" ? "Front-camera preview is ready." : "Front-camera preview requested.");
+      } catch (error) {
+        showStatus(error.message, "error");
+        action.disabled = false;
+      }
+    });
+    panel.append(action);
+    return;
+  }
+
+  if (preview.state === "queued" || preview.state === "processing") {
+    panel.append(node("p", preview.state === "queued" ? "Waiting for the serial worker." : "The serial worker is generating browser media."));
+    previewPollTimer = window.setTimeout(
+      () => loadFrontPreview(recordingId),
+      preview.poll_after_ms || 1000,
+    );
+    return;
+  }
+
+  if (preview.state === "ready" && preview.artifact) {
+    renderFrontTimeline(recordingId, panel, preview);
+  }
+}
+
+function renderFrontTimeline(recordingId, panel, preview) {
+  const durationSeconds = Number(BigInt(preview.global_duration_ns)) / 1e9;
+  const coverageStart = Number(BigInt(preview.artifact.coverage_start_ns)) / 1e9;
+  const coverageEnd = Number(BigInt(preview.artifact.coverage_end_ns)) / 1e9;
+  const player = node("div", null, "preview-player");
+  const video = node("video");
+  video.preload = "metadata";
+  video.playsInline = true;
+  video.muted = true;
+  video.setAttribute("aria-label", "Front-camera preview");
+  video.src = preview.artifact.media_url;
+  const coverageMessage = node("p", "Outside front-camera coverage", "coverage-message");
+  coverageMessage.hidden = true;
+  player.append(video, coverageMessage);
+
+  const controls = node("div", null, "timeline-controls");
+  const playButton = node("button", "Play");
+  playButton.type = "button";
+  const slider = node("input");
+  slider.type = "range";
+  slider.min = "0";
+  slider.max = String(durationSeconds);
+  slider.step = "0.001";
+  slider.value = "0";
+  slider.setAttribute("aria-label", "Global recording time");
+  const timeLabel = node("output", `${formatElapsed(0)} / ${formatElapsed(durationSeconds)}`, "timeline-time");
+  const mediaRetry = node("button", "Reload preview");
+  mediaRetry.type = "button";
+  mediaRetry.hidden = true;
+  mediaRetry.addEventListener("click", () => loadFrontPreview(recordingId));
+  controls.append(playButton, slider, timeLabel, mediaRetry);
+
+  const coverage = node(
+    "p",
+    `Measured front coverage ${formatSignedElapsed(coverageStart)}–${formatSignedElapsed(coverageEnd)} · ROS record timestamps`,
+    "coverage-summary",
+  );
+  panel.append(player, controls, coverage);
+
+  const clock = {
+    globalTime: 0,
+    playing: false,
+    anchorGlobal: 0,
+    anchorPerformance: 0,
+    mediaFailed: false,
+  };
+
+  function applyGlobalTime(value) {
+    clock.globalTime = Math.min(Math.max(value, 0), durationSeconds);
+    slider.value = String(clock.globalTime);
+    timeLabel.value = `${formatElapsed(clock.globalTime)} / ${formatElapsed(durationSeconds)}`;
+    timeLabel.textContent = timeLabel.value;
+    if (clock.mediaFailed) {
+      video.pause();
+      video.hidden = true;
+      coverageMessage.hidden = false;
+      return;
+    }
+    const insideCoverage = clock.globalTime >= coverageStart && clock.globalTime <= coverageEnd;
+    if (!insideCoverage) {
+      video.pause();
+      video.hidden = true;
+      coverageMessage.hidden = false;
+      return;
+    }
+    coverageMessage.hidden = true;
+    video.hidden = false;
+    const desiredMediaTime = clock.globalTime - coverageStart;
+    if (
+      Number.isFinite(video.duration)
+      && Math.abs(video.currentTime - desiredMediaTime) > VIDEO_DRIFT_TOLERANCE_SECONDS
+    ) {
+      video.currentTime = Math.min(desiredMediaTime, video.duration);
+    }
+    if (clock.playing && video.paused) {
+      video.play().catch(() => {
+        clock.playing = false;
+        playButton.textContent = "Play";
+      });
+    } else if (!clock.playing && !video.paused) {
+      video.pause();
+    }
+  }
+
+  function showMediaFailure() {
+    clock.mediaFailed = true;
+    clock.playing = false;
+    playButton.textContent = "Play";
+    playButton.disabled = true;
+    slider.disabled = true;
+    mediaRetry.hidden = false;
+    if (timelineAnimation !== null) {
+      window.cancelAnimationFrame(timelineAnimation);
+      timelineAnimation = null;
+    }
+    video.pause();
+    video.hidden = true;
+    coverageMessage.textContent = "Preview media is unavailable.";
+    coverageMessage.hidden = false;
+    const state = panel.querySelector(".preview-state");
+    if (state) {
+      state.textContent = "media unavailable";
+      state.className = "preview-state preview-state-failed";
+    }
+  }
+
+  function tick(now) {
+    if (!clock.playing) return;
+    const elapsed = (now - clock.anchorPerformance) / 1000;
+    const next = Math.min(durationSeconds, clock.anchorGlobal + elapsed);
+    const reachedEnd = next >= durationSeconds;
+    if (reachedEnd) clock.playing = false;
+    applyGlobalTime(next);
+    if (reachedEnd) {
+      playButton.textContent = "Play";
+      timelineAnimation = null;
+      return;
+    }
+    timelineAnimation = window.requestAnimationFrame(tick);
+  }
+
+  playButton.addEventListener("click", () => {
+    if (clock.playing) {
+      clock.playing = false;
+      playButton.textContent = "Play";
+      if (timelineAnimation !== null) window.cancelAnimationFrame(timelineAnimation);
+      timelineAnimation = null;
+      applyGlobalTime(clock.globalTime);
+      return;
+    }
+    if (clock.globalTime >= durationSeconds) applyGlobalTime(0);
+    clock.playing = true;
+    clock.anchorGlobal = clock.globalTime;
+    clock.anchorPerformance = performance.now();
+    playButton.textContent = "Pause";
+    applyGlobalTime(clock.globalTime);
+    timelineAnimation = window.requestAnimationFrame(tick);
+  });
+
+  slider.addEventListener("input", () => {
+    applyGlobalTime(Number(slider.value));
+    if (clock.playing) {
+      clock.anchorGlobal = clock.globalTime;
+      clock.anchorPerformance = performance.now();
+    }
+  });
+
+  video.addEventListener("loadedmetadata", () => applyGlobalTime(clock.globalTime));
+  video.addEventListener("error", showMediaFailure);
+  applyGlobalTime(0);
 }
 
 async function refreshArchive() {

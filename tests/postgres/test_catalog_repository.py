@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import os
+import threading
 from urllib.parse import unquote, urlsplit
 
 import httpx
@@ -21,6 +23,10 @@ from rosbag_analyser.catalog.types import (
 )
 from rosbag_analyser.persistence.catalog_repository import CatalogRepository
 from rosbag_analyser.persistence.database import apply_catalog_migration, open_connection
+from rosbag_analyser.persistence.processing_repository import (
+    ArtifactWrite,
+    ProcessingRepository,
+)
 
 
 TEST_DATABASE_ENV = "ROS_BAG_ANALYSER_TEST_DATABASE_URL"
@@ -71,7 +77,7 @@ def postgres_url(pytestconfig: pytest.Config) -> str:
     apply_catalog_migration(database_url)
     with open_connection(database_url) as connection:
         connection.execute(
-            "TRUNCATE source_components, recordings RESTART IDENTITY"
+            "TRUNCATE jobs, artifacts, source_components, recordings RESTART IDENTITY"
         )
     return database_url
 
@@ -126,7 +132,7 @@ def _snapshot(revision: str = "a" * 64) -> ScanSnapshot:
 
 
 @pytest.mark.postgres
-def test_migration_contains_only_two_block_one_domain_tables(postgres_url: str) -> None:
+def test_migration_contains_exactly_four_v0_domain_tables(postgres_url: str) -> None:
     with open_connection(postgres_url) as connection:
         rows = connection.execute(
             """
@@ -138,7 +144,217 @@ def test_migration_contains_only_two_block_one_domain_tables(postgres_url: str) 
             """
         ).fetchall()
 
-    assert [row["table_name"] for row in rows] == ["recordings", "source_components"]
+    assert [row["table_name"] for row in rows] == [
+        "artifacts",
+        "jobs",
+        "recordings",
+        "source_components",
+    ]
+
+
+@pytest.mark.postgres
+def test_processing_request_reuses_one_active_job_and_one_ready_artifact(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    identity = "d" * 64
+
+    first = repository.request_job(recording_id, "front_preview", identity)
+    repeated = repository.request_job(recording_id, "front_preview", identity)
+    assert first.job is not None
+    assert repeated.job is not None
+    assert repeated.job.id == first.job.id
+
+    running = repository.claim_next_job()
+    assert running is not None
+    assert running.id == first.job.id
+    while_running = repository.request_job(recording_id, "front_preview", identity)
+    assert while_running.job is not None
+    assert while_running.job.id == running.id
+
+    ready = repository.complete_job(
+        running.id,
+        ArtifactWrite(
+            recording_id=recording_id,
+            kind="front_preview",
+            cache_identity=identity,
+            output_relative_path="rosbag-analyser/artifacts/front_preview/dd/preview.mp4",
+            mime_type="video/mp4",
+            size_bytes=123,
+            coverage_start_ns=10,
+            coverage_end_ns=20,
+            manifest={"cache_identity": identity},
+        ),
+    )
+    after_ready = repository.request_job(recording_id, "front_preview", identity)
+
+    assert after_ready.artifact == ready
+    assert after_ready.job is None
+    with open_connection(postgres_url) as connection:
+        assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
+            "count"
+        ] == 1
+        assert connection.execute(
+            "SELECT count(*) AS count FROM artifacts"
+        ).fetchone()["count"] == 1
+
+
+@pytest.mark.postgres
+def test_request_racing_job_completion_reuses_one_ready_artifact(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    identity = "9" * 64
+    requested = repository.request_job(recording_id, "front_preview", identity)
+    running = repository.claim_next_job()
+    assert requested.job is not None
+    assert running is not None
+    artifact = ArtifactWrite(
+        recording_id=recording_id,
+        kind="front_preview",
+        cache_identity=identity,
+        output_relative_path="rosbag-analyser/artifacts/front_preview/99/preview.mp4",
+        mime_type="video/mp4",
+        size_bytes=123,
+        coverage_start_ns=10,
+        coverage_end_ns=20,
+        manifest={"cache_identity": identity},
+    )
+    start = threading.Barrier(2)
+
+    def complete():
+        start.wait()
+        return repository.complete_job(running.id, artifact)
+
+    def request():
+        start.wait()
+        return repository.request_job(recording_id, "front_preview", identity)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        completed_future = executor.submit(complete)
+        requested_future = executor.submit(request)
+        completed = completed_future.result(timeout=10)
+        raced_request = requested_future.result(timeout=10)
+
+    assert completed.cache_identity == identity
+    if raced_request.artifact is not None:
+        assert raced_request.artifact.id == completed.id
+    else:
+        assert raced_request.job is not None
+        assert raced_request.job.id == running.id
+    after_race = repository.request_job(recording_id, "front_preview", identity)
+    assert after_race.artifact is not None
+    assert after_race.artifact.id == completed.id
+    assert after_race.job is None
+    with open_connection(postgres_url) as connection:
+        assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
+            "count"
+        ] == 1
+        assert connection.execute(
+            "SELECT count(*) AS count FROM artifacts"
+        ).fetchone()["count"] == 1
+
+
+@pytest.mark.postgres
+def test_interrupted_job_fails_without_artifact_and_explicit_retry_succeeds(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    identity = "e" * 64
+
+    requested = repository.request_job(recording_id, "front_preview", identity)
+    running = repository.claim_next_job()
+    assert requested.job is not None
+    assert running is not None
+    assert repository.mark_running_jobs_interrupted() == (running.id,)
+    assert repository.get_artifact(recording_id, "front_preview", identity) is None
+
+    retry = repository.request_job(recording_id, "front_preview", identity)
+    assert retry.job is not None
+    assert retry.job.id != running.id
+    rerun = repository.claim_next_job()
+    assert rerun is not None
+    repository.complete_job(
+        rerun.id,
+        ArtifactWrite(
+            recording_id=recording_id,
+            kind="front_preview",
+            cache_identity=identity,
+            output_relative_path="rosbag-analyser/artifacts/front_preview/ee/preview.mp4",
+            mime_type="video/mp4",
+            size_bytes=321,
+            coverage_start_ns=0,
+            coverage_end_ns=30,
+            manifest={"cache_identity": identity},
+        ),
+    )
+
+    with open_connection(postgres_url) as connection:
+        states = connection.execute(
+            "SELECT state FROM jobs ORDER BY id"
+        ).fetchall()
+        artifact_count = connection.execute(
+            "SELECT count(*) AS count FROM artifacts"
+        ).fetchone()["count"]
+    assert [row["state"] for row in states] == ["failed", "succeeded"]
+    assert artifact_count == 1
+
+
+@pytest.mark.postgres
+def test_explicit_retry_retires_only_the_observed_invalid_artifact(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    identity = "f" * 64
+    requested = repository.request_job(recording_id, "front_preview", identity)
+    running = repository.claim_next_job()
+    assert requested.job is not None
+    assert running is not None
+    ready = repository.complete_job(
+        running.id,
+        ArtifactWrite(
+            recording_id=recording_id,
+            kind="front_preview",
+            cache_identity=identity,
+            output_relative_path="rosbag-analyser/artifacts/front_preview/ff/preview.mp4",
+            mime_type="video/mp4",
+            size_bytes=123,
+            coverage_start_ns=10,
+            coverage_end_ns=20,
+            manifest={"cache_identity": identity},
+        ),
+    )
+
+    unchanged = repository.request_job(
+        recording_id,
+        "front_preview",
+        identity,
+        invalid_artifact_id=ready.id + 1,
+    )
+    assert unchanged.artifact == ready
+
+    replacement = repository.request_job(
+        recording_id,
+        "front_preview",
+        identity,
+        invalid_artifact_id=ready.id,
+    )
+    assert replacement.artifact is None
+    assert replacement.job is not None
+    assert replacement.job.id != running.id
+    assert repository.get_artifact(recording_id, "front_preview", identity) is None
 
 
 @pytest.mark.postgres
@@ -199,8 +415,14 @@ def test_changed_snapshot_updates_existing_row_in_place(postgres_url: str) -> No
 
     assert first.id == second.id
     with open_connection(postgres_url) as connection:
-        assert connection.execute("SELECT count(*) AS count FROM recordings").fetchone()["count"] == 1
-        assert connection.execute("SELECT count(*) AS count FROM source_components").fetchone()["count"] == 4
+        recording_count = connection.execute(
+            "SELECT count(*) AS count FROM recordings"
+        ).fetchone()["count"]
+        component_count = connection.execute(
+            "SELECT count(*) AS count FROM source_components"
+        ).fetchone()["count"]
+        assert recording_count == 1
+        assert component_count == 4
 
 
 @pytest.mark.postgres

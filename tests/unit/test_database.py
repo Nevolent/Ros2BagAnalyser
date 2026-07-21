@@ -88,18 +88,43 @@ def _valid_constraint_rows() -> list[dict[str, object]]:
     ]
 
 
+def _valid_index_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "index_name": index_name,
+            "table_name": table_name,
+            "indisunique": is_unique,
+            "indisvalid": is_valid,
+            "key_columns": list(key_columns),
+            "predicate": predicate,
+        }
+        for (
+            index_name,
+            table_name,
+            is_unique,
+            is_valid,
+            key_columns,
+            predicate,
+        ) in database.EXPECTED_PROCESSING_INDEXES
+    ]
+
+
 class _SchemaConnection:
     def __init__(
         self,
         column_rows: list[dict[str, object]],
         constraint_rows: list[dict[str, object]],
+        index_rows: list[dict[str, object]] | None = None,
     ) -> None:
         self.column_rows = column_rows
         self.constraint_rows = constraint_rows
+        self.index_rows = _valid_index_rows() if index_rows is None else index_rows
 
     def execute(self, statement: str, parameters: object = None) -> _QueryResult:
         if "information_schema.columns" in statement:
             return _QueryResult(self.column_rows)
+        if "pg_catalog.pg_index" in statement:
+            return _QueryResult(self.index_rows)
         return _QueryResult(self.constraint_rows)
 
 
@@ -173,6 +198,30 @@ def test_schema_validation_rejects_same_count_wrong_constraint() -> None:
         database._validate_catalog_schema(connection)  # type: ignore[arg-type]
 
 
+def test_schema_validation_rejects_missing_processing_index() -> None:
+    connection = _SchemaConnection(
+        _valid_column_rows(),
+        _valid_constraint_rows(),
+        index_rows=_valid_index_rows()[:-1],
+    )
+
+    with pytest.raises(database.CatalogSchemaError, match="incompatible"):
+        database._validate_catalog_schema(connection)  # type: ignore[arg-type]
+
+
+def test_schema_validation_rejects_same_name_wrong_processing_index() -> None:
+    rows = _valid_index_rows()
+    rows[0]["key_columns"] = ["cache_identity", "kind"]
+    connection = _SchemaConnection(
+        _valid_column_rows(),
+        _valid_constraint_rows(),
+        index_rows=rows,
+    )
+
+    with pytest.raises(database.CatalogSchemaError, match="incompatible"):
+        database._validate_catalog_schema(connection)  # type: ignore[arg-type]
+
+
 def test_constraint_normalization_accepts_inferred_literal_casts() -> None:
     reconstructed = (
         "CHECK (ros_health = ANY (ARRAY['readable'::text, 'damaged'::text, "
@@ -185,6 +234,12 @@ def test_constraint_normalization_accepts_inferred_literal_casts() -> None:
     )
 
     assert database._normalize_constraint_definition(reconstructed) == expected
+
+
+def test_constraint_normalization_accepts_version_specific_predicate_wrapper() -> None:
+    assert database._normalize_constraint_definition(
+        "((state = 'queued'))"
+    ) == "state = 'queued'"
 
 
 def test_schema_validation_rejects_narrowing_column_cast() -> None:

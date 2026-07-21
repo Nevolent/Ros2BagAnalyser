@@ -2,12 +2,13 @@
 
 ## 1. Status
 
-Building block 1 is complete and was accepted by the user on 2026-07-21. It
-includes the bounded scanner, two-table catalog, thin API, browser table/detail
-view, and synthetic/PostgreSQL tests. Acceptance was based on the reviewed
-implementation and synthetic test suite; the opt-in real-archive run and manual
-browser checklist were not executed during this review. No worker, artifact,
-preview, timeline, or telemetry implementation exists.
+Building block 1 is complete and was accepted by the user on 2026-07-21.
+Building block 2 and its audit corrections are complete and were accepted by
+the user on 2026-07-21. It adds the two remaining V0 PostgreSQL tables,
+front-preview processor, serial worker, validated artifact publication,
+request/poll/range API, and initial global timeline. Its synthetic,
+ROS-message, PostgreSQL, browser, and approved real-archive acceptance evidence
+is recorded below. Building blocks 3–5 have not started.
 
 This roadmap defines V0 scope and order. Building block 1 implementation was
 explicitly approved on 2026-07-20. That approval does not grant work on later
@@ -117,7 +118,7 @@ thin API, browser table, and recording detail view.
 
 ## 6. Building block 2 — Front-camera preview and initial timeline
 
-**Status:** Planned
+**Status:** Completed and user-accepted on 2026-07-21
 
 **Dependency:** Building block 1 reviewed and accepted
 
@@ -171,6 +172,35 @@ API traffic, then control it with the first global timeline.
 - Publication tests prove partial output cannot become ready.
 - Minimal API tests cover request, poll, unavailable, ready, and byte ranges.
 - Short and opt-in longer real checks prove playback/reuse and source immutability.
+
+### Acceptance evidence — 2026-07-21
+
+- The routine suite passed with 144 tests and 12 environment-specific skips;
+  the isolated generated ROS-message test passed; and all 10 PostgreSQL tests
+  passed against a disposable PostgreSQL 14 database.
+- PostgreSQL 14 exposed and verified corrections for a reserved catalog-query
+  alias and version-specific predicate parentheses. Regression coverage was
+  added, and the final PostgreSQL suite passed.
+- The approved short figure-eight recording produced 3,051 frames and an
+  84,118,694-byte preview in 305.742 seconds. The user confirmed playback;
+  byte-range delivery, representative seeking, restart persistence, rescan and
+  repeated-request reuse all passed.
+- The approved 758.739-second longer recording produced a 482,413,143-byte
+  preview in 2,011.547 seconds. Peak worker RSS was 163,520 kB with no swap, and
+  representative seeking passed.
+- Reuse left exactly two succeeded jobs and two ready artifacts. The damaged
+  recording remained `unavailable` and created no job or artifact.
+- During long processing, ordinary catalog and completed-preview requests
+  remained responsive, partial output stayed unpublished, and the temporary
+  job workspace was empty after atomic publication.
+- The archive still contained exactly six directories and 24 files. All 24
+  source components retained their recorded sizes and nanosecond modification
+  times, with no extra files or sidecars.
+- Reported short-preview stutters were traced read-only to existing ROS record
+  timestamp gaps of approximately 0.245–0.422 seconds. The source and MP4 each
+  contained exactly 3,051 frames with the same timestamp-interval sequence;
+  camera header stamps remained mostly near 0.05 seconds. Preserving these
+  visible holds is the accepted record-clock synchronization behavior.
 
 ## 7. Building block 3 — Top-down camera and dual-video synchronization
 

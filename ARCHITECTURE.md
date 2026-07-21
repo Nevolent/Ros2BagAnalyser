@@ -2,7 +2,7 @@
 
 > **Status:** Accepted V0 architecture
 >
-> **Implementation status:** Building block 1 completed and user-accepted
+> **Implementation status:** Building blocks 1 and 2 complete and user-accepted
 >
 > **Last updated:** 2026-07-21
 
@@ -221,7 +221,10 @@ stream bounds, minimal manifest JSON, and creation time.
 
 There is no artifact lifecycle state machine. A row matching the current cache
 identity means ready. An older nonmatching row is not selected for current
-playback. Retention and stale-history UI are deferred.
+playback. The ready file and manifest are revalidated before display or
+delivery. If either is missing or inconsistent, the API reports failure; an
+explicit retry transaction removes only that exact invalid row and queues a
+replacement. Retention and stale-history UI are deferred.
 
 ### 8.4 `jobs`
 
@@ -230,6 +233,8 @@ identity, `queued`/`running`/`succeeded`/`failed` state, timestamps, and safe
 failure information.
 
 The database prevents more than one active job for the same cache identity.
+Request and completion transactions also take the same cache-identity advisory
+lock, so completion cannot race a request into creating a redundant job.
 V0 has no leases, heartbeat, attempt counter, automatic retry, cancellation,
 priority, phase model, or percentage-progress contract.
 
@@ -266,7 +271,9 @@ marks the next queued job running; processing happens outside the transaction.
 
 The worker reloads source descriptors, verifies identity, processes in a
 temporary workspace, validates, rechecks relevant inputs, publishes, inserts
-the ready row, and marks the job succeeded.
+the ready row, and marks the job succeeded. A retry may replace a conflicting
+app-owned artifact directory only after the replacement has passed validation;
+the previous directory is retained until the validated rename succeeds.
 
 On failure, it marks the job failed with a safe diagnostic. The user may request
 a new attempt. V0 performs no automatic retry.
@@ -343,6 +350,11 @@ front_media_time_s = global_time_s - front_start_s
 Generated media must preserve recorded elapsed duration. It must not infer
 duration solely from frame count and an assumed frequency.
 
+Consequently, a gap in ROS record timestamps remains a visible hold in the
+front preview even when message header stamps have a smoother cadence. That is
+truthful record-clock behavior, not permission to substitute header time or an
+assumed frame rate for smoother playback.
+
 ### 11.4 Top-down mapping
 
 For top-down frame `i`:
@@ -373,8 +385,10 @@ media_time_s = global_time_s - stream_start_s
 
 The frontend advances global time from a monotonic browser clock, compares each
 player with its desired media time, and corrects visible drift when a documented
-tolerance is exceeded. Backend responsibilities end at timestamp-correct media,
-coverage, and mapping data.
+tolerance is exceeded. The Building block 2 front player uses 100 milliseconds:
+small decoder jitter is left alone, while larger divergence is corrected to the
+global clock. Backend responsibilities end at timestamp-correct media, coverage,
+and mapping data.
 
 ## 12. Processor boundaries
 
@@ -392,12 +406,36 @@ Each processor returns coverage and provenance, works with bounded memory, and
 reports malformed or unsupported input without changing sources. None owns a
 playback clock; all outputs map to the global timeline.
 
+### 12.1 Building block 2 front profile
+
+The first front processor accepts the configured `sensor_msgs/msg/Image` topic
+only when metadata and the SQLite topic row both report CDR serialization. It
+supports `bgr8`, stable dimensions, bounded payloads, and one-row-at-a-time
+message iteration from an immutable read-only SQLite connection. SQLite payload
+length is checked before the BLOB is fetched or deserialized, bounding the
+largest serialized image materialized by the processor.
+
+The fixed `h264-720p-v1` output is MP4 with H.264/libx264, yuv420p, a maximum
+size of 1280 × 720, CRF 23, the `veryfast` preset, and a one-microsecond media
+timescale. Frames retain elapsed ROS record time; a frame is forced at least at
+each available two-second keyframe boundary. If several messages have the same
+record timestamp, the last image is encoded once and the collapse count is
+recorded in the manifest.
+
+Validation checks codec, pixel format, dimensions, size, encoded packet count,
+elapsed duration, fast-start MP4 layout, and actual decoded output at
+representative seeks with ffprobe/FFmpeg before publication. PyAV, its linked libraries, the processor version, input
+identities, topic, and every output setting participate in the cache identity.
+
 ## 13. Delivery contracts
 
-Exact routes and schemas are defined when implemented. The API exposes catalog,
-artifact, and timeline capabilities without leaking database rows or filesystem
-paths. Scanner dispatch remains replaceable without changing its core contract,
-and ready media supports seeking without a complete download.
+The API exposes catalog, artifact, and timeline capabilities without leaking
+database rows or filesystem paths. Building block 2 uses GET and POST on
+`/api/recordings/{id}/front-preview` for state/request and a separate
+identity-specific GET/HEAD media route with one browser byte range, strong
+validator, and `If-Range` support. A stale artifact URL cannot resolve to a
+newer artifact. Scanner dispatch remains replaceable without changing its core
+contract, and ready media supports seeking without a complete download.
 
 ## 14. Operational boundaries
 

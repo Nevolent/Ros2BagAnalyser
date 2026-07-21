@@ -9,8 +9,8 @@ ROS 2 Bag Analyser is a fresh implementation. The previous local codebase was
 deliberately discarded. Do not reconstruct or depend on old prototypes unless
 the user explicitly requests a specific recovery.
 
-Building block 1 was completed and user-accepted on 2026-07-21. Building block
-2 has not started; do not begin it until the user approves its exact boundary.
+Building blocks 1 and 2 were completed and user-accepted on 2026-07-21. Do not
+begin Building block 3 until the user approves its next exact boundary.
 
 ## Required reading
 
@@ -235,11 +235,13 @@ User review is required before committing or beginning the next block.
 
 ## Current instruction
 
-At the post-Building-block-1 boundary:
+At the post-Building-block-2 boundary:
 
-- Building block 1 is complete and accepted;
-- do not change application code except for separately approved corrections;
-- do not add workers, jobs, artifacts, previews, timelines, or telemetry;
+- Building blocks 1 and 2 are complete and accepted;
+- no implementation block is currently active;
+- do not change accepted application code without an explicitly approved
+  correction or building-block boundary;
+- do not add top-down processing, telemetry, or later-roadmap features;
 - do not access the real archive without explicit opt-in acceptance approval;
-- do not begin Building block 2 until the user explicitly approves its exact
+- do not begin Building block 3 until the user explicitly approves its exact
   boundary.

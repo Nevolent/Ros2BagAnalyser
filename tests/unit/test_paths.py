@@ -10,8 +10,10 @@ from rosbag_analyser.catalog.paths import (
     UnsafeSourcePath,
     archive_relative_path,
     discover_recording_directories,
+    filesystem_text_from_safe,
     inventory_direct_entries,
     resolve_declared_source,
+    safe_filesystem_text,
 )
 from rosbag_analyser.catalog.types import RootScanError
 
@@ -113,3 +115,17 @@ def test_archive_relative_path_escapes_percent_and_non_utf8_without_collision(
 
     assert archive_relative_path(archive, archive / raw_name) == "bad_%FF"
     assert archive_relative_path(archive, archive / "bad_%FF") == "bad_%25FF"
+
+
+def test_safe_filesystem_text_round_trips_percent_and_non_utf8() -> None:
+    raw_name = os.fsdecode(b"literal_%_and_\xff")
+
+    assert filesystem_text_from_safe(safe_filesystem_text(raw_name)) == raw_name
+
+
+@pytest.mark.parametrize("value", ["bad_%", "bad_%7F", "bad_%u0041"])
+def test_invalid_stored_filesystem_escaping_is_rejected(value: str) -> None:
+    with pytest.raises(UnsafeSourcePath) as captured:
+        filesystem_text_from_safe(value)
+
+    assert captured.value.code == "stored_source_path_invalid"

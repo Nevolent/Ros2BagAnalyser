@@ -61,7 +61,7 @@ button {
 }
 
 button:hover { background: #c8f2ed; }
-button:focus-visible, a:focus-visible, .table-wrapper:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
+button:focus-visible, a:focus-visible, input:focus-visible, .table-wrapper:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 button:disabled { cursor: wait; opacity: .62; }
 
 main { max-width: 1500px; margin: 0 auto; padding: 1.5rem clamp(1rem, 4vw, 4rem) 4rem; }
@@ -126,7 +126,22 @@ dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
 .diagnostic-block { margin: .75rem 0 0; padding: .7rem; border-left: 3px solid #e11d48; color: #881337; background: #fff1f2; }
 .empty-state { padding: 2rem; text-align: center; }
 
+.preview-state { display: inline-block; border-radius: 999px; padding: .3rem .65rem; color: #334155; background: #e2e8f0; font-size: .78rem; font-weight: 800; text-transform: capitalize; }
+.preview-state-ready { color: #14532d; background: #dcfce7; }
+.preview-state-failed, .preview-state-unavailable { color: #881337; background: #ffe4e6; }
+.preview-state-queued, .preview-state-processing { color: #1e3a8a; background: #dbeafe; }
+.preview-player { position: relative; display: grid; min-height: 220px; margin-top: .75rem; place-items: center; overflow: hidden; border-radius: .6rem; background: #0f172a; }
+.preview-player video { display: block; width: 100%; max-height: 70vh; background: #0f172a; }
+.preview-player video[hidden] { display: none; }
+.coverage-message { margin: 0; padding: 2rem; color: #e2e8f0; font-weight: 750; text-align: center; }
+.timeline-controls { display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; align-items: center; gap: .9rem; margin-top: 1rem; }
+.timeline-controls input { width: 100%; accent-color: #0f766e; }
+.timeline-time { min-width: 8.5rem; color: #334155; font-variant-numeric: tabular-nums; text-align: right; }
+.coverage-summary { margin: .75rem 0 0; color: #64748b; font-size: .85rem; }
+
 @media (max-width: 680px) {
   .site-header { align-items: stretch; flex-direction: column; }
   .site-header button { width: 100%; }
+  .timeline-controls { grid-template-columns: 1fr; }
+  .timeline-time { text-align: left; }
 }

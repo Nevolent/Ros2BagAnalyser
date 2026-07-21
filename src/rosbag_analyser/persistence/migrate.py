@@ -11,7 +11,7 @@ def main() -> None:
         apply_catalog_migration(database_url)
     except (ConfigurationError, CatalogSchemaError) as error:
         raise SystemExit(str(error)) from error
-    print("Catalog migration applied.")
+    print("Database migrations applied.")
 
 
 if __name__ == "__main__":

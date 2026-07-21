@@ -114,10 +114,19 @@ async def test_list_detail_and_static_browser_contract() -> None:
     assert "current table could not be refreshed" in script.text
     assert 'renderRecordingShell("Recording details")' in script.text
     assert "document.title" in script.text
+    assert "PREVIEW_RETRY_DELAY_MS" in script.text
+    assert 'video.addEventListener("error", showMediaFailure)' in script.text
+    assert "VIDEO_DRIFT_TOLERANCE_SECONDS" in script.text
+    end_tick = script.text.index("const reachedEnd = next >= durationSeconds;")
+    stop_clock = script.text.index("clock.playing = false;", end_tick)
+    synchronize_media = script.text.index("applyGlobalTime(next);", end_tick)
+    assert stop_clock < synchronize_media
     assert stylesheet.status_code == 200
     assert ".table-wrapper:focus-visible" in stylesheet.text
+    assert ".preview-player video[hidden]" in stylesheet.text
     assert listing.headers["x-content-type-options"] == "nosniff"
     assert "default-src 'self'" in listing.headers["content-security-policy"]
+    assert "media-src 'self'" in listing.headers["content-security-policy"]
 
 
 async def test_rescan_returns_safe_counts_and_diagnostics() -> None:

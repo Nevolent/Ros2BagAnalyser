@@ -1,8 +1,8 @@
 # ROS 2 Bag Analyser — Project Definition
 
-**Status:** Direction defined; implementation not started
+**Status:** Building block 1 completed and user-accepted
 
-**Repository baseline:** Documentation only
+**Repository baseline:** Completed archive catalog vertical slice
 
 **Initial environment:** Ubuntu 22.04 under WSL2, ROS 2 Humble
 

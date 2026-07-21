@@ -1,0 +1,15 @@
+.venv/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.env*
+!.env.example
+*.db3
+*.mcap
+*.avi
+*.mp4
+*.webm
+*.csv

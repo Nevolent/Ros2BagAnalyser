@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rosbag-analyser"
+version = "0.1.0"
+description = "Read-only ROS 2 recording archive catalog"
+requires-python = ">=3.10"
+dependencies = [
+    "anyio==3.7.1",
+    "fastapi==0.116.1",
+    "psycopg[binary]==3.3.4",
+    "PyYAML==6.0.3",
+    "uvicorn==0.51.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.1.1",
+]
+
+[project.scripts]
+rosbag-analyser = "rosbag_analyser.api.app:main"
+rosbag-analyser-migrate = "rosbag_analyser.persistence.migrate:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+rosbag_analyser = [
+    "persistence/migrations/*.sql",
+    "web/*.css",
+    "web/*.html",
+    "web/*.js",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "postgres: requires a disposable PostgreSQL database",
+    "real_archive: requires explicit opt-in access to a real recording archive",
+]

@@ -2,9 +2,9 @@
 
 > **Status:** Accepted V0 architecture
 >
-> **Implementation status:** Not started
+> **Implementation status:** Building block 1 completed and user-accepted
 >
-> **Last updated:** 2026-07-20
+> **Last updated:** 2026-07-21
 
 This document defines the smallest architecture needed for the mentor-facing
 V0. It is a build contract, not a description of existing software and not a

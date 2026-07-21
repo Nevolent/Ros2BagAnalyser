@@ -9,8 +9,8 @@ ROS 2 Bag Analyser is a fresh implementation. The previous local codebase was
 deliberately discarded. Do not reconstruct or depend on old prototypes unless
 the user explicitly requests a specific recovery.
 
-The repository is currently documentation-only. Do not create application code
-until the user approves a specific building block in `ROADMAP.md`.
+Building block 1 was completed and user-accepted on 2026-07-21. Building block
+2 has not started; do not begin it until the user approves its exact boundary.
 
 ## Required reading
 
@@ -235,11 +235,11 @@ User review is required before committing or beginning the next block.
 
 ## Current instruction
 
-At this documentation-only baseline:
+At the post-Building-block-1 boundary:
 
-- do not create application source folders;
-- do not scaffold a backend or frontend;
-- do not create database migrations or worker configuration;
-- do not install dependencies;
-- do not process ROS bags;
-- do not begin Building block 1 until the user explicitly approves it.
+- Building block 1 is complete and accepted;
+- do not change application code except for separately approved corrections;
+- do not add workers, jobs, artifacts, previews, timelines, or telemetry;
+- do not access the real archive without explicit opt-in acceptance approval;
+- do not begin Building block 2 until the user explicitly approves its exact
+  boundary.

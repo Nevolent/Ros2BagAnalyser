@@ -2,12 +2,17 @@
 
 ## 1. Status
 
-The repository is a documentation-only baseline. No application, schema,
-worker, API, frontend, or tests exist yet.
+Building block 1 is complete and was accepted by the user on 2026-07-21. It
+includes the bounded scanner, two-table catalog, thin API, browser table/detail
+view, and synthetic/PostgreSQL tests. Acceptance was based on the reviewed
+implementation and synthetic test suite; the opt-in real-archive run and manual
+browser checklist were not executed during this review. No worker, artifact,
+preview, timeline, or telemetry implementation exists.
 
-This roadmap defines V0 scope and order. Its rewrite does not grant
-implementation approval. Building block 1 may begin only after the user
-approves its exact implementation boundary, dependencies, files, and checks.
+This roadmap defines V0 scope and order. Building block 1 implementation was
+explicitly approved on 2026-07-20. That approval does not grant work on later
+building blocks or access to the real archive outside a separately approved
+acceptance run.
 
 `ROADMAP.md` owns block scope, visible acceptance, and minimum testing. The
 other governing documents must be aligned with it before implementation.
@@ -57,7 +62,7 @@ CI requirement.
 
 ## 5. Building block 1 — Archive catalog and bag table
 
-**Status:** Planned; implementation approval not granted
+**Status:** Completed and user-accepted on 2026-07-21
 
 ### Goal
 

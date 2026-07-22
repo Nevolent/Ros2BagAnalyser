@@ -132,6 +132,19 @@ dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
 .preview-state-queued, .preview-state-processing { color: #1e3a8a; background: #dbeafe; }
 .camera-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .camera-pane { min-width: 0; padding: 1rem; border: 1px solid #dce2e8; border-radius: .6rem; background: #fbfcfd; }
+.imu-pane { margin-top: 1rem; padding: 1rem; border: 1px solid #dce2e8; border-radius: .6rem; background: #fbfcfd; }
+.imu-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .75rem; margin: .75rem 0; }
+.imu-graph { margin: 1rem 0 0; }
+.imu-plot { position: relative; width: 100%; min-height: 240px; overflow: hidden; border: 1px solid #d8dee5; border-radius: .45rem; background: #fff; }
+.imu-plot canvas { display: block; max-width: 100%; }
+.imu-cursor { position: absolute; top: 12px; bottom: 28px; width: 2px; transform: translateX(-1px); background: #be123c; pointer-events: none; }
+.imu-cursor::after { position: absolute; top: -4px; left: -4px; width: 10px; height: 10px; border-radius: 50%; background: #be123c; content: ""; }
+.imu-cursor.outside-coverage { background: repeating-linear-gradient(to bottom, #64748b 0 4px, transparent 4px 8px); }
+.imu-cursor.outside-coverage::after { background: #64748b; }
+.imu-graph figcaption { margin-top: .55rem; color: #64748b; font-size: .85rem; }
+.imu-current-line { margin: .7rem 0 .2rem; font-weight: 750; }
+.imu-current-value { font-variant-numeric: tabular-nums; }
+.imu-current-state, .imu-load-state { margin: 0; color: #64748b; font-size: .85rem; }
 .preview-player { position: relative; display: grid; min-height: 220px; margin-top: .75rem; place-items: center; overflow: hidden; border-radius: .6rem; background: #0f172a; }
 .preview-player video { display: block; width: 100%; max-height: 55vh; background: #0f172a; }
 .preview-player video[hidden] { display: none; }

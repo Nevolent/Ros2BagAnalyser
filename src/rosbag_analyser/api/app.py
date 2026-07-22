@@ -18,9 +18,13 @@ from rosbag_analyser.front_preview import (
     FrontSourceResolver,
     encoder_identity,
 )
+from rosbag_analyser.imu_series import ImuSeriesService, ImuSourceResolver
 from rosbag_analyser.persistence.catalog_repository import CatalogRepository
 from rosbag_analyser.persistence.processing_repository import ProcessingRepository
-from rosbag_analyser.persistence.processing_repository import TOPDOWN_PREVIEW_KIND
+from rosbag_analyser.persistence.processing_repository import (
+    IMU_SERIES_KIND,
+    TOPDOWN_PREVIEW_KIND,
+)
 from rosbag_analyser.topdown_preview import (
     TopdownPreviewService,
     TopdownSourceResolver,
@@ -28,12 +32,14 @@ from rosbag_analyser.topdown_preview import (
 
 from .catalog_routes import router as catalog_router
 from .front_preview_routes import router as front_preview_router
+from .imu_series_routes import router as imu_series_router
 from .topdown_preview_routes import router as topdown_preview_router
 
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
 INDEX_HTML = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
 APP_JAVASCRIPT = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+IMU_GRAPH_JAVASCRIPT = (WEB_ROOT / "imu_graph.js").read_text(encoding="utf-8")
 STYLESHEET = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
 
 
@@ -41,6 +47,7 @@ def create_app(
     service: CatalogService | None = None,
     front_preview_service: FrontPreviewService | None = None,
     topdown_preview_service: TopdownPreviewService | None = None,
+    imu_series_service: ImuSeriesService | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -82,12 +89,30 @@ def create_app(
                 processing_repository,
                 topdown_artifact_store,
             )
+            imu_artifact_store = ArtifactStore(
+                config.derived_root,
+                config.ffmpeg_path,
+                config.ffprobe_path,
+                IMU_SERIES_KIND,
+            )
+            application.state.imu_series_service = ImuSeriesService(
+                ImuSourceResolver(
+                    config.archive_root,
+                    processing_repository,
+                    config.imu_topic,
+                    config.imu_component,
+                ),
+                processing_repository,
+                imu_artifact_store,
+            )
         else:
             application.state.catalog_service = service
             if front_preview_service is not None:
                 application.state.front_preview_service = front_preview_service
             if topdown_preview_service is not None:
                 application.state.topdown_preview_service = topdown_preview_service
+            if imu_series_service is not None:
+                application.state.imu_series_service = imu_series_service
         # These pools keep bounded catalog calls off the event loop while reserving
         # read capacity when a scan is active. They are not artifact workers.
         application.state.catalog_read_executor = ThreadPoolExecutor(
@@ -128,6 +153,7 @@ def create_app(
     application.include_router(catalog_router)
     application.include_router(front_preview_router)
     application.include_router(topdown_preview_router)
+    application.include_router(imu_series_router)
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -154,6 +180,10 @@ def create_app(
     @application.get("/app.js", include_in_schema=False)
     async def browser_script() -> Response:
         return Response(APP_JAVASCRIPT, media_type="text/javascript")
+
+    @application.get("/imu_graph.js", include_in_schema=False)
+    async def imu_graph_script() -> Response:
+        return Response(IMU_GRAPH_JAVASCRIPT, media_type="text/javascript")
 
     @application.get("/styles.css", include_in_schema=False)
     async def browser_styles() -> Response:

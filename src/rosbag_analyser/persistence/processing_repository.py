@@ -10,6 +10,7 @@ from .database import open_connection
 
 FRONT_PREVIEW_KIND = "front_preview"
 TOPDOWN_PREVIEW_KIND = "topdown_preview"
+IMU_SERIES_KIND = "imu_series"
 
 
 @dataclass(frozen=True)
@@ -369,7 +370,9 @@ class ProcessingRepository:
                     error_message = CASE kind
                         WHEN 'front_preview'
                             THEN 'Preview generation was interrupted. Request it again.'
-                        ELSE 'Top-down preview generation was interrupted. Request it again.'
+                        WHEN 'topdown_preview'
+                            THEN 'Top-down preview generation was interrupted. Request it again.'
+                        ELSE 'IMU series generation was interrupted. Request it again.'
                     END
                 WHERE state = 'running'
                 RETURNING id

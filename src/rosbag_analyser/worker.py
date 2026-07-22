@@ -11,10 +11,20 @@ from rosbag_analyser.front_preview import (
     FrontSourceResolver,
     encoder_identity,
 )
+from rosbag_analyser.imu_series import (
+    DUPLICATE_TIMESTAMP_POLICY,
+    IMU_DISPLAY_LABEL,
+    IMU_UNITS,
+    NON_FINITE_POLICY,
+    PROCESSOR_VERSION as IMU_PROCESSOR_VERSION,
+    SERIES_SCHEMA_VERSION,
+    ImuSourceResolver,
+)
 from rosbag_analyser.persistence.database import open_connection
 from rosbag_analyser.persistence.processing_repository import (
     ArtifactWrite,
     FRONT_PREVIEW_KIND,
+    IMU_SERIES_KIND,
     JobRecord,
     ProcessingRepository,
     TOPDOWN_PREVIEW_KIND,
@@ -22,6 +32,10 @@ from rosbag_analyser.persistence.processing_repository import (
 from rosbag_analyser.processors.front_preview import (
     FrontPreviewProcessingError,
     FrontPreviewProcessor,
+)
+from rosbag_analyser.processors.imu_series import (
+    ImuSeriesProcessingError,
+    ImuSeriesProcessor,
 )
 from rosbag_analyser.processors.topdown_preview import (
     TopdownPreviewProcessingError,
@@ -51,6 +65,9 @@ class SerialWorker:
         topdown_resolver: TopdownSourceResolver | None = None,
         topdown_processor: TopdownPreviewProcessor | None = None,
         topdown_artifact_store: ArtifactStore | None = None,
+        imu_resolver: ImuSourceResolver | None = None,
+        imu_processor: ImuSeriesProcessor | None = None,
+        imu_artifact_store: ArtifactStore | None = None,
     ) -> None:
         self.repository = repository
         self.resolver = resolver
@@ -61,6 +78,9 @@ class SerialWorker:
         self.topdown_resolver = topdown_resolver
         self.topdown_processor = topdown_processor
         self.topdown_artifact_store = topdown_artifact_store
+        self.imu_resolver = imu_resolver
+        self.imu_processor = imu_processor
+        self.imu_artifact_store = imu_artifact_store
 
     def recover_interrupted_jobs(self) -> tuple[int, ...]:
         interrupted = self.repository.mark_running_jobs_interrupted()
@@ -80,6 +100,9 @@ class SerialWorker:
             return
         if job.kind == TOPDOWN_PREVIEW_KIND:
             self._run_topdown_job(job)
+            return
+        if job.kind == IMU_SERIES_KIND:
+            self._run_imu_job(job)
             return
         self.repository.fail_job(
             job.id,
@@ -377,6 +400,155 @@ class SerialWorker:
                         "Owned workspace cleanup failed for top-down job %s.", job.id
                     )
 
+    def _run_imu_job(self, job: JobRecord) -> None:
+        workspace = None
+        started = time.monotonic()
+        resolver = self.imu_resolver
+        processor = self.imu_processor
+        artifact_store = self.imu_artifact_store
+        try:
+            if resolver is None or processor is None or artifact_store is None:
+                raise ImuSeriesProcessingError(
+                    "imu_processor_unavailable", "IMU series processing is unavailable."
+                )
+            resolution = resolver.resolve(job.recording_id)
+            if resolution.descriptor is None:
+                message = (
+                    "IMU series prerequisites are no longer available."
+                    if resolution.diagnostic is None
+                    else resolution.diagnostic.message
+                )
+                code = (
+                    "imu_prerequisites_changed"
+                    if resolution.diagnostic is None
+                    else resolution.diagnostic.code
+                )
+                raise ImuSeriesProcessingError(code, message)
+            descriptor = resolution.descriptor
+            if descriptor.cache_identity != job.cache_identity:
+                raise ImuSeriesProcessingError(
+                    "imu_inputs_changed",
+                    "IMU series inputs changed after this job was requested.",
+                )
+
+            workspace = artifact_store.create_workspace(job.id)
+            output_path = workspace / "series.json"
+            result = processor.process(descriptor, output_path)
+            validation = artifact_store.validate_series(
+                output_path,
+                expected_schema_version=SERIES_SCHEMA_VERSION,
+                expected_sample_count=result.sample_count,
+                expected_finite_count=result.finite_count,
+                expected_non_finite_count=result.non_finite_count,
+                expected_coverage_start_ns=result.coverage_start_ns,
+                expected_coverage_end_ns=result.coverage_end_ns,
+                expected_minimum_value=result.minimum_value,
+                expected_maximum_value=result.maximum_value,
+            )
+            manifest: dict[str, object] = {
+                "schema_version": 1,
+                "artifact_kind": IMU_SERIES_KIND,
+                "cache_identity": job.cache_identity,
+                "processor_version": IMU_PROCESSOR_VERSION,
+                "series_schema_version": SERIES_SCHEMA_VERSION,
+                "source": {
+                    "topic": descriptor.topic.name,
+                    "message_type": descriptor.topic.message_type,
+                    "serialization_format": descriptor.topic.serialization_format,
+                    "component": descriptor.component,
+                    "display_label": IMU_DISPLAY_LABEL,
+                    "units": IMU_UNITS,
+                },
+                "timing": {
+                    "timestamp_provenance": "ros_record_timestamp",
+                    "bounds": "measured",
+                    "coverage_start_ns": str(result.coverage_start_ns),
+                    "coverage_end_ns": str(result.coverage_end_ns),
+                    "duplicate_timestamp_policy": DUPLICATE_TIMESTAMP_POLICY,
+                },
+                "samples": {
+                    "source": result.sample_count,
+                    "delivered": result.sample_count,
+                    "finite": result.finite_count,
+                    "non_finite": result.non_finite_count,
+                    "duplicate_timestamps": result.duplicate_timestamp_count,
+                    "minimum": result.minimum_value,
+                    "maximum": result.maximum_value,
+                    "non_finite_policy": NON_FINITE_POLICY,
+                },
+                "reduction": {"method": "none"},
+                "output": {
+                    "file_name": "series.json",
+                    "mime_type": "application/json",
+                    "size_bytes": validation.size_bytes,
+                    "file_identity": {
+                        "device_id": validation.device_id,
+                        "inode": validation.inode,
+                        "mtime_ns": validation.mtime_ns,
+                    },
+                },
+                "warnings": list(result.warnings),
+            }
+            current = resolver.resolve(job.recording_id)
+            if (
+                current.descriptor is None
+                or current.descriptor.cache_identity != job.cache_identity
+            ):
+                raise ImuSeriesProcessingError(
+                    "imu_inputs_changed", "IMU series inputs changed during generation."
+                )
+            published = artifact_store.publish_series(
+                workspace,
+                job.id,
+                job.cache_identity,
+                manifest,
+                replace_conflicting=True,
+            )
+            self.repository.complete_job(
+                job.id,
+                ArtifactWrite(
+                    recording_id=job.recording_id,
+                    kind=job.kind,
+                    cache_identity=job.cache_identity,
+                    output_relative_path=published.output_relative_path,
+                    mime_type="application/json",
+                    size_bytes=published.size_bytes,
+                    coverage_start_ns=result.coverage_start_ns,
+                    coverage_end_ns=result.coverage_end_ns,
+                    manifest=manifest,
+                ),
+            )
+            logger.info(
+                "IMU series job %s succeeded in %.3f seconds (%s samples, %s bytes).",
+                job.id,
+                time.monotonic() - started,
+                result.sample_count,
+                published.size_bytes,
+            )
+        except (ImuSeriesProcessingError, ArtifactStoreError) as error:
+            self.repository.fail_job(job.id, error.code, error.safe_message)
+            logger.warning(
+                "IMU series job %s failed with code %s.",
+                job.id,
+                error.code,
+                exc_info=True,
+            )
+        except Exception:
+            self.repository.fail_job(
+                job.id,
+                "imu_processing_failed",
+                "IMU series generation failed unexpectedly. Request it again.",
+            )
+            logger.exception("IMU series job %s failed unexpectedly.", job.id)
+        finally:
+            if workspace is not None and workspace.exists() and artifact_store is not None:
+                try:
+                    artifact_store.clean_workspace(workspace, job.id)
+                except ArtifactStoreError:
+                    logger.exception(
+                        "Owned workspace cleanup failed for IMU job %s.", job.id
+                    )
+
 
 def create_worker(config: AppConfig) -> SerialWorker:
     repository = ProcessingRepository(config.database_url)
@@ -403,6 +575,18 @@ def create_worker(config: AppConfig) -> SerialWorker:
         config.preview_profile,
         media_encoder_identity,
     )
+    imu_artifact_store = ArtifactStore(
+        config.derived_root,
+        config.ffmpeg_path,
+        config.ffprobe_path,
+        IMU_SERIES_KIND,
+    )
+    imu_resolver = ImuSourceResolver(
+        config.archive_root,
+        repository,
+        config.imu_topic,
+        config.imu_component,
+    )
     return SerialWorker(
         repository,
         resolver,
@@ -413,6 +597,9 @@ def create_worker(config: AppConfig) -> SerialWorker:
         topdown_resolver=topdown_resolver,
         topdown_processor=TopdownPreviewProcessor(config.preview_profile),
         topdown_artifact_store=topdown_artifact_store,
+        imu_resolver=imu_resolver,
+        imu_processor=ImuSeriesProcessor(),
+        imu_artifact_store=imu_artifact_store,
     )
 
 

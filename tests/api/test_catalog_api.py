@@ -97,6 +97,7 @@ async def test_list_detail_and_static_browser_contract() -> None:
         page = await client.get("/")
         detail_page = await client.get("/recordings/7")
         script = await client.get("/app.js")
+        imu_script = await client.get("/imu_graph.js")
         stylesheet = await client.get("/styles.css")
 
     assert listing.status_code == 200
@@ -120,12 +121,17 @@ async def test_list_detail_and_static_browser_contract() -> None:
     assert "VIDEO_DRIFT_TOLERANCE_SECONDS" in script.text
     assert 'paneId: "front-preview-pane"' in script.text
     assert 'paneId: "topdown-preview-pane"' in script.text
+    assert 'imuPane.id = "imu-series-pane"' in script.text
+    assert "IMU angular_velocity.z (rad/s)" in script.text
     assert script.text.count('node("button", "Play")') == 1
     assert "Object.values(controller.players).forEach" in script.text
     assert "forceSeek" in script.text
     assert "playPending" in script.text
     assert "player.playAttempt !== playAttempt" in script.text
     assert "reviewController !== controller" in script.text
+    assert "updateImuAtGlobalTime(clock.globalTime);" in script.text
+    assert "const hasTelemetry = reviewController.telemetry !== null;" in script.text
+    assert 'telemetry.currentValue.textContent = "—";' in script.text
     end_tick = script.text.index(
         "const reachedEnd = next >= controller.durationSeconds;"
     )
@@ -133,9 +139,13 @@ async def test_list_detail_and_static_browser_contract() -> None:
     synchronize_media = script.text.index("applyGlobalTime(next);", end_tick)
     assert stop_clock < synchronize_media
     assert stylesheet.status_code == 200
+    assert imu_script.status_code == 200
+    assert "sampleAtOrBefore" in imu_script.text
+    assert "cursorFraction" in imu_script.text
     assert ".table-wrapper:focus-visible" in stylesheet.text
     assert ".preview-player video[hidden]" in stylesheet.text
     assert ".camera-grid" in stylesheet.text
+    assert ".imu-cursor" in stylesheet.text
     assert listing.headers["x-content-type-options"] == "nosniff"
     assert "default-src 'self'" in listing.headers["content-security-policy"]
     assert "media-src 'self'" in listing.headers["content-security-policy"]

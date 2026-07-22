@@ -6,13 +6,12 @@ and present two cameras and one telemetry signal on a shared timeline.
 
 ## Current status
 
-Building blocks 1 and 2 are complete and user-accepted. Building block 3
-implementation and automated verification are complete; its opt-in browser and
-real-archive acceptance remain pending. It adds a timestamped top-down preview
-and a two-camera review controller to the existing four-table PostgreSQL model,
-serial worker, validated artifact store, and request/poll/range API. Building
-blocks 4 and 5 have not started. The discarded local prototype is not a
-dependency or compatibility target.
+Building blocks 1, 2, 3, and 4 are complete and user-accepted. Building block 4
+adds the configured IMU series, reusable JSON artifact, API, and one Canvas
+graph on the existing synchronized review timeline. Its confirmed audit
+corrections and automated verification are complete. The four-table PostgreSQL
+model and one serial worker remain unchanged. Building block 5 has not started.
+The discarded local prototype is not a dependency or compatibility target.
 
 ## V0 proof
 
@@ -91,10 +90,14 @@ export ROS_BAG_ANALYSER_ARCHIVE_ROOT=/path/to/read-only/archive
 export ROS_BAG_ANALYSER_DERIVED_ROOT=/path/to/separate/derived-data
 export ROS_BAG_ANALYSER_DATABASE_URL=postgresql://user:password@localhost/database
 export ROS_BAG_ANALYSER_FRONT_TOPIC=/kuupkulgur_v1/sensors/front_camera/image_raw
+export ROS_BAG_ANALYSER_IMU_TOPIC=/configured/standard/imu/topic
+export ROS_BAG_ANALYSER_IMU_COMPONENT=angular_velocity.z
 export ROS_BAG_ANALYSER_PREVIEW_PROFILE=h264-720p-v1
 ```
 
-The topic and profile shown are the defaults. `ROS_BAG_ANALYSER_FFMPEG` and
+The front topic, IMU component, and profile shown have defaults; the IMU topic
+is required because topic names are recording/environment configuration rather
+than a product constant. `ROS_BAG_ANALYSER_FFMPEG` and
 `ROS_BAG_ANALYSER_FFPROBE` may identify explicit executables; otherwise both
 are resolved from `PATH` at startup.
 
@@ -117,7 +120,8 @@ button starts a bounded read-only scan. Open a readable recording and select
 worker reads image messages and creates media. Ready files are stored below
 the configured derived root, never in the archive. The top-down pane has its
 own **Generate top-down preview** action and uses the same serial worker and
-fixed output profile.
+fixed output profile. The IMU pane has a separate **Generate IMU series**
+action, but still queues work through that one worker.
 
 The supported Building block 2 input is one configured
 `sensor_msgs/msg/Image` topic using `bgr8`. The fixed `h264-720p-v1` profile is
@@ -141,6 +145,16 @@ camera panes use one browser-owned global timeline, report measured coverage,
 and hide rather than freeze outside their coverage. A damaged ROS recording may
 still show its AVI/CSV component facts, but synchronized top-down processing is
 unavailable when the bag origin is not trustworthy.
+
+IMU processing accepts the configured `sensor_msgs/msg/Imu` topic using CDR and
+extracts only `angular_velocity.z`. ROS database record timestamps are converted
+to integer nanoseconds relative to the bag start. The derived JSON preserves
+source order, duplicate timestamps, every finite value, and explicit `null`
+gaps for non-finite values. The browser labels the signal exactly as
+`IMU angular_velocity.z (rad/s)`, maps it across the full recording timeline,
+and clears the current value outside measured coverage. The V0 series uses no
+reduction: a synthetic 76,000-sample profile measured a 2.76 MB payload, a
+41 ms parse, and a 6 ms Canvas draw in headless Edge on the development host.
 
 Run routine tests without PostgreSQL, ROS, or the real archive:
 
@@ -248,10 +262,9 @@ ROS record timestamps rather than dropped preview frames. Exact evidence is
 recorded in [ROADMAP.md](ROADMAP.md).
 
 Future access to or processing of the real archive requires separate explicit
-approval. Building block 3 implementation was approved on 2026-07-21 and its
-automated verification was completed on 2026-07-22, but the block remains
-unaccepted until its opt-in browser/real-archive checks and user review are
-complete.
+approval. Building block 3 was reviewed and accepted on 2026-07-22; its manual
+browser and real-archive procedure remains available as optional future
+revalidation.
 
 ## Building block 3 acceptance
 
@@ -292,3 +305,49 @@ approved. Keep the archive and derived-data roots separate throughout.
 PostgreSQL verification and JavaScript runtime syntax checking passed on
 2026-07-22. This browser procedure and real-archive checks are separate pieces
 of evidence and must not be reported as complete unless they are actually run.
+
+## Building block 4 acceptance
+
+Routine tests use tiny synthetic SQLite databases and generated ROS messages;
+they never access the development archive. The following end-to-end procedure
+requires separate explicit approval for the named recordings.
+
+1. Configure the exact standard IMU topic and identify one short readable
+   recording, one longer readable recording, and the damaged recording. Capture
+   a before-inventory of source-relative names, kinds, byte sizes, and
+   modification times for each selected directory.
+2. Apply migrations to a dedicated PostgreSQL database and start the API plus
+   exactly one serial worker with the same archive, derived root, front topic,
+   IMU topic, component, and preview profile.
+3. Independently inspect several short-recording IMU rows read-only and record
+   their ROS database timestamps and `angular_velocity.z` values. Do not create
+   indexes, journals, WAL files, locks, caches, or sidecars in the source.
+4. In the short recording, request the IMU series and observe `not requested`
+   through `queued`/`processing` to `ready`. Compare the graph label, units,
+   coverage, representative timestamps, values, and any non-finite gaps with
+   the independent inspection.
+5. Play, pause, and seek before, inside, and after IMU coverage while both
+   cameras are present. Confirm the graph cursor follows the one global clock,
+   the current value is the last sample at or before that clock time, duplicate
+   timestamps resolve to the last database-order sample, and no value is shown
+   outside coverage.
+6. Reload, rescan, and restart the API and worker. Confirm the ready series is
+   reused and repeated requests create no duplicate active job or artifact.
+7. Open the damaged recording and any readable recording lacking the configured
+   topic. Confirm IMU is `unavailable` and no IMU processing job is created.
+8. On the longer recording, record extraction duration, output byte size, and
+   worker maximum resident set size. Load the graph and scrub repeatedly near
+   the start, middle, and end, recording browser payload/parse/draw observations
+   and confirming responsive cursor/value updates.
+9. Capture the same source inventory after the checks and require an exact
+   before/after match. Confirm every generated file is confined to the derived
+   root.
+
+The real archive was not accessed during Building block 4 implementation. In
+the final approved acceptance handoff, the application was connected to
+`/mnt/d/Rosbags` with a separate derived root and the configured standard IMU
+topic. The opt-in catalog check found six recordings, five readable bags, and
+the expected damaged bag; its before/after source inventory was identical. The
+user reviewed and accepted Building block 4 on 2026-07-22. The independent IMU
+row comparison and longer-case resource profile remain available as optional
+future revalidation rather than recorded acceptance evidence.

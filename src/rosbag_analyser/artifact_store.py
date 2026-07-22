@@ -5,6 +5,7 @@ from fractions import Fraction
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path, PurePosixPath
 import shutil
@@ -19,7 +20,10 @@ from rosbag_analyser.timeline import media_pts_digest_chunk
 
 logger = logging.getLogger(__name__)
 MAX_MANIFEST_BYTES = 1024 * 1024
-SUPPORTED_ARTIFACT_KINDS = frozenset({"front_preview", "topdown_preview"})
+MAX_SERIES_ARTIFACT_BYTES = 32 * 1024 * 1024
+SUPPORTED_ARTIFACT_KINDS = frozenset(
+    {"front_preview", "topdown_preview", "imu_series"}
+)
 
 
 class ArtifactStoreError(RuntimeError):
@@ -47,6 +51,21 @@ class MediaValidation:
 class PublishedArtifact:
     output_relative_path: str
     size_bytes: int
+
+
+@dataclass(frozen=True)
+class SeriesValidation:
+    size_bytes: int
+    device_id: int
+    inode: int
+    mtime_ns: int
+    sample_count: int
+    finite_count: int
+    non_finite_count: int
+    coverage_start_ns: int
+    coverage_end_ns: int
+    minimum_value: float
+    maximum_value: float
 
 
 @dataclass(frozen=True)
@@ -289,12 +308,217 @@ class ArtifactStore:
             size_bytes=details.st_size,
         )
 
+    def validate_series(
+        self,
+        series_path: Path,
+        *,
+        expected_schema_version: int,
+        expected_sample_count: int,
+        expected_finite_count: int,
+        expected_non_finite_count: int,
+        expected_coverage_start_ns: int,
+        expected_coverage_end_ns: int,
+        expected_minimum_value: float,
+        expected_maximum_value: float,
+    ) -> SeriesValidation:
+        self._assert_contained(series_path)
+        try:
+            before = series_path.stat(follow_symlinks=False)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or series_path.is_symlink()
+                or before.st_size <= 0
+                or before.st_size > MAX_SERIES_ARTIFACT_BYTES
+            ):
+                raise OSError("invalid series file")
+            with series_path.open("rb") as series_file:
+                payload = series_file.read(MAX_SERIES_ARTIFACT_BYTES + 1)
+            if len(payload) != before.st_size or len(payload) > MAX_SERIES_ARTIFACT_BYTES:
+                raise OSError("invalid series size")
+            document = json.loads(
+                payload.decode("utf-8"),
+                parse_constant=_reject_json_constant,
+            )
+        except (OSError, UnicodeError, RecursionError, json.JSONDecodeError, ValueError) as error:
+            raise ArtifactStoreError(
+                "imu_series_validation_failed",
+                "The generated IMU series could not be validated.",
+            ) from error
+
+        try:
+            if not isinstance(document, dict) or set(document) != {
+                "schema_version",
+                "samples",
+            }:
+                raise ValueError("unexpected series document")
+            if document["schema_version"] != expected_schema_version:
+                raise ValueError("unexpected series schema")
+            samples = document["samples"]
+            if not isinstance(samples, list) or len(samples) != expected_sample_count:
+                raise ValueError("unexpected sample count")
+
+            finite_count = 0
+            non_finite_count = 0
+            previous_time: int | None = None
+            first_time: int | None = None
+            last_time: int | None = None
+            minimum_value: float | None = None
+            maximum_value: float | None = None
+            for sample in samples:
+                if not isinstance(sample, list) or len(sample) != 2:
+                    raise ValueError("invalid sample")
+                time_text, raw_value = sample
+                if not isinstance(time_text, str) or not _is_decimal_integer(time_text):
+                    raise ValueError("invalid sample time")
+                time_ns = int(time_text)
+                if previous_time is not None and time_ns < previous_time:
+                    raise ValueError("unordered sample time")
+                if first_time is None:
+                    first_time = time_ns
+                previous_time = time_ns
+                last_time = time_ns
+                if raw_value is None:
+                    non_finite_count += 1
+                    continue
+                if (
+                    isinstance(raw_value, bool)
+                    or not isinstance(raw_value, (int, float))
+                    or not math.isfinite(float(raw_value))
+                ):
+                    raise ValueError("invalid sample value")
+                value = float(raw_value)
+                finite_count += 1
+                minimum_value = value if minimum_value is None else min(minimum_value, value)
+                maximum_value = value if maximum_value is None else max(maximum_value, value)
+            if (
+                first_time is None
+                or last_time is None
+                or minimum_value is None
+                or maximum_value is None
+                or finite_count != expected_finite_count
+                or non_finite_count != expected_non_finite_count
+                or first_time != expected_coverage_start_ns
+                or last_time != expected_coverage_end_ns
+                or minimum_value != expected_minimum_value
+                or maximum_value != expected_maximum_value
+            ):
+                raise ValueError("series facts do not match")
+            after = series_path.stat(follow_symlinks=False)
+            if (
+                not stat.S_ISREG(after.st_mode)
+                or after.st_dev != before.st_dev
+                or after.st_ino != before.st_ino
+                or after.st_size != before.st_size
+                or after.st_mtime_ns != before.st_mtime_ns
+            ):
+                raise ValueError("series changed during validation")
+        except (OSError, TypeError, ValueError, OverflowError) as error:
+            raise ArtifactStoreError(
+                "imu_series_validation_mismatch",
+                "The generated IMU series does not match its expected data.",
+            ) from error
+
+        return SeriesValidation(
+            size_bytes=before.st_size,
+            device_id=before.st_dev,
+            inode=before.st_ino,
+            mtime_ns=before.st_mtime_ns,
+            sample_count=expected_sample_count,
+            finite_count=finite_count,
+            non_finite_count=non_finite_count,
+            coverage_start_ns=first_time,
+            coverage_end_ns=last_time,
+            minimum_value=minimum_value,
+            maximum_value=maximum_value,
+        )
+
+    def publish_series(
+        self,
+        workspace: Path,
+        job_id: int,
+        cache_identity: str,
+        manifest: dict[str, object],
+        *,
+        replace_conflicting: bool = False,
+    ) -> PublishedArtifact:
+        self._assert_owned_workspace(workspace, job_id)
+        if self.artifact_kind != "imu_series":
+            raise ArtifactStoreError(
+                "artifact_kind_invalid", "The artifact kind is unsupported."
+            )
+        if len(cache_identity) != 64 or any(
+            character not in "0123456789abcdef" for character in cache_identity
+        ):
+            raise ArtifactStoreError(
+                "artifact_identity_invalid", "The artifact identity is invalid."
+            )
+        series_path = workspace / "series.json"
+        if not series_path.is_file() or series_path.is_symlink():
+            raise ArtifactStoreError(
+                "imu_series_output_missing", "The generated IMU series is missing."
+            )
+        series_details = series_path.stat(follow_symlinks=False)
+        _validate_publish_manifest(
+            manifest, self.artifact_kind, cache_identity, series_details
+        )
+        manifest_path = workspace / "manifest.json"
+        manifest_path.write_text(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+
+        final_directory = self.artifacts_root / cache_identity[:2] / cache_identity
+        self._assert_contained(final_directory)
+        self._ensure_directory(final_directory.parent)
+        if final_directory.exists():
+            try:
+                return self._reuse_published(
+                    final_directory,
+                    cache_identity,
+                    manifest,
+                    output_name="series.json",
+                )
+            except ArtifactStoreError:
+                if not replace_conflicting:
+                    raise
+                return self._replace_published(
+                    workspace,
+                    final_directory,
+                    job_id,
+                    cache_identity,
+                    output_name="series.json",
+                )
+        try:
+            os.rename(workspace, final_directory)
+        except FileExistsError:
+            return self._reuse_published(
+                final_directory,
+                cache_identity,
+                manifest,
+                output_name="series.json",
+            )
+        except OSError as error:
+            raise ArtifactStoreError(
+                "artifact_publish_failed", "The IMU series could not be published."
+            ) from error
+
+        published_series = final_directory / "series.json"
+        details = published_series.stat(follow_symlinks=False)
+        return PublishedArtifact(
+            output_relative_path=published_series.relative_to(
+                self.derived_root
+            ).as_posix(),
+            size_bytes=details.st_size,
+        )
+
     def _replace_published(
         self,
         workspace: Path,
         final_directory: Path,
         job_id: int,
         cache_identity: str,
+        *,
+        output_name: str = "preview.mp4",
     ) -> PublishedArtifact:
         self._assert_owned_workspace(workspace, job_id)
         self._assert_contained(final_directory)
@@ -306,7 +530,7 @@ class ArtifactStore:
         self._assert_contained(backup)
         if backup.exists() or backup.is_symlink():
             raise ArtifactStoreError(
-                "artifact_publish_failed", "The preview could not be published."
+                "artifact_publish_failed", "The artifact could not be published."
             )
         try:
             os.rename(final_directory, backup)
@@ -317,7 +541,7 @@ class ArtifactStore:
                 raise
         except OSError as error:
             raise ArtifactStoreError(
-                "artifact_publish_failed", "The preview could not be published."
+                "artifact_publish_failed", "The artifact could not be published."
             ) from error
 
         try:
@@ -331,7 +555,7 @@ class ArtifactStore:
                 job_id,
                 exc_info=True,
             )
-        published_media = final_directory / "preview.mp4"
+        published_media = final_directory / output_name
         details = published_media.stat(follow_symlinks=False)
         return PublishedArtifact(
             output_relative_path=published_media.relative_to(
@@ -428,15 +652,105 @@ class ArtifactStore:
         finally:
             os.close(directory_descriptor)
 
+    def validate_series_artifact(
+        self,
+        relative_path: str,
+        expected_size: int,
+        cache_identity: str,
+        expected_manifest: dict[str, object],
+    ) -> None:
+        opened = self.open_series(
+            relative_path,
+            expected_size,
+            cache_identity,
+            expected_manifest,
+        )
+        os.close(opened.descriptor)
+
+    def open_series(
+        self,
+        relative_path: str,
+        expected_size: int,
+        cache_identity: str,
+        expected_manifest: dict[str, object],
+    ) -> OpenedMedia:
+        expected_relative = PurePosixPath(
+            "rosbag-analyser",
+            "artifacts",
+            self.artifact_kind,
+            cache_identity[:2],
+            cache_identity,
+            "series.json",
+        )
+        relative = PurePosixPath(relative_path)
+        if (
+            self.artifact_kind != "imu_series"
+            or len(cache_identity) != 64
+            or any(character not in "0123456789abcdef" for character in cache_identity)
+            or relative != expected_relative
+        ):
+            raise ArtifactStoreError(
+                "artifact_path_invalid", "The ready IMU series path is invalid."
+            )
+
+        directory_descriptor = self._open_anchored_directory(
+            expected_relative.parent.parts
+        )
+        try:
+            manifest = self._read_manifest_at(directory_descriptor)
+            if (
+                manifest != expected_manifest
+                or manifest.get("artifact_kind") != self.artifact_kind
+                or manifest.get("cache_identity") != cache_identity
+                or _manifest_output_size(manifest) != expected_size
+            ):
+                raise ArtifactStoreError(
+                    "artifact_manifest_mismatch", "The ready IMU series is invalid."
+                )
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
+                os, "O_NOFOLLOW", 0
+            )
+            try:
+                descriptor = os.open(
+                    expected_relative.name,
+                    flags,
+                    dir_fd=directory_descriptor,
+                )
+            except OSError as error:
+                raise ArtifactStoreError(
+                    "artifact_file_missing",
+                    "The ready IMU series file is unavailable.",
+                ) from error
+            try:
+                details = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(details.st_mode)
+                    or details.st_size != expected_size
+                    or _manifest_output_identity(manifest)
+                    != (details.st_dev, details.st_ino, details.st_mtime_ns)
+                ):
+                    raise ArtifactStoreError(
+                        "artifact_file_changed",
+                        "The ready IMU series file is invalid.",
+                    )
+                return OpenedMedia(descriptor, details)
+            except BaseException:
+                os.close(descriptor)
+                raise
+        finally:
+            os.close(directory_descriptor)
+
     def _reuse_published(
         self,
         directory: Path,
         cache_identity: str,
         expected_manifest: dict[str, object],
+        *,
+        output_name: str = "preview.mp4",
     ) -> PublishedArtifact:
         self._assert_contained(directory)
         manifest = self._read_manifest(directory / "manifest.json")
-        media_path = directory / "preview.mp4"
+        media_path = directory / output_name
         if (
             manifest != expected_manifest
             or media_path.is_symlink()
@@ -467,7 +781,7 @@ class ArtifactStore:
             return self._read_manifest_descriptor(descriptor)
         except (OSError, UnicodeError, RecursionError, json.JSONDecodeError) as error:
             raise ArtifactStoreError(
-                "artifact_manifest_invalid", "The ready preview manifest is invalid."
+                "artifact_manifest_invalid", "The ready artifact manifest is invalid."
             ) from error
 
     def _read_manifest_at(self, directory_descriptor: int) -> dict[str, Any]:
@@ -483,7 +797,7 @@ class ArtifactStore:
             return self._read_manifest_descriptor(descriptor)
         except (OSError, UnicodeError, RecursionError, json.JSONDecodeError) as error:
             raise ArtifactStoreError(
-                "artifact_manifest_invalid", "The ready preview manifest is invalid."
+                "artifact_manifest_invalid", "The ready artifact manifest is invalid."
             ) from error
 
     @staticmethod
@@ -524,7 +838,7 @@ class ArtifactStore:
         except OSError as error:
             os.close(descriptor)
             raise ArtifactStoreError(
-                "artifact_path_invalid", "The ready preview path is invalid."
+                "artifact_path_invalid", "The ready artifact path is invalid."
             ) from error
 
     def _assert_owned_workspace(self, workspace: Path, job_id: int) -> None:
@@ -534,7 +848,7 @@ class ArtifactStore:
         ):
             raise ArtifactStoreError(
                 "workspace_ownership_invalid",
-                "The temporary preview workspace is not owned by this job.",
+                "The temporary artifact workspace is not owned by this job.",
             )
 
     def _assert_contained(self, path: Path) -> None:
@@ -698,7 +1012,7 @@ def _validate_publish_manifest(
     ):
         raise ArtifactStoreError(
             "artifact_manifest_invalid",
-            "The generated preview manifest is invalid.",
+            "The generated artifact manifest is invalid.",
         )
 
 
@@ -783,3 +1097,16 @@ def _manifest_output_identity(
     if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
         return None
     return values  # type: ignore[return-value]
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"Unsupported JSON constant: {value}")
+
+
+def _is_decimal_integer(value: str) -> bool:
+    if value == "0":
+        return True
+    if value.startswith("-"):
+        digits = value[1:]
+        return bool(digits) and digits[0] != "0" and digits.isdigit()
+    return bool(value) and value[0] != "0" and value.isdigit()

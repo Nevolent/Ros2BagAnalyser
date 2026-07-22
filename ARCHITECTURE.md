@@ -2,8 +2,7 @@
 
 > **Status:** Accepted V0 architecture
 >
-> **Implementation status:** Building blocks 1 and 2 complete and user-accepted;
-> Building block 3 implemented, pending opt-in acceptance
+> **Implementation status:** Building blocks 1–4 complete and user-accepted
 >
 > **Last updated:** 2026-07-22
 
@@ -454,6 +453,30 @@ never clipped to the global recording duration. The browser uses the existing
 100-millisecond drift threshold for each player, force-seeks both players on an
 explicit scrub, and hides an individual pane outside measured coverage.
 
+### 12.3 Building block 4 IMU profile
+
+The first IMU processor accepts one configured CDR `sensor_msgs/msg/Imu` topic
+and the fixed `angular_velocity.z` component. It opens the catalogued SQLite
+database through an immutable, explicitly read-only connection, verifies the
+source identity and topic contract, checks serialized length before fetching a
+BLOB, and deserializes one row at a time. It uses ROS database record timestamps
+relative to the bag start; message header stamps do not replace that clock.
+
+The derived artifact is bounded JSON with schema version 1 and ordered
+`[bag_relative_nanoseconds, value]` samples. Nanoseconds are decimal strings so
+the browser does not lose integer precision. Finite values are JSON numbers,
+non-finite source values are explicit `null` gaps, and equal timestamps retain
+database order. The cache identity includes source identities, bag timing,
+topic/type/serialization, component, processor/schema versions, null and
+duplicate policies, and the reduction decision.
+
+V0 deliberately uses `reduction: none`. A 76,000-sample synthetic profile
+measured a 2.76 MB payload, a 41 ms parse/validation, and a 6 ms Canvas draw in
+headless Edge on the development host, so reduction was not justified. The
+native Canvas trace maps bag-relative sample time to the full recording
+duration. Its cursor and current value are read-only consumers of the existing
+browser global clock; the graph does not own time or add click-to-seek.
+
 ## 13. Delivery contracts
 
 The API exposes catalog, artifact, and timeline capabilities without leaking
@@ -462,6 +485,9 @@ use GET and POST on `/api/recordings/{id}/front-preview` and
 `/api/recordings/{id}/topdown-preview`. Each has a separate identity-specific
 GET/HEAD media route with one browser byte range, strong validator, and
 `If-Range` support. A stale artifact URL cannot resolve to a newer artifact.
+IMU uses GET/POST `/api/recordings/{id}/imu-series` and an identity-specific
+GET/HEAD JSON data route with the same contained-file, range, validator, and
+stale-URL rules.
 Scanner dispatch remains replaceable without changing its core contract, and
 ready media supports seeking without a complete download.
 

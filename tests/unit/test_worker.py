@@ -5,12 +5,20 @@ from pathlib import Path
 import shutil
 from types import SimpleNamespace
 
-from rosbag_analyser.artifact_store import MediaValidation, PublishedArtifact
+from rosbag_analyser.artifact_store import (
+    MediaValidation,
+    PublishedArtifact,
+    SeriesValidation,
+)
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
 from rosbag_analyser.persistence.processing_repository import JobRecord
 from rosbag_analyser.processors.front_preview import (
     FrontPreviewProcessingError,
     FrontPreviewResult,
+)
+from rosbag_analyser.processors.imu_series import (
+    ImuSeriesProcessingError,
+    ImuSeriesResult,
 )
 from rosbag_analyser.processors.topdown_preview import (
     TopdownPreviewProcessingError,
@@ -44,6 +52,10 @@ def _topdown_job() -> JobRecord:
     )
 
 
+def _imu_job() -> JobRecord:
+    return JobRecord(**{**_job().__dict__, "kind": "imu_series"})
+
+
 class FakeRepository:
     def __init__(self, job: JobRecord | None) -> None:
         self.job = job
@@ -73,6 +85,23 @@ class FakeResolver:
                 message_type="sensor_msgs/msg/Image",
                 serialization_format="cdr",
             ),
+        )
+
+    def resolve(self, recording_id: int):
+        del recording_id
+        return SimpleNamespace(descriptor=self.descriptor, diagnostic=None)
+
+
+class FakeImuResolver:
+    def __init__(self) -> None:
+        self.descriptor = SimpleNamespace(
+            cache_identity="a" * 64,
+            topic=SimpleNamespace(
+                name="/sensors/imu",
+                message_type="sensor_msgs/msg/Imu",
+                serialization_format="cdr",
+            ),
+            component="angular_velocity.z",
         )
 
     def resolve(self, recording_id: int):
@@ -135,6 +164,34 @@ class FailingTopdownProcessor(SuccessfulTopdownProcessor):
         )
 
 
+class SuccessfulImuProcessor:
+    def process(self, descriptor, output_path: Path) -> ImuSeriesResult:
+        del descriptor
+        output_path.write_text(
+            '{"schema_version":1,"samples":[["100000000",1.5],'
+            '["300000000",null],["900000000",-2.0]]}'
+        )
+        return ImuSeriesResult(
+            sample_count=3,
+            finite_count=2,
+            non_finite_count=1,
+            duplicate_timestamp_count=0,
+            coverage_start_ns=100_000_000,
+            coverage_end_ns=900_000_000,
+            minimum_value=-2.0,
+            maximum_value=1.5,
+            warnings=("non_finite_values_present",),
+        )
+
+
+class FailingImuProcessor(SuccessfulImuProcessor):
+    def process(self, descriptor, output_path: Path) -> ImuSeriesResult:
+        del descriptor, output_path
+        raise ImuSeriesProcessingError(
+            "imu_deserialization_failed", "An IMU message could not be decoded."
+        )
+
+
 class FakeArtifactStore:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -180,6 +237,42 @@ class FakeArtifactStore:
         final = self.root / "published.mp4"
         media.replace(final)
         return PublishedArtifact("rosbag-analyser/published.mp4", final.stat().st_size)
+
+    def validate_series(self, path: Path, **expectations) -> SeriesValidation:
+        self.validation_expectations = expectations
+        details = path.stat(follow_symlinks=False)
+        return SeriesValidation(
+            size_bytes=details.st_size,
+            device_id=details.st_dev,
+            inode=details.st_ino,
+            mtime_ns=details.st_mtime_ns,
+            sample_count=3,
+            finite_count=2,
+            non_finite_count=1,
+            coverage_start_ns=100_000_000,
+            coverage_end_ns=900_000_000,
+            minimum_value=-2.0,
+            maximum_value=1.5,
+        )
+
+    def publish_series(
+        self,
+        workspace: Path,
+        job_id: int,
+        cache_identity: str,
+        manifest: dict[str, object],
+        *,
+        replace_conflicting: bool = False,
+    ) -> PublishedArtifact:
+        del job_id, cache_identity
+        assert replace_conflicting
+        self.published_manifest = manifest
+        series = workspace / "series.json"
+        final = self.root / "published-series.json"
+        series.replace(final)
+        return PublishedArtifact(
+            "rosbag-analyser/published-series.json", final.stat().st_size
+        )
 
     def clean_workspace(self, workspace: Path, job_id: int) -> None:
         del job_id
@@ -309,6 +402,82 @@ def test_topdown_processing_failure_creates_no_artifact(tmp_path: Path) -> None:
             "The top-down video and timestamp row counts do not match.",
         )
     ]
+    assert not (tmp_path / "job-5-owned").exists()
+
+
+def test_worker_dispatches_imu_series_with_record_time_provenance(
+    tmp_path: Path,
+) -> None:
+    repository = FakeRepository(_imu_job())
+    imu_store = FakeArtifactStore(tmp_path)
+    worker = SerialWorker(
+        repository,  # type: ignore[arg-type]
+        FakeResolver(),  # type: ignore[arg-type]
+        SuccessfulProcessor(),  # type: ignore[arg-type]
+        FakeArtifactStore(tmp_path),  # type: ignore[arg-type]
+        "/camera/image_raw",
+        "test-encoder-v1",
+        imu_resolver=FakeImuResolver(),  # type: ignore[arg-type]
+        imu_processor=SuccessfulImuProcessor(),  # type: ignore[arg-type]
+        imu_artifact_store=imu_store,  # type: ignore[arg-type]
+    )
+
+    assert worker.run_once()
+
+    assert repository.failures == []
+    assert len(repository.completed) == 1
+    _, artifact = repository.completed[0]
+    assert artifact.kind == "imu_series"
+    assert artifact.mime_type == "application/json"
+    assert artifact.coverage_start_ns == 100_000_000
+    assert imu_store.published_manifest is not None
+    assert imu_store.published_manifest["artifact_kind"] == "imu_series"
+    assert imu_store.published_manifest["timing"] == {
+        "timestamp_provenance": "ros_record_timestamp",
+        "bounds": "measured",
+        "coverage_start_ns": "100000000",
+        "coverage_end_ns": "900000000",
+        "duplicate_timestamp_policy": "preserve-database-order",
+    }
+    assert imu_store.published_manifest["reduction"] == {"method": "none"}
+    source = imu_store.published_manifest["source"]
+    assert isinstance(source, dict)
+    assert source["display_label"] == "IMU angular_velocity.z (rad/s)"
+    assert source["units"] == "rad/s"
+    assert imu_store.validation_expectations == {
+        "expected_schema_version": 1,
+        "expected_sample_count": 3,
+        "expected_finite_count": 2,
+        "expected_non_finite_count": 1,
+        "expected_coverage_start_ns": 100_000_000,
+        "expected_coverage_end_ns": 900_000_000,
+        "expected_minimum_value": -2.0,
+        "expected_maximum_value": 1.5,
+    }
+
+
+def test_imu_failure_creates_no_ready_artifact(tmp_path: Path) -> None:
+    repository = FakeRepository(_imu_job())
+    imu_store = FakeArtifactStore(tmp_path)
+    worker = SerialWorker(
+        repository,  # type: ignore[arg-type]
+        FakeResolver(),  # type: ignore[arg-type]
+        SuccessfulProcessor(),  # type: ignore[arg-type]
+        FakeArtifactStore(tmp_path),  # type: ignore[arg-type]
+        "/camera/image_raw",
+        "test-encoder-v1",
+        imu_resolver=FakeImuResolver(),  # type: ignore[arg-type]
+        imu_processor=FailingImuProcessor(),  # type: ignore[arg-type]
+        imu_artifact_store=imu_store,  # type: ignore[arg-type]
+    )
+
+    assert worker.run_once()
+
+    assert repository.completed == []
+    assert repository.failures == [
+        (5, "imu_deserialization_failed", "An IMU message could not be decoded.")
+    ]
+    assert imu_store.published_manifest is None
     assert not (tmp_path / "job-5-owned").exists()
 
 

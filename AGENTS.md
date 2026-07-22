@@ -13,6 +13,8 @@ Building blocks 1 and 2 were completed and user-accepted on 2026-07-21.
 Building block 3 implementation was approved on 2026-07-21 for the exact
 top-down-camera and dual-video-synchronization boundary in `ROADMAP.md`, and
 its implementation and automated verification were completed on 2026-07-22.
+The user reviewed and accepted Building block 3, approved Building block 4,
+then reviewed and accepted Building block 4 on 2026-07-22.
 
 ## Required reading
 
@@ -237,14 +239,13 @@ User review is required before committing or beginning the next block.
 
 ## Current instruction
 
-During Building block 3:
+After Building block 4 acceptance:
 
-- Building blocks 1 and 2 are complete and accepted;
-- Building block 3 is implemented only for the top-down AVI/CSV processor and
-  dual-video synchronization boundary in `ROADMAP.md`; its opt-in acceptance
-  remains pending;
-- preserve the accepted front-preview behavior and four-table, one-worker
+- Building blocks 1, 2, 3, and 4 are complete and accepted;
+- no later roadmap block is active;
+- preserve the accepted front/top-down behavior and four-table, one-worker
   processing model;
-- do not add telemetry, IMU processing, or later-roadmap features;
-- do not access the real archive without explicit opt-in acceptance approval;
-- do not begin Building block 4 without separate user review and approval.
+- do not add arbitrary telemetry, extra graphs, custom-message processing, or
+  later-roadmap features;
+- do not access the real archive again without explicit opt-in approval;
+- do not begin Building block 5 without separate user review and approval.

@@ -245,7 +245,7 @@ EXPECTED_CATALOG_CONSTRAINTS = {
     (
         "artifacts",
         "c",
-        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview']))",
+        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview', 'imu_series']))",
     ),
     ("artifacts", "c", "CHECK (char_length(cache_identity) = 64)"),
     ("artifacts", "c", "CHECK (output_relative_path <> '')"),
@@ -275,7 +275,7 @@ EXPECTED_CATALOG_CONSTRAINTS = {
     (
         "jobs",
         "c",
-        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview']))",
+        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview', 'imu_series']))",
     ),
     ("jobs", "c", "CHECK (char_length(cache_identity) = 64)"),
     (

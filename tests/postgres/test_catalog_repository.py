@@ -154,7 +154,7 @@ def test_migration_contains_exactly_four_v0_domain_tables(postgres_url: str) -> 
 
 
 @pytest.mark.postgres
-def test_front_and_topdown_kinds_are_allowed_and_isolated(
+def test_front_topdown_and_imu_kinds_are_allowed_and_isolated(
     postgres_url: str,
 ) -> None:
     catalog = CatalogRepository(postgres_url)
@@ -165,10 +165,13 @@ def test_front_and_topdown_kinds_are_allowed_and_isolated(
 
     front = repository.request_job(recording_id, "front_preview", identity)
     topdown = repository.request_job(recording_id, "topdown_preview", identity)
+    imu = repository.request_job(recording_id, "imu_series", identity)
 
     assert front.job is not None
     assert topdown.job is not None
+    assert imu.job is not None
     assert front.job.id != topdown.job.id
+    assert imu.job.id not in {front.job.id, topdown.job.id}
     with pytest.raises(psycopg.errors.CheckViolation):
         with open_connection(postgres_url) as connection:
             connection.execute(

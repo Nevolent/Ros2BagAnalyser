@@ -7,6 +7,7 @@ import pytest
 
 from rosbag_analyser.config import (
     DEFAULT_FRONT_TOPIC,
+    DEFAULT_IMU_COMPONENT,
     DEFAULT_PREVIEW_PROFILE,
     AppConfig,
     ConfigurationError,
@@ -14,6 +15,7 @@ from rosbag_analyser.config import (
 
 
 DATABASE_URL = "postgresql://catalog_user:secret@example.invalid/catalog"
+IMU_TOPIC = "/sensors/imu"
 
 
 def test_accepts_existing_separate_roots(tmp_path: Path) -> None:
@@ -22,11 +24,13 @@ def test_accepts_existing_separate_roots(tmp_path: Path) -> None:
     archive.mkdir()
     derived.mkdir()
 
-    config = AppConfig.create(archive, derived, DATABASE_URL)
+    config = AppConfig.create(archive, derived, DATABASE_URL, imu_topic=IMU_TOPIC)
 
     assert config.archive_root == archive.resolve()
     assert config.derived_root == derived.resolve()
     assert config.front_topic == DEFAULT_FRONT_TOPIC
+    assert config.imu_topic == IMU_TOPIC
+    assert config.imu_component == DEFAULT_IMU_COMPONENT
     assert config.preview_profile.name == DEFAULT_PREVIEW_PROFILE
     assert config.ffmpeg_path.is_file()
     assert config.ffprobe_path.is_file()
@@ -40,7 +44,7 @@ def test_rejects_overlapping_roots(tmp_path: Path, nested_side: str) -> None:
     archive, derived = (parent, child) if nested_side == "archive" else (child, parent)
 
     with pytest.raises(ConfigurationError, match="must not overlap"):
-        AppConfig.create(archive, derived, DATABASE_URL)
+        AppConfig.create(archive, derived, DATABASE_URL, imu_topic=IMU_TOPIC)
 
 
 def test_rejects_same_root_through_symlink_alias(tmp_path: Path) -> None:
@@ -50,7 +54,7 @@ def test_rejects_same_root_through_symlink_alias(tmp_path: Path) -> None:
     alias.symlink_to(root, target_is_directory=True)
 
     with pytest.raises(ConfigurationError, match="must not overlap"):
-        AppConfig.create(root, alias, DATABASE_URL)
+        AppConfig.create(root, alias, DATABASE_URL, imu_topic=IMU_TOPIC)
 
 
 def test_rejects_roots_when_filesystem_identity_matches(
@@ -71,7 +75,7 @@ def test_rejects_roots_when_filesystem_identity_matches(
     monkeypatch.setattr(os.path, "samefile", samefile_with_case_alias)
 
     with pytest.raises(ConfigurationError, match="must not overlap"):
-        AppConfig.create(archive, derived, DATABASE_URL)
+        AppConfig.create(archive, derived, DATABASE_URL, imu_topic=IMU_TOPIC)
 
 
 def test_rejects_non_postgresql_url_without_exposing_secret(tmp_path: Path) -> None:
@@ -81,7 +85,9 @@ def test_rejects_non_postgresql_url_without_exposing_secret(tmp_path: Path) -> N
     derived.mkdir()
 
     with pytest.raises(ConfigurationError) as captured:
-        AppConfig.create(archive, derived, "sqlite:///secret-value")
+        AppConfig.create(
+            archive, derived, "sqlite:///secret-value", imu_topic=IMU_TOPIC
+        )
 
     assert "secret-value" not in str(captured.value)
 
@@ -89,6 +95,22 @@ def test_rejects_non_postgresql_url_without_exposing_secret(tmp_path: Path) -> N
 def test_environment_requires_all_settings(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="ARCHIVE_ROOT"):
         AppConfig.from_environment({})
+
+
+def test_environment_requires_imu_topic(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    derived = tmp_path / "derived"
+    archive.mkdir()
+    derived.mkdir()
+
+    with pytest.raises(ConfigurationError, match="IMU_TOPIC"):
+        AppConfig.from_environment(
+            {
+                "ROS_BAG_ANALYSER_ARCHIVE_ROOT": str(archive),
+                "ROS_BAG_ANALYSER_DERIVED_ROOT": str(derived),
+                "ROS_BAG_ANALYSER_DATABASE_URL": DATABASE_URL,
+            }
+        )
 
 
 @pytest.mark.parametrize(
@@ -112,7 +134,40 @@ def test_rejects_invalid_front_camera_topics(tmp_path: Path, topic: str) -> None
     derived.mkdir()
 
     with pytest.raises(ConfigurationError, match="front-camera topic"):
-        AppConfig.create(archive, derived, DATABASE_URL, front_topic=topic)
+        AppConfig.create(
+            archive,
+            derived,
+            DATABASE_URL,
+            imu_topic=IMU_TOPIC,
+            front_topic=topic,
+        )
+
+
+@pytest.mark.parametrize("topic", ["imu", "/imu/", "/imu data"])
+def test_rejects_invalid_imu_topics(tmp_path: Path, topic: str) -> None:
+    archive = tmp_path / "archive"
+    derived = tmp_path / "derived"
+    archive.mkdir()
+    derived.mkdir()
+
+    with pytest.raises(ConfigurationError, match="IMU topic"):
+        AppConfig.create(archive, derived, DATABASE_URL, imu_topic=topic)
+
+
+def test_rejects_unknown_imu_component(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    derived = tmp_path / "derived"
+    archive.mkdir()
+    derived.mkdir()
+
+    with pytest.raises(ConfigurationError, match=DEFAULT_IMU_COMPONENT):
+        AppConfig.create(
+            archive,
+            derived,
+            DATABASE_URL,
+            imu_topic=IMU_TOPIC,
+            imu_component="linear_acceleration.x",
+        )
 
 
 def test_rejects_unknown_preview_profile(tmp_path: Path) -> None:
@@ -126,6 +181,7 @@ def test_rejects_unknown_preview_profile(tmp_path: Path) -> None:
             archive,
             derived,
             DATABASE_URL,
+            imu_topic=IMU_TOPIC,
             preview_profile="future-profile",
         )
 
@@ -141,6 +197,7 @@ def test_rejects_missing_media_executable(tmp_path: Path) -> None:
             archive,
             derived,
             DATABASE_URL,
+            imu_topic=IMU_TOPIC,
             ffmpeg_path="definitely-not-a-real-ffmpeg-command",
         )
 
@@ -156,5 +213,6 @@ def test_rejects_executable_with_wrong_media_identity(tmp_path: Path) -> None:
             archive,
             derived,
             DATABASE_URL,
+            imu_topic=IMU_TOPIC,
             ffmpeg_path="/bin/true",
         )

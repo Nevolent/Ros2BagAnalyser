@@ -6,6 +6,9 @@ const rescanButton = document.querySelector("#rescan-button");
 const statusMessage = document.querySelector("#status-message");
 const recordingMatch = window.location.pathname.match(/^\/recordings\/(\d+)\/?$/);
 const previewPollTimers = { front: null, topdown: null };
+let imuPollTimer = null;
+let imuDataController = null;
+let imuLoadGeneration = 0;
 let timelineAnimation = null;
 let reviewController = null;
 const PREVIEW_RETRY_DELAY_MS = 2000;
@@ -187,7 +190,7 @@ function renderRecording(recording) {
 
   const review = node("section", null, "panel preview-panel");
   review.id = "camera-review-panel";
-  review.append(node("h2", "Synchronized camera review"));
+  review.append(node("h2", "Synchronized review"));
   const cameraGrid = node("div", null, "camera-grid");
   const frontPane = node("article", null, "camera-pane");
   frontPane.id = "front-preview-pane";
@@ -198,7 +201,11 @@ function renderRecording(recording) {
   topdownPane.append(node("h3", "Top-down camera"));
   topdownPane.append(node("p", "Loading preview state…", "preview-state"));
   cameraGrid.append(frontPane, topdownPane);
-  review.append(cameraGrid);
+  const imuPane = node("article", null, "imu-pane");
+  imuPane.id = "imu-series-pane";
+  imuPane.append(node("h3", "IMU angular_velocity.z (rad/s)"));
+  imuPane.append(node("p", "Loading IMU series state…", "preview-state"));
+  review.append(cameraGrid, imuPane);
   content.append(review);
 
   const components = node("section", null, "panel");
@@ -255,8 +262,19 @@ function stopReviewActivity() {
       previewPollTimers[kind] = null;
     }
   });
+  if (imuPollTimer !== null) {
+    window.clearTimeout(imuPollTimer);
+    imuPollTimer = null;
+  }
+  if (imuDataController !== null) {
+    imuDataController.abort();
+    imuDataController = null;
+  }
   if (reviewController) {
     Object.values(reviewController.players).forEach((player) => pausePlayer(player));
+    if (reviewController.telemetry?.resizeObserver) {
+      reviewController.telemetry.resizeObserver.disconnect();
+    }
   }
   if (timelineAnimation !== null) {
     window.cancelAnimationFrame(timelineAnimation);
@@ -273,6 +291,7 @@ function initializeCameraReview(recording) {
   reviewController = createGlobalTimeline(recording.id, durationSeconds);
   loadPreviewState("front", recording.id);
   loadPreviewState("topdown", recording.id);
+  loadImuState(recording.id);
 }
 
 async function loadPreviewState(kind, recordingId) {
@@ -418,6 +437,324 @@ function removePlayer(kind) {
   updateTransportAvailability();
 }
 
+async function loadImuState(recordingId) {
+  if (imuPollTimer !== null) {
+    window.clearTimeout(imuPollTimer);
+    imuPollTimer = null;
+  }
+  try {
+    const series = await requestJson(`/api/recordings/${recordingId}/imu-series`);
+    renderImuState(recordingId, series);
+  } catch (error) {
+    removeImuGraph();
+    const pane = document.querySelector("#imu-series-pane");
+    if (!pane) return;
+    const retry = node("button", "Retry IMU status");
+    retry.type = "button";
+    retry.addEventListener("click", () => loadImuState(recordingId));
+    pane.replaceChildren(
+      node("h3", "IMU angular_velocity.z (rad/s)"),
+      node("p", "status unavailable", "preview-state preview-state-failed"),
+      node("p", error.message, "diagnostic-block"),
+      retry,
+    );
+    imuPollTimer = window.setTimeout(
+      () => loadImuState(recordingId),
+      PREVIEW_RETRY_DELAY_MS,
+    );
+  }
+}
+
+function renderImuState(recordingId, series) {
+  removeImuGraph();
+  const pane = document.querySelector("#imu-series-pane");
+  if (!pane) return;
+  pane.replaceChildren(node("h3", "IMU angular_velocity.z (rad/s)"));
+  pane.append(
+    node(
+      "p",
+      series.state.replaceAll("_", " "),
+      `preview-state preview-state-${series.state}`,
+    ),
+  );
+  if (series.diagnostic) {
+    pane.append(node("p", series.diagnostic.message, "diagnostic-block"));
+  }
+
+  if (series.state === "not_requested" || series.state === "failed") {
+    const action = node(
+      "button",
+      series.state === "failed" ? "Retry IMU series" : "Generate IMU series",
+    );
+    action.type = "button";
+    action.addEventListener("click", async () => {
+      action.disabled = true;
+      showStatus("Requesting IMU angular-velocity series…");
+      try {
+        const result = await requestJson(
+          `/api/recordings/${recordingId}/imu-series`,
+          { method: "POST" },
+        );
+        renderImuState(recordingId, result);
+        showStatus(
+          result.state === "ready" ? "IMU series is ready." : "IMU series requested.",
+        );
+      } catch (error) {
+        showStatus(error.message, "error");
+        action.disabled = false;
+      }
+    });
+    pane.append(action);
+    return;
+  }
+
+  if (series.state === "queued" || series.state === "processing") {
+    pane.append(
+      node(
+        "p",
+        series.state === "queued"
+          ? "Waiting for the serial worker."
+          : "The serial worker is extracting IMU angular velocity.",
+      ),
+    );
+    imuPollTimer = window.setTimeout(
+      () => loadImuState(recordingId),
+      series.poll_after_ms || 1000,
+    );
+    return;
+  }
+
+  if (series.state === "ready" && series.artifact) {
+    loadReadyImuGraph(recordingId, pane, series.artifact);
+  }
+}
+
+async function loadReadyImuGraph(recordingId, pane, artifact) {
+  const generation = ++imuLoadGeneration;
+  imuDataController = new AbortController();
+  const loading = node("p", "Loading IMU graph data…", "imu-load-state");
+  pane.append(loading);
+  try {
+    const document = await requestJson(artifact.data_url, {
+      signal: imuDataController.signal,
+    });
+    if (generation !== imuLoadGeneration || !reviewController) return;
+    const parsed = window.ImuGraph.parseSeries(document, artifact);
+    renderImuGraph(pane, artifact, parsed);
+    loading.remove();
+  } catch (error) {
+    if (error.name === "AbortError" || generation !== imuLoadGeneration) return;
+    removeImuGraph();
+    loading.textContent = "Graph data could not be loaded.";
+    loading.className = "diagnostic-block";
+    const retry = node("button", "Reload graph data");
+    retry.type = "button";
+    retry.addEventListener("click", () => loadImuState(recordingId));
+    pane.append(retry);
+  } finally {
+    if (generation === imuLoadGeneration) imuDataController = null;
+  }
+}
+
+function renderImuGraph(pane, artifact, parsed) {
+  if (!reviewController) return;
+  const facts = node("dl", null, "imu-facts");
+  facts.append(definitionRow("Topic", artifact.topic));
+  facts.append(definitionRow("Component", artifact.component));
+  facts.append(definitionRow("Units", artifact.units));
+  facts.append(definitionRow("Samples", artifact.delivered_sample_count));
+  facts.append(definitionRow("Reduction", artifact.reduction_method));
+
+  const figure = node("figure", null, "imu-graph");
+  const plot = node("div", null, "imu-plot");
+  const canvas = node("canvas");
+  canvas.setAttribute("role", "img");
+  canvas.setAttribute(
+    "aria-label",
+    `${artifact.display_label}; ${artifact.delivered_sample_count} samples; `
+      + `minimum ${artifact.minimum_value} and maximum ${artifact.maximum_value} ${artifact.units}.`,
+  );
+  const cursor = node("div", null, "imu-cursor");
+  cursor.setAttribute("aria-hidden", "true");
+  plot.append(canvas, cursor);
+  const caption = node(
+    "figcaption",
+    `Measured IMU coverage ${formatSignedElapsed(parsed.coverageStart)}–`
+      + `${formatSignedElapsed(parsed.coverageEnd)} · ROS record timestamps`,
+  );
+  const currentLine = node("p", null, "imu-current-line");
+  currentLine.append(node("span", "Current value: "));
+  const currentValue = node("output", "—", "imu-current-value");
+  currentValue.setAttribute("aria-label", "Current IMU angular velocity");
+  currentLine.append(currentValue);
+  const currentState = node("p", "Outside IMU coverage", "imu-current-state");
+  figure.append(plot, caption, currentLine, currentState);
+  pane.append(facts, figure);
+  artifact.warnings.forEach((warning) => {
+    pane.append(node("p", warning.message, "coverage-warning"));
+  });
+
+  const telemetry = {
+    samples: parsed.samples,
+    coverageStart: parsed.coverageStart,
+    coverageEnd: parsed.coverageEnd,
+    minimumValue: parsed.minimumValue,
+    maximumValue: parsed.maximumValue,
+    units: artifact.units,
+    canvas,
+    plot,
+    cursor,
+    currentValue,
+    currentState,
+    plotLeft: 0,
+    plotWidth: 1,
+    resizeObserver: null,
+  };
+  reviewController.telemetry = telemetry;
+  let resizeFrame = null;
+  telemetry.resizeObserver = new ResizeObserver(() => {
+    if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
+    resizeFrame = window.requestAnimationFrame(() => {
+      resizeFrame = null;
+      if (reviewController?.telemetry === telemetry) {
+        drawImuTrace(telemetry);
+        updateImuAtGlobalTime(reviewController.clock.globalTime);
+      }
+    });
+  });
+  telemetry.resizeObserver.observe(plot);
+  drawImuTrace(telemetry);
+  updateTransportAvailability();
+  applyGlobalTime(reviewController.clock.globalTime, true);
+}
+
+function drawImuTrace(telemetry) {
+  const width = Math.max(1, Math.floor(telemetry.plot.getBoundingClientRect().width));
+  const height = 240;
+  const ratio = window.devicePixelRatio || 1;
+  telemetry.canvas.width = Math.floor(width * ratio);
+  telemetry.canvas.height = Math.floor(height * ratio);
+  telemetry.canvas.style.width = `${width}px`;
+  telemetry.canvas.style.height = `${height}px`;
+  const context = telemetry.canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, width, height);
+  const left = 48;
+  const right = 12;
+  const top = 12;
+  const bottom = 28;
+  const plotWidth = Math.max(1, width - left - right);
+  const plotHeight = Math.max(1, height - top - bottom);
+  telemetry.plotLeft = left;
+  telemetry.plotWidth = plotWidth;
+
+  let minimum = telemetry.minimumValue;
+  let maximum = telemetry.maximumValue;
+  if (minimum === maximum) {
+    const padding = Math.max(1, Math.abs(minimum) * 0.1);
+    minimum -= padding;
+    maximum += padding;
+  }
+  const yForValue = (value) => (
+    top + ((maximum - value) / (maximum - minimum)) * plotHeight
+  );
+  const duration = reviewController?.durationSeconds || 0;
+  const xForTime = (value) => (
+    left + window.ImuGraph.cursorFraction(value, duration) * plotWidth
+  );
+
+  context.strokeStyle = "#cbd5e1";
+  context.lineWidth = 1;
+  context.strokeRect(left, top, plotWidth, plotHeight);
+  if (minimum <= 0 && maximum >= 0) {
+    context.beginPath();
+    context.moveTo(left, yForValue(0));
+    context.lineTo(left + plotWidth, yForValue(0));
+    context.stroke();
+  }
+  context.save();
+  context.beginPath();
+  context.rect(left, top, plotWidth, plotHeight);
+  context.clip();
+  context.strokeStyle = "#0f766e";
+  context.fillStyle = "#0f766e";
+  context.lineWidth = 1.5;
+  window.ImuGraph.traceSegments(telemetry.samples).forEach((segment) => {
+    const visible = segment.filter(
+      (sample) => sample.timeSeconds >= 0 && sample.timeSeconds <= duration,
+    );
+    if (!visible.length) return;
+    if (visible.length === 1) {
+      context.beginPath();
+      context.arc(
+        xForTime(visible[0].timeSeconds),
+        yForValue(visible[0].value),
+        2,
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+      return;
+    }
+    context.beginPath();
+    context.moveTo(xForTime(visible[0].timeSeconds), yForValue(visible[0].value));
+    visible.slice(1).forEach((sample) => {
+      context.lineTo(xForTime(sample.timeSeconds), yForValue(sample.value));
+    });
+    context.stroke();
+  });
+  context.restore();
+  context.fillStyle = "#475569";
+  context.font = "12px sans-serif";
+  context.fillText(maximum.toFixed(3), 4, top + 10);
+  context.fillText(minimum.toFixed(3), 4, top + plotHeight);
+  context.fillText("0", left, height - 8);
+  context.fillText(formatElapsed(duration), Math.max(left, width - 68), height - 8);
+}
+
+function updateImuAtGlobalTime(globalTime) {
+  const controller = reviewController;
+  const telemetry = controller?.telemetry;
+  if (!controller || !telemetry) return;
+  const fraction = window.ImuGraph.cursorFraction(globalTime, controller.durationSeconds);
+  telemetry.cursor.style.left = `${telemetry.plotLeft + fraction * telemetry.plotWidth}px`;
+  const insideCoverage = (
+    globalTime >= telemetry.coverageStart && globalTime <= telemetry.coverageEnd
+  );
+  telemetry.cursor.classList.toggle("outside-coverage", !insideCoverage);
+  if (!insideCoverage) {
+    telemetry.currentValue.value = "—";
+    telemetry.currentValue.textContent = "—";
+    telemetry.currentState.textContent = "Outside IMU coverage";
+    return;
+  }
+  const sample = window.ImuGraph.sampleAtOrBefore(telemetry.samples, globalTime);
+  if (!sample || sample.value === null) {
+    telemetry.currentValue.value = "—";
+    telemetry.currentValue.textContent = "—";
+    telemetry.currentState.textContent = "No finite IMU value at this time";
+    return;
+  }
+  const formatted = `${sample.value.toFixed(4)} ${telemetry.units}`;
+  telemetry.currentValue.value = formatted;
+  telemetry.currentValue.textContent = formatted;
+  telemetry.currentState.textContent = `Latest sample at ${formatSignedElapsed(sample.timeSeconds)}`;
+}
+
+function removeImuGraph() {
+  imuLoadGeneration += 1;
+  if (imuDataController !== null) {
+    imuDataController.abort();
+    imuDataController = null;
+  }
+  if (!reviewController?.telemetry) return;
+  if (reviewController.telemetry.resizeObserver) {
+    reviewController.telemetry.resizeObserver.disconnect();
+  }
+  reviewController.telemetry = null;
+  updateTransportAvailability();
+}
+
 function pausePlayer(player) {
   player.playAttempt += 1;
   player.playPending = false;
@@ -438,6 +775,7 @@ function createGlobalTimeline(recordingId, durationSeconds) {
   slider.value = "0";
   slider.disabled = durationSeconds <= 0;
   slider.setAttribute("aria-label", "Global recording time");
+  slider.setAttribute("aria-valuetext", formatElapsed(0));
   const timeLabel = node("output", `${formatElapsed(0)} / ${formatElapsed(durationSeconds)}`, "timeline-time");
   controls.append(playButton, slider, timeLabel);
   if (panel) panel.append(controls);
@@ -446,6 +784,7 @@ function createGlobalTimeline(recordingId, durationSeconds) {
     recordingId,
     durationSeconds,
     players: {},
+    telemetry: null,
     playButton,
     slider,
     timeLabel,
@@ -473,6 +812,7 @@ function applyGlobalTime(value, forceSeek = false) {
   const clock = controller.clock;
   clock.globalTime = Math.min(Math.max(value, 0), controller.durationSeconds);
   controller.slider.value = String(clock.globalTime);
+  controller.slider.setAttribute("aria-valuetext", formatElapsed(clock.globalTime));
   controller.timeLabel.value = `${formatElapsed(clock.globalTime)} / ${formatElapsed(controller.durationSeconds)}`;
   controller.timeLabel.textContent = controller.timeLabel.value;
   Object.values(controller.players).forEach((player) => {
@@ -520,6 +860,7 @@ function applyGlobalTime(value, forceSeek = false) {
       pausePlayer(player);
     }
   });
+  updateImuAtGlobalTime(clock.globalTime);
 }
 
 function showMediaFailure(kind) {
@@ -543,8 +884,10 @@ function showMediaFailure(kind) {
 function updateTransportAvailability() {
   if (!reviewController) return;
   const usablePlayers = Object.values(reviewController.players).filter((player) => !player.mediaFailed);
-  reviewController.playButton.disabled = usablePlayers.length === 0 || reviewController.durationSeconds <= 0;
-  if (usablePlayers.length === 0 && reviewController.clock.playing) {
+  const hasTelemetry = reviewController.telemetry !== null;
+  const hasConsumer = usablePlayers.length > 0 || hasTelemetry;
+  reviewController.playButton.disabled = !hasConsumer || reviewController.durationSeconds <= 0;
+  if (!hasConsumer && reviewController.clock.playing) {
     reviewController.clock.playing = false;
     reviewController.playButton.textContent = "Play";
     if (timelineAnimation !== null) window.cancelAnimationFrame(timelineAnimation);

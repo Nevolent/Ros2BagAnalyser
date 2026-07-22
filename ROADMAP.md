@@ -8,10 +8,13 @@ the user on 2026-07-21. It adds the two remaining V0 PostgreSQL tables,
 front-preview processor, serial worker, validated artifact publication,
 request/poll/range API, and initial global timeline. Its synthetic,
 ROS-message, PostgreSQL, browser, and approved real-archive acceptance evidence
-is recorded below. Building block 3 implementation was approved on 2026-07-21
-and completed with automated verification on 2026-07-22; its opt-in browser and
-real-archive acceptance remain pending. Building blocks 4 and 5 have not
-started.
+is recorded below. Building block 3 implementation was approved on 2026-07-21,
+completed with automated verification on 2026-07-22, and reviewed and accepted
+by the user on 2026-07-22. Building block 4 implementation was approved on
+2026-07-22 for the exact synchronized IMU graph boundary below. Its
+implementation, confirmed audit corrections, automated verification, and
+approved real-archive handoff were completed, and the user reviewed and
+accepted it on 2026-07-22. Building block 5 has not started.
 
 This roadmap defines V0 scope and order. Building block 1 implementation was
 explicitly approved on 2026-07-20. That approval does not grant work on later
@@ -207,7 +210,7 @@ API traffic, then control it with the first global timeline.
 
 ## 7. Building block 3 — Top-down camera and dual-video synchronization
 
-**Status:** Implemented; automated verification complete on 2026-07-22; opt-in acceptance pending
+**Status:** Completed and user-accepted on 2026-07-22
 
 **Dependency:** Building block 2 reviewed and accepted
 
@@ -273,13 +276,14 @@ timeline.
   play attempts without stopping the shared clock.
 - [README.md](README.md) contains the step-by-step opt-in Building block 3
   browser, longer-recording, performance, and before/after inventory procedure.
-- Manual browser acceptance and all real-archive checks remain pending separate
-  opt-in approval. The real archive was not accessed during implementation or
+- Manual browser and real-archive checks were not required for the user's
+  acceptance and remain optional future revalidation requiring separate opt-in
+  approval. The real archive was not accessed during implementation or
   automated verification.
 
 ## 8. Building block 4 — Synchronized IMU graph
 
-**Status:** Planned
+**Status:** Completed and user-accepted on 2026-07-22
 
 **Dependency:** Building block 3 reviewed and accepted
 
@@ -324,6 +328,55 @@ same timeline as both cameras.
 - Timeline tests prove the graph uses the global clock.
 - Short real values/timestamps are compared with independent ROS inspection.
 - One opt-in longer rendering check and source inventory complete acceptance.
+
+### Implementation evidence — 2026-07-22
+
+- The routine non-PostgreSQL, non-ROS, non-real-archive suite passed with 207
+  tests and 14 environment-specific deselections. Focused processor, artifact,
+  service, worker, and API suites cover topic/type prerequisites, immutable
+  source access, bounded row streaming, record-time mapping, non-finite gaps,
+  duplicates, cache reuse/replacement, contained atomic publication, sanitized
+  failures, one-worker dispatch, range delivery, and stale artifact URLs.
+- Two generated-message ROS tests passed in the sourced ROS 2 Humble
+  environment, including real `sensor_msgs/msg/Imu` CDR deserialization and
+  proof that record time rather than header time drives `angular_velocity.z`.
+- JavaScript syntax and seven dependency-free browser tests passed in Node.js:
+  four pure timeline/series contracts and three runtime tests that execute the
+  shipped browser script. The runtime coverage proves play, pause, animation
+  ticks, and slider seeks drive both camera players and the IMU from one clock;
+  narrow Canvas coordinates and isolated finite samples render correctly; and
+  a render-time failure leaves an attached diagnostic and retry action. A
+  reproducible 76,000-sample profile measured a 2.76 MB JSON payload, 50 ms
+  parse/validation, 40 ms trace transformation, and 5.1 ms for 10,000
+  binary-search cursor lookups. Headless Edge measured a 41 ms parse and 6 ms
+  native Canvas draw, so V0 records `reduction: none` and preserves all samples.
+- The PostgreSQL migration keeps exactly the accepted four tables and adds only
+  the isolated `imu_series` artifact/job kind. All 18 repository integration
+  tests passed against a disposable PostgreSQL 14 database, including the
+  four-table migration and separated front/top-down/IMU processing identities.
+- The shared artifact-store diagnostics now describe generic artifacts rather
+  than calling IMU output a preview, with focused regression coverage.
+- [README.md](README.md) documents configuration, exact signal identity and
+  policies, plus the separately opt-in short/long/damaged browser, independent
+  value comparison, performance, reuse, and source-inventory procedure. The
+  real archive was not accessed during implementation.
+
+### Acceptance evidence — 2026-07-22
+
+- During the explicitly approved final handoff, the application used
+  `/mnt/d/Rosbags`, a separate derived root, and the configured
+  `/kuupkulgur_v1/sensors/imu0/raw_data` standard IMU topic with one API and
+  exactly one serial worker.
+- The opt-in catalog acceptance test and live rescan both found six recordings,
+  five readable bags, and the expected damaged bag. Scanning created no jobs or
+  artifacts, and PostgreSQL retained exactly the accepted four tables.
+- The complete archive contained 24 files totalling 114,464,854,725 bytes. Its
+  before/after names, kinds, sizes, and modification-time inventory digest was
+  unchanged at
+  `edfaf0db862d846684cfa7a8133bcbba6c1142ba9c74092ca2d45e99cfe2c5bf`.
+- The user reviewed and accepted Building block 4. The independent IMU-row
+  comparison and longer-case resource profile were not separately recorded and
+  remain optional future revalidation rather than completed evidence.
 
 ## 9. Building block 5 — V0 integration and mentor readiness
 

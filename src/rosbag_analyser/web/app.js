@@ -23,6 +23,11 @@ const roleLabels = {
   topdown_timestamps: "Top-down timestamps",
 };
 
+const timestampProvenanceLabels = {
+  ros_record_timestamp: "ROS record timestamps",
+  csv_unix_timestamp: "CSV Unix timestamps",
+};
+
 function node(tag, text, className) {
   const element = document.createElement(tag);
   if (text !== undefined && text !== null) {
@@ -61,6 +66,24 @@ function renderRecordingShell(title) {
   const back = node("a", "← Back to archive", "back-link");
   back.href = "/";
   content.append(back);
+}
+
+function renderPageLoading(message) {
+  const loading = node("div", null, "loading-state");
+  loading.setAttribute("aria-busy", "true");
+  loading.append(node("h2", "Loading"), node("p", message));
+  return loading;
+}
+
+function renderPageFailure(message, retryLabel, retryAction) {
+  const failure = node("div", null, "page-failure");
+  failure.append(node("h2", "Could not load this view"));
+  failure.append(node("p", message, "diagnostic-block"));
+  const retry = node("button", retryLabel);
+  retry.type = "button";
+  retry.addEventListener("click", retryAction);
+  failure.append(retry);
+  return failure;
 }
 
 function healthBadge(value) {
@@ -106,6 +129,14 @@ function formatElapsed(seconds) {
 
 function formatSignedElapsed(seconds) {
   return `${seconds < 0 ? "−" : ""}${formatElapsed(Math.abs(seconds))}`;
+}
+
+function timingProvenanceLabel(value) {
+  return timestampProvenanceLabels[value] || "Unverified timestamp provenance";
+}
+
+function coverageBoundsLabel(value) {
+  return value === "measured" ? "Measured" : "Reported";
 }
 
 function renderArchive(items) {
@@ -194,15 +225,21 @@ function renderRecording(recording) {
   const cameraGrid = node("div", null, "camera-grid");
   const frontPane = node("article", null, "camera-pane");
   frontPane.id = "front-preview-pane";
+  frontPane.setAttribute("aria-live", "polite");
+  frontPane.setAttribute("aria-busy", "true");
   frontPane.append(node("h3", "Front camera"));
   frontPane.append(node("p", "Loading preview state…", "preview-state"));
   const topdownPane = node("article", null, "camera-pane");
   topdownPane.id = "topdown-preview-pane";
+  topdownPane.setAttribute("aria-live", "polite");
+  topdownPane.setAttribute("aria-busy", "true");
   topdownPane.append(node("h3", "Top-down camera"));
   topdownPane.append(node("p", "Loading preview state…", "preview-state"));
   cameraGrid.append(frontPane, topdownPane);
   const imuPane = node("article", null, "imu-pane");
   imuPane.id = "imu-series-pane";
+  imuPane.setAttribute("aria-live", "polite");
+  imuPane.setAttribute("aria-busy", "true");
   imuPane.append(node("h3", "IMU angular_velocity.z (rad/s)"));
   imuPane.append(node("p", "Loading IMU series state…", "preview-state"));
   review.append(cameraGrid, imuPane);
@@ -241,7 +278,6 @@ const streamDefinitions = {
     retryLabel: "Retry front preview",
     requestingLabel: "Requesting front-camera preview…",
     coverageLabel: "front",
-    provenanceLabel: "ROS record timestamps",
   },
   topdown: {
     paneId: "topdown-preview-pane",
@@ -251,7 +287,6 @@ const streamDefinitions = {
     retryLabel: "Retry top-down preview",
     requestingLabel: "Requesting top-down preview…",
     coverageLabel: "top-down",
-    provenanceLabel: "CSV Unix timestamps",
   },
 };
 
@@ -300,6 +335,8 @@ async function loadPreviewState(kind, recordingId) {
     window.clearTimeout(previewPollTimers[kind]);
     previewPollTimers[kind] = null;
   }
+  const currentPane = document.querySelector(`#${definition.paneId}`);
+  if (currentPane) currentPane.setAttribute("aria-busy", "true");
   try {
     const preview = await requestJson(`/api/recordings/${recordingId}/${definition.endpoint}`);
     renderPreviewState(kind, recordingId, preview);
@@ -312,10 +349,11 @@ async function loadPreviewState(kind, recordingId) {
       retry.addEventListener("click", () => loadPreviewState(kind, recordingId));
       pane.replaceChildren(
         node("h3", definition.title),
-        node("p", "status unavailable", "preview-state preview-state-failed"),
+        node("p", "status check failed", "preview-state preview-state-failed"),
         node("p", error.message, "diagnostic-block"),
         retry,
       );
+      pane.setAttribute("aria-busy", "false");
       previewPollTimers[kind] = window.setTimeout(
         () => loadPreviewState(kind, recordingId),
         PREVIEW_RETRY_DELAY_MS,
@@ -332,6 +370,10 @@ function renderPreviewState(kind, recordingId, preview) {
   pane.replaceChildren(node("h3", definition.title));
   const stateLabel = preview.state.replaceAll("_", " ");
   pane.append(node("p", stateLabel, `preview-state preview-state-${preview.state}`));
+  pane.setAttribute(
+    "aria-busy",
+    String(preview.state === "queued" || preview.state === "processing"),
+  );
 
   if (preview.diagnostic) {
     pane.append(node("p", preview.diagnostic.message, "diagnostic-block"));
@@ -397,7 +439,10 @@ function renderReadyPlayer(kind, recordingId, pane, artifact) {
 
   const coverage = node(
     "p",
-    `Measured ${definition.coverageLabel} coverage ${formatSignedElapsed(coverageStart)}–${formatSignedElapsed(coverageEnd)} · ${definition.provenanceLabel}`,
+    `${coverageBoundsLabel(artifact.bounds)} ${definition.coverageLabel} coverage `
+      + `${formatSignedElapsed(coverageStart)}–${formatSignedElapsed(coverageEnd)} · `
+      + `${timingProvenanceLabel(artifact.timestamp_provenance)} · `
+      + `${formatBytes(artifact.size_bytes)}`,
     "coverage-summary",
   );
   pane.append(player, mediaRetry, coverage);
@@ -442,6 +487,8 @@ async function loadImuState(recordingId) {
     window.clearTimeout(imuPollTimer);
     imuPollTimer = null;
   }
+  const currentPane = document.querySelector("#imu-series-pane");
+  if (currentPane) currentPane.setAttribute("aria-busy", "true");
   try {
     const series = await requestJson(`/api/recordings/${recordingId}/imu-series`);
     renderImuState(recordingId, series);
@@ -454,10 +501,11 @@ async function loadImuState(recordingId) {
     retry.addEventListener("click", () => loadImuState(recordingId));
     pane.replaceChildren(
       node("h3", "IMU angular_velocity.z (rad/s)"),
-      node("p", "status unavailable", "preview-state preview-state-failed"),
+      node("p", "status check failed", "preview-state preview-state-failed"),
       node("p", error.message, "diagnostic-block"),
       retry,
     );
+    pane.setAttribute("aria-busy", "false");
     imuPollTimer = window.setTimeout(
       () => loadImuState(recordingId),
       PREVIEW_RETRY_DELAY_MS,
@@ -476,6 +524,10 @@ function renderImuState(recordingId, series) {
       series.state.replaceAll("_", " "),
       `preview-state preview-state-${series.state}`,
     ),
+  );
+  pane.setAttribute(
+    "aria-busy",
+    String(series.state === "queued" || series.state === "processing"),
   );
   if (series.diagnostic) {
     pane.append(node("p", series.diagnostic.message, "diagnostic-block"));
@@ -532,6 +584,7 @@ function renderImuState(recordingId, series) {
 async function loadReadyImuGraph(recordingId, pane, artifact) {
   const generation = ++imuLoadGeneration;
   imuDataController = new AbortController();
+  pane.setAttribute("aria-busy", "true");
   const loading = node("p", "Loading IMU graph data…", "imu-load-state");
   pane.append(loading);
   try {
@@ -545,6 +598,7 @@ async function loadReadyImuGraph(recordingId, pane, artifact) {
   } catch (error) {
     if (error.name === "AbortError" || generation !== imuLoadGeneration) return;
     removeImuGraph();
+    pane.setAttribute("aria-busy", "false");
     loading.textContent = "Graph data could not be loaded.";
     loading.className = "diagnostic-block";
     const retry = node("button", "Reload graph data");
@@ -552,7 +606,10 @@ async function loadReadyImuGraph(recordingId, pane, artifact) {
     retry.addEventListener("click", () => loadImuState(recordingId));
     pane.append(retry);
   } finally {
-    if (generation === imuLoadGeneration) imuDataController = null;
+    if (generation === imuLoadGeneration) {
+      imuDataController = null;
+      pane.setAttribute("aria-busy", "false");
+    }
   }
 }
 
@@ -564,6 +621,7 @@ function renderImuGraph(pane, artifact, parsed) {
   facts.append(definitionRow("Units", artifact.units));
   facts.append(definitionRow("Samples", artifact.delivered_sample_count));
   facts.append(definitionRow("Reduction", artifact.reduction_method));
+  facts.append(definitionRow("Artifact size", formatBytes(artifact.size_bytes)));
 
   const figure = node("figure", null, "imu-graph");
   const plot = node("div", null, "imu-plot");
@@ -579,8 +637,10 @@ function renderImuGraph(pane, artifact, parsed) {
   plot.append(canvas, cursor);
   const caption = node(
     "figcaption",
-    `Measured IMU coverage ${formatSignedElapsed(parsed.coverageStart)}–`
-      + `${formatSignedElapsed(parsed.coverageEnd)} · ROS record timestamps`,
+    `${coverageBoundsLabel(artifact.bounds)} IMU coverage `
+      + `${formatSignedElapsed(parsed.coverageStart)}–`
+      + `${formatSignedElapsed(parsed.coverageEnd)} · `
+      + timingProvenanceLabel(artifact.timestamp_provenance),
   );
   const currentLine = node("p", null, "imu-current-line");
   currentLine.append(node("span", "Current value: "));
@@ -942,11 +1002,14 @@ async function refreshArchive() {
 async function loadInitialArchive() {
   rescanButton.disabled = true;
   showStatus("Loading catalog…");
+  content.replaceChildren(renderPageLoading("Loading the saved recording catalog…"));
   try {
     const result = await refreshArchive();
     showStatus(`${result.items.length} recording${result.items.length === 1 ? "" : "s"} loaded.`);
   } catch (error) {
-    content.replaceChildren(node("p", error.message, "diagnostic-block"));
+    content.replaceChildren(
+      renderPageFailure(error.message, "Retry loading catalog", loadInitialArchive),
+    );
     showStatus(error.message, "error");
   } finally {
     rescanButton.disabled = false;
@@ -955,13 +1018,21 @@ async function loadInitialArchive() {
 
 async function loadRecording(recordingId) {
   renderRecordingShell("Recording details");
+  content.append(renderPageLoading("Loading recording metadata and review state…"));
   showStatus("Loading recording…");
   try {
     const recording = await requestJson(`/api/recordings/${recordingId}`);
     renderRecording(recording);
     showStatus("Recording loaded.");
   } catch (error) {
-    content.append(node("p", error.message, "diagnostic-block"));
+    renderRecordingShell("Recording details");
+    content.append(
+      renderPageFailure(
+        error.message,
+        "Retry loading recording",
+        () => loadRecording(recordingId),
+      ),
+    );
     showStatus(error.message, "error");
   }
 }

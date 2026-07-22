@@ -6,12 +6,13 @@ and present two cameras and one telemetry signal on a shared timeline.
 
 ## Current status
 
-Building blocks 1, 2, 3, and 4 are complete and user-accepted. Building block 4
-adds the configured IMU series, reusable JSON artifact, API, and one Canvas
-graph on the existing synchronized review timeline. Its confirmed audit
-corrections and automated verification are complete. The four-table PostgreSQL
-model and one serial worker remain unchanged. Building block 5 has not started.
-The discarded local prototype is not a dependency or compatibility target.
+Building blocks 1, 2, 3, and 4 are complete and user-accepted. Building block 5
+implementation was approved on 2026-07-22 for the exact V0 integration and
+mentor-readiness boundary in `ROADMAP.md`. Its implementation and automated
+verification are complete, and its explicit opt-in real-archive acceptance
+matrix passed on 2026-07-22. User review remains pending. The four-table
+PostgreSQL model and one serial worker remain unchanged. The discarded local
+prototype is not a dependency or compatibility target.
 
 ## V0 proof
 
@@ -71,8 +72,10 @@ and production deployment are outside V0.
 ## Development
 
 The current implementation requires Python 3.10, PostgreSQL, FFmpeg and
-ffprobe, plus a ROS 2 Humble Python environment for the worker. Create an
-isolated Python environment and install the locked dependencies and editable
+ffprobe, plus a ROS 2 Humble Python environment for the worker. Node.js 18 or
+newer is a test-only prerequisite for the dependency-free browser suite; it is
+not an application runtime dependency and no npm packages are required. Create
+an isolated Python environment and install the locked dependencies and editable
 package:
 
 ```bash
@@ -184,6 +187,177 @@ export ROS_BAG_ANALYSER_ALLOW_TEST_DATABASE_RESET=1
 The required-suite flag makes missing PostgreSQL configuration fail rather than
 silently skip. The fixture verifies the configured name against PostgreSQL's
 `current_database()` before applying migrations or truncating tables.
+
+Check the shipped browser code separately:
+
+```bash
+node --check src/rosbag_analyser/web/app.js
+node --check src/rosbag_analyser/web/imu_graph.js
+node --test tests/js/test_imu_graph.js tests/js/test_review_runtime.js
+```
+
+## V0 mentor demonstration
+
+Building block 5 integrates the accepted catalog, front preview, top-down
+preview, shared timeline, and IMU graph into one mentor-facing acceptance run.
+It does not add another processing or storage subsystem. The run uses exactly
+one API, one serial worker, the existing four PostgreSQL tables, and a derived
+root that is separate from the read-only archive.
+
+Real-archive access is never implied by an ordinary test or implementation
+run. Before beginning this demonstration, obtain explicit opt-in approval for
+the named archive and selected short, long, and damaged cases. Freeze the
+reviewed worktree for the duration of the run; if code changes, start the
+acceptance matrix again from a fresh before-inventory.
+
+### Clean setup record
+
+Create a new dedicated application database and a new empty derived directory.
+Do not truncate an existing application database or delete an uncertain derived
+directory. Record the following with the acceptance notes without committing
+credentials or machine-specific absolute storage paths:
+
+- Git revision and clean/dirty state;
+- Python, PostgreSQL, ROS 2, PyAV, FFmpeg, ffprobe, browser, and Node versions;
+- configured front topic, IMU topic/component, and preview profile;
+- selected catalog IDs for the short healthy, long healthy, and damaged cases;
+- confirmation that archive and derived roots are separate;
+- the four PostgreSQL table names after migration.
+
+Install from `requirements.lock`, apply the migrations, start the API, and then
+start exactly one worker in a sourced ROS 2 Humble shell. A second worker must
+exit rather than processing concurrently. Opening the application must load the
+saved catalog without scanning or creating jobs automatically.
+
+### Source inventory evidence
+
+Before the first scan, capture one lightweight, recursively sorted inventory of
+the complete archive containing only each entry's relative name, kind, byte
+size, and nanosecond modification time. Store both inventory files and any
+digest outside the archive, such as in the acceptance evidence directory or
+derived root. A digest may cover this small inventory manifest; do not hash the
+100+ GiB of source payloads.
+
+After every acceptance check is finished, capture the same inventory again and
+require an exact comparison. Also confirm that every generated file is under
+the configured derived root. Any mismatch stops acceptance. Do not repair,
+reindex, truncate, rename, or otherwise change a source to investigate it.
+
+The opt-in catalog check remains available as an additional immediate
+read-only guard:
+
+```bash
+export RUN_REAL_ARCHIVE_TESTS=1
+export ROS_BAG_ANALYSER_ARCHIVE_ROOT=/path/to/read-only/archive
+export ROS_BAG_ANALYSER_EXPECTED_DAMAGED_DATABASE=expected-damaged-name.db3
+.venv/bin/python -m pytest -m real_archive --require-real-archive
+```
+
+### Acceptance matrix
+
+**All recordings**
+
+1. Confirm startup displays the saved catalog without scanning automatically.
+2. Select **Rescan archive** and require six unique rows: five readable and one
+   damaged.
+3. Inspect healthy and damaged details and confirm all four source-component
+   roles remain visible where present.
+4. Record the six recording IDs, rescan again, and require the same IDs and row
+   count.
+5. Confirm scanning created no job or artifact and PostgreSQL still contains
+   exactly `recordings`, `source_components`, `artifacts`, and `jobs`.
+
+**Short healthy complete flow**
+
+1. Request front, top-down, and IMU output. With one worker, expect one item to
+   process while later items remain truthfully queued.
+2. Repeat requests while work is active. Require one active job per matching
+   `(kind, cache_identity)` and no partial ready artifact.
+3. While processing continues, load the catalog and recording detail and record
+   that both remain responsive.
+4. Observe every output reach `ready`; record job/artifact IDs, cache identities,
+   processing duration, output size, coverage, provenance, and warnings.
+5. Play, pause, and seek near the global start, middle, and end plus times just
+   inside and, where available, just outside each stream's measured coverage.
+6. Confirm one global clock drives both cameras and the IMU cursor. An
+   out-of-coverage camera must hide, the IMU value must clear outside IMU
+   coverage, and the other consumers and clock must continue.
+7. Sustain playback and perform repeated seeks without visible cumulative
+   offset. Existing front-camera holds caused by ROS record-time gaps remain
+   expected and must not be smoothed using header time.
+
+**Reuse and duplicate prevention**
+
+1. Record the ready artifact IDs, reload the page, rescan, and restart the API
+   and worker with identical configuration.
+2. Repeat all three requests and require the same compatible artifacts to be
+   reused without new active jobs or ready artifacts.
+3. Check counts grouped by `(kind, cache_identity)`; total table counts alone do
+   not prove that the requested identity was reused.
+
+**Damaged recording**
+
+1. Confirm the ROS diagnostic is clear while AVI/CSV companion facts remain
+   visible.
+2. Confirm front and IMU processing are `unavailable`.
+3. Confirm synchronized top-down processing is `unavailable` because a trusted
+   bag-relative origin does not exist.
+4. Repeat the requests and verify that no job or artifact is created.
+
+**Final long scale smoke**
+
+Run only the selected long healthy case and start the worker under
+`/usr/bin/time -v`. Complete or reuse front, top-down, and IMU output, then
+record per-artifact duration and size, worker peak resident memory and swap,
+ordinary API responsiveness during work, sustained playback observations,
+representative start/middle/end seeks, visible drift, and IMU payload/load/scrub
+behavior. This is an observed practicality check, not a numeric service-level
+agreement. Do not add parallel workers, progress percentages, telemetry
+reduction, or other deferred infrastructure to change its result.
+
+### Truthful UI states
+
+- `not requested` offers an explicit generate action;
+- `queued` waits for the one serial worker;
+- `processing` means that processor is actively running;
+- `unavailable` means prerequisites prevent an attempt and no job exists;
+- `failed` means an attempt ended with an error and offers explicit retry;
+- `ready` means a matching artifact and contained output were revalidated;
+- `outside coverage` is a timeline condition, never a processing failure.
+
+If loading a page, status response, media file, or IMU JSON fails, use its
+visible retry action. Do not confuse a status-fetch failure with source
+unavailability.
+
+### Troubleshooting
+
+- **Catalog database unavailable:** verify the PostgreSQL URL and server, then
+  retry loading. A failed rescan retains the last complete catalog.
+- **Queued indefinitely:** verify the worker uses the same database and
+  configuration and that its ROS 2 Humble environment is sourced.
+- **Second worker rejected:** stop the duplicate process; V0 deliberately permits
+  only one serial worker.
+- **FFmpeg or ffprobe rejected at startup:** configure the intended executable
+  explicitly or correct `PATH`; the application verifies executable identity.
+- **Front or IMU unavailable:** verify the exact configured topic, standard
+  message type, CDR serialization, and supported component/encoding, then rescan
+  if the source facts changed.
+- **Interrupted or failed job:** inspect the safe diagnostic and request an
+  explicit retry. V0 has no automatic retry or active-job recovery lease.
+- **Ready output no longer loads:** reload its state. Missing, changed, or invalid
+  artifacts are not silently served under a stale URL.
+- **Root-overlap error:** choose separate existing archive and derived
+  directories; never weaken this validation.
+
+### V0 limitations
+
+V0 intentionally has no authentication, public deployment, upload/watch flow,
+repair tools, general split-bag or alternate-format support, arbitrary topics or
+encodings, extra cameras or graphs, custom-message processing, LiDAR/GPS/maps,
+click-to-seek graphs, playback-rate controls, cancellation, automatic retry,
+leases, priorities, multiple workers, retention, cleanup, monitoring, or job
+console. Record a limitation rather than expanding Building block 5 to solve
+deferred product or operations work.
 
 ## Building block 1 acceptance
 

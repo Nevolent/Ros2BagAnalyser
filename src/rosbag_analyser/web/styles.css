@@ -69,7 +69,7 @@ main { max-width: 1500px; margin: 0 auto; padding: 1.5rem clamp(1rem, 4vw, 4rem)
 .status-message { min-height: 1.5rem; color: #475569; }
 .status-message.error { color: #9f1239; font-weight: 650; }
 
-.table-wrapper, .panel, .empty-state {
+.table-wrapper, .panel, .empty-state, .loading-state, .page-failure {
   overflow: hidden;
   border: 1px solid #d8dee5;
   border-radius: .7rem;
@@ -124,11 +124,16 @@ dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
 .component-facts { margin: 0; }
 .component-facts dd { margin-bottom: .65rem; }
 .diagnostic-block { margin: .75rem 0 0; padding: .7rem; border-left: 3px solid #e11d48; color: #881337; background: #fff1f2; }
-.empty-state { padding: 2rem; text-align: center; }
+.empty-state, .loading-state, .page-failure { padding: 2rem; }
+.empty-state { text-align: center; }
+.loading-state { color: #475569; }
+.loading-state p { margin-bottom: 0; }
+.page-failure .diagnostic-block { margin-bottom: 1rem; }
 
 .preview-state { display: inline-block; border-radius: 999px; padding: .3rem .65rem; color: #334155; background: #e2e8f0; font-size: .78rem; font-weight: 800; text-transform: capitalize; }
 .preview-state-ready { color: #14532d; background: #dcfce7; }
-.preview-state-failed, .preview-state-unavailable { color: #881337; background: #ffe4e6; }
+.preview-state-failed { color: #881337; background: #ffe4e6; }
+.preview-state-unavailable { color: #78350f; background: #fef3c7; }
 .preview-state-queued, .preview-state-processing { color: #1e3a8a; background: #dbeafe; }
 .camera-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .camera-pane { min-width: 0; padding: 1rem; border: 1px solid #dce2e8; border-radius: .6rem; background: #fbfcfd; }

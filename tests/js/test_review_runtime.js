@@ -103,6 +103,10 @@ class FakeElement {
     this.attributes.set(name, String(value));
   }
 
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
+
   addEventListener(name, listener) {
     const listeners = this.listeners.get(name) || [];
     listeners.push(listener);
@@ -251,6 +255,156 @@ function player(document) {
   };
 }
 
+function addReviewPane(document, id) {
+  const pane = document.createElement("article");
+  pane.id = id;
+  pane.setAttribute("aria-live", "polite");
+  document.querySelector("#content").append(pane);
+  return pane;
+}
+
+test("page loading, empty, and failure states have truthful actions", () => {
+  const { context, document } = createHarness();
+  context.loading = vm.runInContext(
+    'renderPageLoading("Loading the saved recording catalog…")',
+    context,
+  );
+  assert.equal(context.loading.getAttribute("aria-busy"), "true");
+  assert.equal(context.loading.querySelector("h2").textContent, "Loading");
+
+  vm.runInContext("renderArchive([])", context);
+  const empty = document.querySelector(".empty-state");
+  assert.ok(empty);
+  assert.equal(empty.querySelector("h2").textContent, "No recordings catalogued");
+
+  let retries = 0;
+  context.retryAction = () => { retries += 1; };
+  context.failure = vm.runInContext(
+    'renderPageFailure("Catalog unavailable.", "Retry loading catalog", retryAction)',
+    context,
+  );
+  context.failure.querySelector("button").dispatch("click");
+  assert.equal(retries, 1);
+  assert.equal(
+    context.failure.querySelector(".diagnostic-block").textContent,
+    "Catalog unavailable.",
+  );
+});
+
+test("preview states distinguish waiting, unavailable, failure, and ready", () => {
+  const { context, document } = createHarness();
+  const pane = addReviewPane(document, "front-preview-pane");
+
+  const render = (preview) => {
+    context.preview = preview;
+    vm.runInContext("renderPreviewState('front', 7, preview)", context);
+  };
+
+  render({ state: "not_requested", diagnostic: null, artifact: null });
+  assert.equal(pane.getAttribute("aria-busy"), "false");
+  assert.equal(pane.querySelector("button").textContent, "Generate front preview");
+
+  render({ state: "queued", diagnostic: null, artifact: null, poll_after_ms: 1000 });
+  assert.equal(pane.getAttribute("aria-busy"), "true");
+  assert.equal(pane.querySelector("button"), null);
+  assert.equal(pane.querySelector("p").textContent, "queued");
+
+  render({ state: "processing", diagnostic: null, artifact: null, poll_after_ms: 1000 });
+  assert.equal(pane.getAttribute("aria-busy"), "true");
+  assert.equal(pane.querySelector("button"), null);
+
+  render({
+    state: "unavailable",
+    diagnostic: { message: "The ROS source is damaged." },
+    artifact: null,
+  });
+  assert.equal(pane.getAttribute("aria-busy"), "false");
+  assert.ok(pane.querySelector(".preview-state-unavailable"));
+  assert.equal(pane.querySelector("button"), null);
+
+  render({
+    state: "failed",
+    diagnostic: { message: "Preview generation failed." },
+    artifact: null,
+  });
+  assert.ok(pane.querySelector(".preview-state-failed"));
+  assert.equal(pane.querySelector("button").textContent, "Retry front preview");
+
+  render({
+    state: "ready",
+    diagnostic: null,
+    artifact: {
+      bounds: "measured",
+      coverage_start_ns: "1000000000",
+      coverage_end_ns: "9000000000",
+      media_url: "/api/recordings/7/front-preview/media/3",
+      size_bytes: "1048576",
+      timestamp_provenance: "ros_record_timestamp",
+      warnings: [],
+    },
+  });
+  const coverage = pane.querySelector(".coverage-summary");
+  assert.match(coverage.textContent, /Measured front coverage/);
+  assert.match(coverage.textContent, /ROS record timestamps/);
+  assert.match(coverage.textContent, /1\.00 MiB/);
+
+  const topdownPane = addReviewPane(document, "topdown-preview-pane");
+  context.preview = {
+    state: "ready",
+    diagnostic: null,
+    artifact: {
+      bounds: "measured",
+      coverage_start_ns: "2000000000",
+      coverage_end_ns: "8000000000",
+      media_url: "/api/recordings/7/topdown-preview/media/4",
+      size_bytes: "2048",
+      timestamp_provenance: "csv_unix_timestamp",
+      warnings: [],
+    },
+  };
+  vm.runInContext("renderPreviewState('topdown', 7, preview)", context);
+  assert.match(
+    topdownPane.querySelector(".coverage-summary").textContent,
+    /CSV Unix timestamps/,
+  );
+});
+
+test("IMU unavailable and failed states remain separate and actionable", () => {
+  const { context, document } = createHarness();
+  const pane = addReviewPane(document, "imu-series-pane");
+
+  context.series = {
+    state: "unavailable",
+    diagnostic: { message: "The configured IMU topic is absent." },
+    artifact: null,
+  };
+  vm.runInContext("renderImuState(7, series)", context);
+  assert.ok(pane.querySelector(".preview-state-unavailable"));
+  assert.equal(pane.querySelector("button"), null);
+
+  context.series = {
+    state: "failed",
+    diagnostic: { message: "IMU extraction failed." },
+    artifact: null,
+  };
+  vm.runInContext("renderImuState(7, series)", context);
+  assert.ok(pane.querySelector(".preview-state-failed"));
+  assert.equal(pane.querySelector("button").textContent, "Retry IMU series");
+});
+
+test("a status-fetch failure is not presented as source unavailability", async () => {
+  const { context, document } = createHarness();
+  const pane = addReviewPane(document, "front-preview-pane");
+  context.fetch = async () => { throw new Error("Database connection failed"); };
+
+  await vm.runInContext("loadPreviewState('front', 7)", context);
+
+  assert.equal(pane.querySelector(".preview-state").textContent, "status check failed");
+  assert.ok(pane.querySelector(".preview-state-failed"));
+  assert.equal(pane.querySelector("button").textContent, "Retry preview status");
+  assert.equal(pane.getAttribute("aria-busy"), "false");
+});
+
 test("play, pause, and seek drive both cameras and IMU from one runtime clock", async () => {
   const { context, document, window } = createHarness();
   addReviewPanel(document);
@@ -313,6 +467,50 @@ test("play, pause, and seek drive both cameras and IMU from one runtime clock", 
   assert.equal(context.telemetry.currentState.textContent, "Outside IMU coverage");
 });
 
+test("outside coverage and one media failure leave other consumers usable", () => {
+  const { context, document } = createHarness();
+  addReviewPanel(document);
+  addReviewPane(document, "front-preview-pane");
+  addReviewPane(document, "topdown-preview-pane");
+  vm.runInContext("reviewController = createGlobalTimeline(7, 10)", context);
+  const controller = vm.runInContext("reviewController", context);
+  context.frontPlayer = player(document);
+  context.frontPlayer.coverageEnd = 4;
+  context.topdownPlayer = player(document);
+  context.topdownPlayer.coverageStart = 2;
+  context.telemetry = {
+    samples: [{ timeSeconds: 0, value: 1 }, { timeSeconds: 10, value: 2 }],
+    coverageStart: 0,
+    coverageEnd: 10,
+    cursor: document.createElement("div"),
+    currentValue: document.createElement("output"),
+    currentState: document.createElement("p"),
+    plotLeft: 10,
+    plotWidth: 100,
+    units: "rad/s",
+  };
+  vm.runInContext(
+    "reviewController.players.front = frontPlayer;"
+      + "reviewController.players.topdown = topdownPlayer;"
+      + "reviewController.telemetry = telemetry;"
+      + "updateTransportAvailability();"
+      + "applyGlobalTime(8, true);",
+    context,
+  );
+
+  assert.equal(controller.clock.globalTime, 8);
+  assert.equal(context.frontPlayer.video.hidden, true);
+  assert.equal(context.frontPlayer.coverageMessage.hidden, false);
+  assert.equal(context.topdownPlayer.video.hidden, false);
+  assert.equal(context.telemetry.currentValue.textContent, "1.0000 rad/s");
+
+  vm.runInContext("showMediaFailure('topdown'); applyGlobalTime(3, true);", context);
+  assert.equal(context.topdownPlayer.mediaFailed, true);
+  assert.equal(context.frontPlayer.video.hidden, false);
+  assert.equal(controller.playButton.disabled, false);
+  assert.equal(context.telemetry.currentValue.textContent, "1.0000 rad/s");
+});
+
 test("narrow graph rendering keeps cursor aligned and draws singleton values", () => {
   const { context, document } = createHarness();
   addReviewPanel(document);
@@ -326,6 +524,9 @@ test("narrow graph rendering keeps cursor aligned and draws singleton values", (
     component: "angular_velocity.z",
     units: "rad/s",
     reduction_method: "none",
+    size_bytes: "1024",
+    timestamp_provenance: "ros_record_timestamp",
+    bounds: "measured",
     minimum_value: -1,
     maximum_value: 1,
     warnings: [],
@@ -349,6 +550,8 @@ test("narrow graph rendering keeps cursor aligned and draws singleton values", (
   assert.equal(telemetry.canvas.style.width, "220px");
   assert.equal(telemetry.plotLeft, 48);
   assert.equal(telemetry.plotWidth, 160);
+  assert.match(context.pane.querySelector("figcaption").textContent, /Measured IMU coverage/);
+  assert.match(context.pane.querySelector("figcaption").textContent, /ROS record timestamps/);
 
   vm.runInContext("applyGlobalTime(10, true)", context);
   assert.equal(telemetry.cursor.style.left, "208px");
@@ -373,6 +576,9 @@ test("a render-time failure leaves a visible diagnostic and retry", async () => 
     component: "angular_velocity.z",
     units: "rad/s",
     reduction_method: "none",
+    size_bytes: "1024",
+    timestamp_provenance: "ros_record_timestamp",
+    bounds: "measured",
     minimum_value: 1,
     maximum_value: 1,
     warnings: [],
@@ -392,4 +598,5 @@ test("a render-time failure leaves a visible diagnostic and retry", async () => 
   assert.equal(diagnostic.textContent, "Graph data could not be loaded.");
   assert.equal(context.pane.querySelector("button").textContent, "Reload graph data");
   assert.equal(vm.runInContext("reviewController.telemetry", context), null);
+  assert.equal(context.pane.getAttribute("aria-busy"), "false");
 });

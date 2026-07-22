@@ -14,7 +14,11 @@ by the user on 2026-07-22. Building block 4 implementation was approved on
 2026-07-22 for the exact synchronized IMU graph boundary below. Its
 implementation, confirmed audit corrections, automated verification, and
 approved real-archive handoff were completed, and the user reviewed and
-accepted it on 2026-07-22. Building block 5 has not started.
+accepted it on 2026-07-22. Building block 5 implementation was approved on
+2026-07-22 for the exact V0 integration and mentor-readiness boundary below.
+Implementation and automated verification were completed on 2026-07-22. The
+user approved, and the explicit opt-in real-archive acceptance matrix was
+completed, on 2026-07-22. User review remains pending.
 
 This roadmap defines V0 scope and order. Building block 1 implementation was
 explicitly approved on 2026-07-20. That approval does not grant work on later
@@ -380,7 +384,7 @@ same timeline as both cameras.
 
 ## 9. Building block 5 — V0 integration and mentor readiness
 
-**Status:** Planned
+**Status:** Implementation, automated verification, and real-archive acceptance complete on 2026-07-22; user review pending
 
 **Dependency:** Building blocks 1–4 reviewed and accepted
 
@@ -427,6 +431,79 @@ adding another infrastructure subsystem.
 - Execute the acceptance matrix once and record browser checks for play, seek,
   coverage, reuse, drift, graph cursor, and damaged behavior.
 - Record limitations instead of expanding V0 to solve deferred operations work.
+
+### Implementation evidence — 2026-07-22
+
+- A fresh virtual environment installed the locked requirements and editable
+  package successfully; `pip check` reported no broken requirements, and all
+  three application entry points were executable.
+- The accumulated routine suite passed with 207 tests and 15 opt-in tests
+  deselected. The PostgreSQL suite passed with 12 tests, and the ROS-message
+  suite passed with 2 tests.
+- The browser suite passed all 12 tests on Node.js 22.22.1, including explicit
+  loading, empty, processing, unavailable, failed, ready, retry, provenance,
+  coverage, shared-clock, and partial-consumer-failure behavior.
+- A PostgreSQL/ASGI integration test ran the real serial worker against an
+  event-controlled processor and proved catalog and detail reads complete while
+  its job remains active.
+- The 76,000-sample browser performance fixture parsed and transformed in about
+  88 ms total on this development host; 10,000 timeline lookups took about
+  5.5 ms. These are development observations, not deployment guarantees.
+- `README.md` documents clean setup, worker operation, the all-six/short/reuse/
+  damaged/long acceptance matrix, truthful UI checks, troubleshooting, and V0
+  limitations.
+- No real archive was accessed during implementation or automated verification.
+  It was accessed only after the user's explicit opt-in for the separately
+  recorded acceptance evidence below.
+
+### Acceptance evidence — 2026-07-22
+
+- The explicitly approved acceptance used `/mnt/d/Rosbags`, a new empty derived
+  root, a new dedicated PostgreSQL 14 database, one API, and exactly one serial
+  worker. The configured front and IMU topics remained
+  `/kuupkulgur_v1/sensors/front_camera/image_raw` and
+  `/kuupkulgur_v1/sensors/imu0/raw_data`; a second worker exited on the advisory
+  lock as required.
+- The opt-in catalog test and repeated live rescans found six stable recording
+  IDs, five readable bags, and the expected damaged
+  `2025_11_04_plain_figure8_spotlight_0.db3`. Scanning left 24 source-component
+  rows, no jobs or artifacts, and exactly the accepted four PostgreSQL tables.
+- On the short `2025_11_04_figure8` recording, front processing completed in
+  330.647 seconds at 84,118,694 bytes, top-down in 6.948 seconds at 13,443,307
+  bytes, and IMU in 16.441 seconds at 15,184 samples and 544,610 bytes. The
+  videos validated as H.264 with 3,051 and 555 frames; start/middle/end range
+  requests returned correct `206` responses.
+- Immutable read-only SQLite inspection independently matched the short IMU
+  artifact's first, middle, and last ROS record timestamps and
+  `angular_velocity.z` values. The API and live UI reported measured coverage,
+  correct ROS/CSV provenance, units, warnings, and `reduction: none`.
+- Headless Edge exercised the shipped short page with the real artifacts.
+  Global start, individual coverage entry, all-consumer coverage, slider seek,
+  end coverage, sustained playback, seek while playing, and pause all passed.
+  Both cameras mapped to the global clock, the IMU cursor/value followed it,
+  out-of-coverage consumers hid or cleared independently, and observed mapped
+  video drift stayed below 0.5 seconds.
+- The damaged recording kept its AVI/CSV facts visible while front, synchronized
+  top-down, and IMU requests returned distinct `unavailable` diagnostics. The
+  repeated requests created no job or artifact.
+- On the 758.739-second `2025_11_04_PE_1_4_plain_slow` scale case, front
+  processing completed in 2,224.468 seconds at 482,413,143 bytes, top-down in
+  33.707 seconds at 68,078,248 bytes, and IMU in 15.177 seconds at 75,729
+  samples and 2,767,114 bytes. The profiled worker used 162,144 kB peak RSS and
+  no swap over 34:42 wall time.
+- The long videos validated as H.264 with 15,171 and 2,868 frames. The IMU JSON
+  parsed in 33 ms on the development host; live Edge loaded and drew all 75,729
+  samples, and midpoint/end/playing seeks, coverage, playback, graph cursor, and
+  pause checks passed. Catalog/detail responses remained near 12 ms during the
+  long render, with state and completed-media checks between 38 and 52 ms.
+- Repeated requests, rescans, API restarts, and a worker restart reused artifact
+  IDs 1–6. PostgreSQL finished with exactly six succeeded jobs, six artifacts,
+  no active job, and an empty temporary work directory.
+- The complete archive retained 31 inventory entries and 24 files totalling
+  114,464,854,725 bytes. Exact before/after relative names, kinds, sizes, and
+  modification times matched at digest
+  `edfaf0db862d846684cfa7a8133bcbba6c1142ba9c74092ca2d45e99cfe2c5bf`.
+  No source was modified and every generated file remained outside the archive.
 
 ## 10. Final V0 gate
 

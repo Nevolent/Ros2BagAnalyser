@@ -14,7 +14,11 @@ Building block 3 implementation was approved on 2026-07-21 for the exact
 top-down-camera and dual-video-synchronization boundary in `ROADMAP.md`, and
 its implementation and automated verification were completed on 2026-07-22.
 The user reviewed and accepted Building block 3, approved Building block 4,
-then reviewed and accepted Building block 4 on 2026-07-22.
+then reviewed and accepted Building block 4 on 2026-07-22. Building block 5
+implementation was approved on 2026-07-22 for the exact V0 integration and
+mentor-readiness boundary in `ROADMAP.md`. Its implementation, automated
+verification, and explicitly approved real-archive acceptance matrix were
+completed on 2026-07-22; user review remains pending.
 
 ## Required reading
 
@@ -239,13 +243,18 @@ User review is required before committing or beginning the next block.
 
 ## Current instruction
 
-After Building block 4 acceptance:
+During pending Building block 5 user review:
 
 - Building blocks 1, 2, 3, and 4 are complete and accepted;
-- no later roadmap block is active;
+- Building block 5 implementation, automated verification, and real-archive
+  acceptance are complete;
+- keep further work to review-driven corrections within the approved Building
+  block 5 boundary;
 - preserve the accepted front/top-down behavior and four-table, one-worker
   processing model;
 - do not add arbitrary telemetry, extra graphs, custom-message processing, or
   later-roadmap features;
 - do not access the real archive again without explicit opt-in approval;
-- do not begin Building block 5 without separate user review and approval.
+- do not mark Building block 5 accepted or V0 complete before user review;
+- stop for direction if integration requires a new architecture subsystem,
+  dependency, persistent model, processing kind, or timing contract.

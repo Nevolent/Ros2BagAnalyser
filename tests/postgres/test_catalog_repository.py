@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import os
+from pathlib import Path
+import shutil
 import threading
+from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
 
 import httpx
@@ -28,6 +32,8 @@ from rosbag_analyser.persistence.processing_repository import (
     ArtifactWrite,
     ProcessingRepository,
 )
+from rosbag_analyser.processors.front_preview import FrontPreviewProcessingError
+from rosbag_analyser.worker import SerialWorker
 
 
 TEST_DATABASE_ENV = "ROS_BAG_ANALYSER_TEST_DATABASE_URL"
@@ -511,3 +517,122 @@ async def test_real_api_scanner_and_postgres_vertical_slice(
     assert components["ros_database"]["condition"] == "damaged"
     assert components["topdown_video"]["condition"] == "present"
     assert components["topdown_timestamps"]["condition"] == "present"
+
+
+@pytest.mark.postgres
+@pytest.mark.anyio
+async def test_catalog_reads_complete_while_serial_worker_job_is_processing(
+    postgres_url: str,
+    tmp_path: Path,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    processing = ProcessingRepository(postgres_url)
+    cache_identity = "8" * 64
+    requested = processing.request_job(
+        recording_id,
+        "front_preview",
+        cache_identity,
+    )
+    assert requested.job is not None
+
+    processor_started = threading.Event()
+    release_processor = threading.Event()
+
+    class BlockingResolver:
+        def resolve(self, selected_recording_id: int):
+            assert selected_recording_id == recording_id
+            return SimpleNamespace(
+                descriptor=SimpleNamespace(
+                    cache_identity=cache_identity,
+                    topic=SimpleNamespace(
+                        message_type="sensor_msgs/msg/Image",
+                        serialization_format="cdr",
+                    ),
+                ),
+                diagnostic=None,
+            )
+
+    class BlockingProcessor:
+        def process(self, descriptor, output_path: Path):
+            del descriptor, output_path
+            processor_started.set()
+            if not release_processor.wait(timeout=10):
+                raise AssertionError("The test did not release the worker processor.")
+            raise FrontPreviewProcessingError(
+                "synthetic_processing_stopped",
+                "Synthetic processing stopped after the responsiveness check.",
+            )
+
+    class TemporaryWorkspaceStore:
+        def create_workspace(self, job_id: int) -> Path:
+            workspace = tmp_path / "derived" / f"job-{job_id}"
+            workspace.mkdir(parents=True)
+            return workspace
+
+        def clean_workspace(self, workspace: Path, job_id: int) -> None:
+            assert workspace == tmp_path / "derived" / f"job-{job_id}"
+            shutil.rmtree(workspace)
+
+    worker = SerialWorker(
+        processing,
+        BlockingResolver(),  # type: ignore[arg-type]
+        BlockingProcessor(),  # type: ignore[arg-type]
+        TemporaryWorkspaceStore(),  # type: ignore[arg-type]
+        "/camera/image_raw",
+        "synthetic-encoder",
+    )
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    app = create_app(CatalogService(CatalogScanner(archive), catalog))
+    worker_task = asyncio.create_task(asyncio.to_thread(worker.run_once))
+
+    try:
+        started = await asyncio.wait_for(
+            asyncio.to_thread(processor_started.wait, 5),
+            timeout=6,
+        )
+        assert started
+        assert not worker_task.done()
+        running = processing.get_active_job(
+            recording_id,
+            "front_preview",
+            cache_identity,
+        )
+        assert running is not None
+        assert running.state == "running"
+
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+            ) as client:
+                listing, detail = await asyncio.wait_for(
+                    asyncio.gather(
+                        client.get("/api/recordings"),
+                        client.get(f"/api/recordings/{recording_id}"),
+                    ),
+                    timeout=5,
+                )
+
+        assert listing.status_code == 200
+        assert detail.status_code == 200
+        assert listing.json()["items"][0]["id"] == recording_id
+        assert detail.json()["id"] == recording_id
+        assert not worker_task.done()
+    finally:
+        release_processor.set()
+        await asyncio.wait_for(worker_task, timeout=5)
+
+    state = processing.get_current_state(
+        recording_id,
+        "front_preview",
+        cache_identity,
+    )
+    assert state.artifact is None
+    assert state.active_job is None
+    assert state.latest_failed_job is not None
+    assert state.latest_failed_job.error_code == "synthetic_processing_stopped"
+    assert not (tmp_path / "derived" / f"job-{requested.job.id}").exists()

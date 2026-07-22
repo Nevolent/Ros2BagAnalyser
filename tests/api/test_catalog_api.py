@@ -116,6 +116,9 @@ async def test_list_detail_and_static_browser_contract() -> None:
     assert 'renderRecordingShell("Recording details")' in script.text
     assert "document.title" in script.text
     assert "PREVIEW_RETRY_DELAY_MS" in script.text
+    assert "status check failed" in script.text
+    assert "Retry loading catalog" in script.text
+    assert "timestampProvenanceLabels" in script.text
     assert 'video.addEventListener("error", () => {' in script.text
     assert "showMediaFailure(kind);" in script.text
     assert "VIDEO_DRIFT_TOLERANCE_SECONDS" in script.text
@@ -146,6 +149,8 @@ async def test_list_detail_and_static_browser_contract() -> None:
     assert ".preview-player video[hidden]" in stylesheet.text
     assert ".camera-grid" in stylesheet.text
     assert ".imu-cursor" in stylesheet.text
+    assert ".preview-state-unavailable" in stylesheet.text
+    assert ".loading-state" in stylesheet.text
     assert listing.headers["x-content-type-options"] == "nosniff"
     assert "default-src 'self'" in listing.headers["content-security-policy"]
     assert "media-src 'self'" in listing.headers["content-security-policy"]

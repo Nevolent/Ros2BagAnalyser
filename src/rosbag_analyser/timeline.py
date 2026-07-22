@@ -47,3 +47,9 @@ def nanoseconds_to_media_pts(value_ns: int, media_timescale: int) -> int:
     if media_timescale <= 0:
         raise ValueError("Media timescale must be positive.")
     return (value_ns * media_timescale + 500_000_000) // 1_000_000_000
+
+
+def media_pts_digest_chunk(value: int) -> bytes:
+    if value < 0 or value > 9_223_372_036_854_775_807:
+        raise ValueError("Media timestamp is outside the supported range.")
+    return value.to_bytes(8, byteorder="big", signed=False)

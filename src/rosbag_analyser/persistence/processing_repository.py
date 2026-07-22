@@ -9,6 +9,7 @@ from .database import open_connection
 
 
 FRONT_PREVIEW_KIND = "front_preview"
+TOPDOWN_PREVIEW_KIND = "topdown_preview"
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,8 @@ class ProcessingSourceRecord:
     ros_health: str
     metadata: ProcessingComponent | None
     database: ProcessingComponent | None
+    topdown_video: ProcessingComponent | None = None
+    topdown_timestamps: ProcessingComponent | None = None
 
 
 @dataclass(frozen=True)
@@ -107,7 +110,10 @@ class ProcessingRepository:
                 SELECT role, relative_path, size_bytes, mtime_ns, condition
                 FROM source_components
                 WHERE recording_id = %s
-                  AND role IN ('metadata', 'ros_database')
+                  AND role IN (
+                      'metadata', 'ros_database',
+                      'topdown_video', 'topdown_timestamps'
+                  )
                 """,
                 (recording_id,),
             ).fetchall()
@@ -123,6 +129,8 @@ class ProcessingRepository:
             ros_health=str(recording["ros_health"]),
             metadata=components.get("metadata"),
             database=components.get("ros_database"),
+            topdown_video=components.get("topdown_video"),
+            topdown_timestamps=components.get("topdown_timestamps"),
         )
 
     def get_artifact(
@@ -247,7 +255,7 @@ class ProcessingRepository:
                 connection, recording_id, kind, cache_identity
             )
             if active_row is None:
-                raise RuntimeError("The preview request could not be serialized.")
+                raise RuntimeError("The processing request could not be serialized.")
             return RequestOutcome(job=_job_from_row(active_row))
 
     def claim_next_job(self) -> JobRecord | None:
@@ -358,7 +366,11 @@ class ProcessingRepository:
                 UPDATE jobs
                 SET state = 'failed', finished_at = CURRENT_TIMESTAMP,
                     error_code = 'worker_interrupted',
-                    error_message = 'Preview generation was interrupted. Request it again.'
+                    error_message = CASE kind
+                        WHEN 'front_preview'
+                            THEN 'Preview generation was interrupted. Request it again.'
+                        ELSE 'Top-down preview generation was interrupted. Request it again.'
+                    END
                 WHERE state = 'running'
                 RETURNING id
                 """

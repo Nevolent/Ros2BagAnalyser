@@ -9,8 +9,10 @@ ROS 2 Bag Analyser is a fresh implementation. The previous local codebase was
 deliberately discarded. Do not reconstruct or depend on old prototypes unless
 the user explicitly requests a specific recovery.
 
-Building blocks 1 and 2 were completed and user-accepted on 2026-07-21. Do not
-begin Building block 3 until the user approves its next exact boundary.
+Building blocks 1 and 2 were completed and user-accepted on 2026-07-21.
+Building block 3 implementation was approved on 2026-07-21 for the exact
+top-down-camera and dual-video-synchronization boundary in `ROADMAP.md`, and
+its implementation and automated verification were completed on 2026-07-22.
 
 ## Required reading
 
@@ -235,13 +237,14 @@ User review is required before committing or beginning the next block.
 
 ## Current instruction
 
-At the post-Building-block-2 boundary:
+During Building block 3:
 
 - Building blocks 1 and 2 are complete and accepted;
-- no implementation block is currently active;
-- do not change accepted application code without an explicitly approved
-  correction or building-block boundary;
-- do not add top-down processing, telemetry, or later-roadmap features;
+- Building block 3 is implemented only for the top-down AVI/CSV processor and
+  dual-video synchronization boundary in `ROADMAP.md`; its opt-in acceptance
+  remains pending;
+- preserve the accepted front-preview behavior and four-table, one-worker
+  processing model;
+- do not add telemetry, IMU processing, or later-roadmap features;
 - do not access the real archive without explicit opt-in acceptance approval;
-- do not begin Building block 3 until the user explicitly approves its exact
-  boundary.
+- do not begin Building block 4 without separate user review and approval.

@@ -1,8 +1,8 @@
 # ROS 2 Bag Analyser — Project Definition
 
-**Status:** Building blocks 1 and 2 complete and user-accepted
+**Status:** Building blocks 1 and 2 complete and user-accepted; Building block 3 implemented, pending opt-in acceptance
 
-**Repository baseline:** Front-preview and initial-timeline vertical slice
+**Repository baseline:** Front preview plus implemented top-down/dual-video synchronization
 
 **Initial environment:** Ubuntu 22.04 under WSL2, ROS 2 Humble
 

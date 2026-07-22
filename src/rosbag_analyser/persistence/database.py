@@ -242,7 +242,11 @@ EXPECTED_CATALOG_CONSTRAINTS = {
         "f",
         "FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE",
     ),
-    ("artifacts", "c", "CHECK (kind = 'front_preview')"),
+    (
+        "artifacts",
+        "c",
+        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview']))",
+    ),
     ("artifacts", "c", "CHECK (char_length(cache_identity) = 64)"),
     ("artifacts", "c", "CHECK (output_relative_path <> '')"),
     ("artifacts", "c", "CHECK (mime_type <> '')"),
@@ -268,7 +272,11 @@ EXPECTED_CATALOG_CONSTRAINTS = {
         "f",
         "FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE",
     ),
-    ("jobs", "c", "CHECK (kind = 'front_preview')"),
+    (
+        "jobs",
+        "c",
+        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview']))",
+    ),
     ("jobs", "c", "CHECK (char_length(cache_identity) = 64)"),
     (
         "jobs",

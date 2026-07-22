@@ -12,7 +12,11 @@ from rosbag_analyser.processors.front_preview import (
     FrontPreviewProcessingError,
     FrontPreviewResult,
 )
-from rosbag_analyser.worker import FrontPreviewWorker
+from rosbag_analyser.processors.topdown_preview import (
+    TopdownPreviewProcessingError,
+    TopdownPreviewResult,
+)
+from rosbag_analyser.worker import SerialWorker
 
 
 def _job() -> JobRecord:
@@ -28,6 +32,15 @@ def _job() -> JobRecord:
         finished_at=None,
         error_code=None,
         error_message=None,
+    )
+
+
+def _topdown_job() -> JobRecord:
+    return JobRecord(
+        **{
+            **_job().__dict__,
+            "kind": "topdown_preview",
+        }
     )
 
 
@@ -93,11 +106,41 @@ class FailingProcessor(SuccessfulProcessor):
         )
 
 
+class SuccessfulTopdownProcessor:
+    profile = V0_PREVIEW_PROFILE
+
+    def process(self, descriptor, output_path: Path) -> TopdownPreviewResult:
+        del descriptor
+        output_path.write_bytes(b"temporary-topdown-preview")
+        return TopdownPreviewResult(
+            input_frame_count=3,
+            timestamp_count=3,
+            encoded_frame_count=3,
+            coverage_start_ns=200_000_000,
+            coverage_end_ns=1_100_000_000,
+            output_width=640,
+            output_height=480,
+            measured_span_ns=900_000_000,
+            media_pts_sha256="d" * 64,
+            warnings=("coverage_starts_after_recording",),
+        )
+
+
+class FailingTopdownProcessor(SuccessfulTopdownProcessor):
+    def process(self, descriptor, output_path: Path) -> TopdownPreviewResult:
+        del descriptor, output_path
+        raise TopdownPreviewProcessingError(
+            "topdown_frame_count_mismatch",
+            "The top-down video and timestamp row counts do not match.",
+        )
+
+
 class FakeArtifactStore:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.cleaned_interrupted: tuple[int, ...] = ()
         self.published_manifest: dict[str, object] | None = None
+        self.validation_expectations: dict[str, object] | None = None
 
     def create_workspace(self, job_id: int) -> Path:
         workspace = self.root / f"job-{job_id}-owned"
@@ -105,7 +148,8 @@ class FakeArtifactStore:
         return workspace
 
     def validate_preview(self, path: Path, profile, **expectations) -> MediaValidation:
-        del profile, expectations
+        del profile
+        self.validation_expectations = expectations
         details = path.stat(follow_symlinks=False)
         return MediaValidation(
             size_bytes=details.st_size,
@@ -150,8 +194,8 @@ def _worker(
     processor: SuccessfulProcessor,
     store: FakeArtifactStore,
     resolver: FakeResolver | None = None,
-) -> FrontPreviewWorker:
-    return FrontPreviewWorker(
+) -> SerialWorker:
+    return SerialWorker(
         repository,  # type: ignore[arg-type]
         resolver or FakeResolver(),  # type: ignore[arg-type]
         processor,  # type: ignore[arg-type]
@@ -193,6 +237,78 @@ def test_worker_publishes_only_after_validation_and_completes_job(
         "measured_span_ns": "800000000",
         "media_timescale": 1_000_000,
     }
+    assert not (tmp_path / "job-5-owned").exists()
+
+
+def test_worker_dispatches_topdown_job_with_csv_provenance(tmp_path: Path) -> None:
+    repository = FakeRepository(_topdown_job())
+    front_store = FakeArtifactStore(tmp_path)
+    topdown_store = FakeArtifactStore(tmp_path)
+    resolver = FakeResolver()
+    worker = SerialWorker(
+        repository,  # type: ignore[arg-type]
+        FakeResolver(),  # type: ignore[arg-type]
+        SuccessfulProcessor(),  # type: ignore[arg-type]
+        front_store,  # type: ignore[arg-type]
+        "/camera/image_raw",
+        "test-encoder-v1",
+        topdown_resolver=resolver,  # type: ignore[arg-type]
+        topdown_processor=SuccessfulTopdownProcessor(),  # type: ignore[arg-type]
+        topdown_artifact_store=topdown_store,  # type: ignore[arg-type]
+    )
+
+    assert worker.run_once()
+
+    assert repository.failures == []
+    assert len(repository.completed) == 1
+    _, artifact = repository.completed[0]
+    assert artifact.kind == "topdown_preview"
+    assert artifact.coverage_start_ns == 200_000_000
+    assert topdown_store.published_manifest is not None
+    assert topdown_store.published_manifest["artifact_kind"] == "topdown_preview"
+    assert topdown_store.published_manifest["warnings"] == [
+        "coverage_starts_after_recording"
+    ]
+    assert topdown_store.validation_expectations is not None
+    assert topdown_store.validation_expectations["expected_media_pts_sha256"] == (
+        "d" * 64
+    )
+    assert topdown_store.published_manifest["timing"] == {
+        "timestamp_provenance": "csv_unix_timestamp",
+        "bounds": "measured",
+        "coverage_start_ns": "200000000",
+        "coverage_end_ns": "1100000000",
+        "measured_span_ns": "900000000",
+        "media_timescale": 1_000_000,
+        "media_pts_sha256": "d" * 64,
+    }
+
+
+def test_topdown_processing_failure_creates_no_artifact(tmp_path: Path) -> None:
+    repository = FakeRepository(_topdown_job())
+    store = FakeArtifactStore(tmp_path)
+    worker = SerialWorker(
+        repository,  # type: ignore[arg-type]
+        FakeResolver(),  # type: ignore[arg-type]
+        SuccessfulProcessor(),  # type: ignore[arg-type]
+        FakeArtifactStore(tmp_path),  # type: ignore[arg-type]
+        "/camera/image_raw",
+        "test-encoder-v1",
+        topdown_resolver=FakeResolver(),  # type: ignore[arg-type]
+        topdown_processor=FailingTopdownProcessor(),  # type: ignore[arg-type]
+        topdown_artifact_store=store,  # type: ignore[arg-type]
+    )
+
+    assert worker.run_once()
+
+    assert repository.completed == []
+    assert repository.failures == [
+        (
+            5,
+            "topdown_frame_count_mismatch",
+            "The top-down video and timestamp row counts do not match.",
+        )
+    ]
     assert not (tmp_path / "job-5-owned").exists()
 
 

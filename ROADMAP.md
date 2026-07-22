@@ -8,7 +8,10 @@ the user on 2026-07-21. It adds the two remaining V0 PostgreSQL tables,
 front-preview processor, serial worker, validated artifact publication,
 request/poll/range API, and initial global timeline. Its synthetic,
 ROS-message, PostgreSQL, browser, and approved real-archive acceptance evidence
-is recorded below. Building blocks 3–5 have not started.
+is recorded below. Building block 3 implementation was approved on 2026-07-21
+and completed with automated verification on 2026-07-22; its opt-in browser and
+real-archive acceptance remain pending. Building blocks 4 and 5 have not
+started.
 
 This roadmap defines V0 scope and order. Building block 1 implementation was
 explicitly approved on 2026-07-20. That approval does not grant work on later
@@ -204,7 +207,7 @@ API traffic, then control it with the first global timeline.
 
 ## 7. Building block 3 — Top-down camera and dual-video synchronization
 
-**Status:** Planned
+**Status:** Implemented; automated verification complete on 2026-07-22; opt-in acceptance pending
 
 **Dependency:** Building block 2 reviewed and accepted
 
@@ -251,6 +254,28 @@ timeline.
 - Short real checks cover multiple seeks and sustained playback.
 - One opt-in longer check covers drift/coverage; damaged returns unavailable.
 - Before/after inventories prove AVI/CSV sources unchanged.
+
+### Implementation evidence — automated verification complete
+
+- On 2026-07-22, the routine non-PostgreSQL, non-ROS, non-real-archive suite
+  passed with 177 tests and 13 environment-specific deselections.
+- The isolated generated ROS-message regression test passed in the sourced ROS
+  2 Humble environment.
+- All 11 PostgreSQL tests passed against a disposable PostgreSQL 16 database,
+  including the four-table migration and isolated front/top-down processing
+  identities. The browser JavaScript passed a Node.js syntax check.
+- Synthetic top-down coverage includes exact nanosecond CSV parsing, irregular
+  CSV-driven MP4 PTS, full encoded-packet PTS comparison, pre-decode dimension
+  limits, frame-count and ordering failures, source identity/inventory
+  preservation, cache and unavailable behavior, worker dispatch, contained
+  publication, range delivery, and the served two-pane/one-clock browser
+  contract. The browser contract also covers invalidating interrupted media
+  play attempts without stopping the shared clock.
+- [README.md](README.md) contains the step-by-step opt-in Building block 3
+  browser, longer-recording, performance, and before/after inventory procedure.
+- Manual browser acceptance and all real-archive checks remain pending separate
+  opt-in approval. The real archive was not accessed during implementation or
+  automated verification.
 
 ## 8. Building block 4 — Synchronized IMU graph
 

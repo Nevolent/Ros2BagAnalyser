@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
+import hashlib
 import json
 import logging
 import os
@@ -12,10 +14,12 @@ import tempfile
 from typing import Any
 
 from rosbag_analyser.config import PreviewProfile
+from rosbag_analyser.timeline import media_pts_digest_chunk
 
 
 logger = logging.getLogger(__name__)
 MAX_MANIFEST_BYTES = 1024 * 1024
+SUPPORTED_ARTIFACT_KINDS = frozenset({"front_preview", "topdown_preview"})
 
 
 class ArtifactStoreError(RuntimeError):
@@ -53,14 +57,23 @@ class OpenedMedia:
 
 class ArtifactStore:
     def __init__(
-        self, derived_root: Path, ffmpeg_path: Path, ffprobe_path: Path
+        self,
+        derived_root: Path,
+        ffmpeg_path: Path,
+        ffprobe_path: Path,
+        artifact_kind: str = "front_preview",
     ) -> None:
+        if artifact_kind not in SUPPORTED_ARTIFACT_KINDS:
+            raise ArtifactStoreError(
+                "artifact_kind_invalid", "The artifact kind is unsupported."
+            )
         self.derived_root = derived_root.resolve(strict=True)
         self.ffmpeg_path = ffmpeg_path
         self.ffprobe_path = ffprobe_path
+        self.artifact_kind = artifact_kind
         self.owned_root = self.derived_root / "rosbag-analyser"
         self.work_root = self.owned_root / "work"
-        self.artifacts_root = self.owned_root / "artifacts" / "front_preview"
+        self.artifacts_root = self.owned_root / "artifacts" / artifact_kind
         self._ensure_directory(self.work_root)
         self._ensure_directory(self.artifacts_root)
 
@@ -95,6 +108,7 @@ class ArtifactStore:
         expected_height: int,
         expected_frame_count: int,
         measured_span_ns: int,
+        expected_media_pts_sha256: str | None = None,
     ) -> MediaValidation:
         self._assert_contained(media_path)
         try:
@@ -108,6 +122,12 @@ class ArtifactStore:
                 "preview_output_invalid", "The generated preview is invalid."
             )
 
+        stream_entries = "codec_name,pix_fmt,width,height,nb_read_packets"
+        show_entries = f"stream={stream_entries}:format=duration,size"
+        if expected_media_pts_sha256 is not None:
+            show_entries = (
+                f"stream={stream_entries},time_base:format=duration,size:packet=pts"
+            )
         command = [
             os.fspath(self.ffprobe_path),
             "-v",
@@ -116,7 +136,7 @@ class ArtifactStore:
             "v:0",
             "-count_packets",
             "-show_entries",
-            "stream=codec_name,pix_fmt,width,height,nb_read_packets:format=duration,size",
+            show_entries,
             "-of",
             "json",
             os.fspath(media_path),
@@ -175,6 +195,14 @@ class ArtifactStore:
                 "The generated preview does not match the requested profile.",
             )
 
+        if expected_media_pts_sha256 is not None:
+            _validate_media_pts(
+                document,
+                expected_frame_count,
+                profile.media_timescale,
+                expected_media_pts_sha256,
+            )
+
         if profile.container == "mp4":
             self._validate_mp4_faststart(media_path, details.st_size)
         self._validate_representative_seeks(media_path, validation.duration_seconds)
@@ -220,7 +248,9 @@ class ArtifactStore:
                 "preview_output_missing", "The generated preview is missing."
             )
         media_details = media_path.stat(follow_symlinks=False)
-        _validate_publish_manifest(manifest, cache_identity, media_details)
+        _validate_publish_manifest(
+            manifest, self.artifact_kind, cache_identity, media_details
+        )
         manifest_path = workspace / "manifest.json"
         manifest_path.write_text(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")),
@@ -335,7 +365,7 @@ class ArtifactStore:
         expected_relative = PurePosixPath(
             "rosbag-analyser",
             "artifacts",
-            "front_preview",
+            self.artifact_kind,
             cache_identity[:2],
             cache_identity,
             "preview.mp4",
@@ -357,6 +387,7 @@ class ArtifactStore:
             manifest = self._read_manifest_at(directory_descriptor)
             if (
                 manifest != expected_manifest
+                or manifest.get("artifact_kind") != self.artifact_kind
                 or manifest.get("cache_identity") != cache_identity
                 or _manifest_output_size(manifest) != expected_size
             ):
@@ -654,11 +685,13 @@ class ArtifactStore:
 
 def _validate_publish_manifest(
     manifest: dict[str, object],
+    artifact_kind: str,
     cache_identity: str,
     media_details: os.stat_result,
 ) -> None:
     if (
-        manifest.get("cache_identity") != cache_identity
+        manifest.get("artifact_kind") != artifact_kind
+        or manifest.get("cache_identity") != cache_identity
         or _manifest_output_size(manifest) != media_details.st_size
         or _manifest_output_identity(manifest)
         != (media_details.st_dev, media_details.st_ino, media_details.st_mtime_ns)
@@ -666,6 +699,60 @@ def _validate_publish_manifest(
         raise ArtifactStoreError(
             "artifact_manifest_invalid",
             "The generated preview manifest is invalid.",
+        )
+
+
+def _validate_media_pts(
+    document: dict[str, Any],
+    expected_frame_count: int,
+    media_timescale: int,
+    expected_sha256: str,
+) -> None:
+    if len(expected_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in expected_sha256
+    ):
+        raise ArtifactStoreError(
+            "preview_timestamp_validation_failed",
+            "The expected preview timing is invalid.",
+        )
+    try:
+        streams = document["streams"]
+        packets = document["packets"]
+        if (
+            not isinstance(streams, list)
+            or len(streams) != 1
+            or not isinstance(packets, list)
+            or len(packets) != expected_frame_count
+        ):
+            raise ValueError("Unexpected ffprobe timestamp result.")
+        stream = streams[0]
+        if not isinstance(stream, dict):
+            raise ValueError("Unexpected ffprobe stream result.")
+        time_base = Fraction(str(stream["time_base"]))
+        if time_base <= 0:
+            raise ValueError("Invalid media time base.")
+        digest = hashlib.sha256()
+        previous_pts: int | None = None
+        for packet in packets:
+            if not isinstance(packet, dict):
+                raise ValueError("Unexpected ffprobe packet result.")
+            scaled_pts = Fraction(int(packet["pts"])) * time_base * media_timescale
+            if scaled_pts.denominator != 1:
+                raise ValueError("Media timestamp cannot be represented exactly.")
+            media_pts = scaled_pts.numerator
+            if previous_pts is not None and media_pts <= previous_pts:
+                raise ValueError("Media timestamps are not strictly increasing.")
+            digest.update(media_pts_digest_chunk(media_pts))
+            previous_pts = media_pts
+    except (KeyError, TypeError, ValueError, ZeroDivisionError, OverflowError) as error:
+        raise ArtifactStoreError(
+            "preview_timestamp_validation_failed",
+            "The generated preview timestamps could not be validated.",
+        ) from error
+    if digest.hexdigest() != expected_sha256:
+        raise ArtifactStoreError(
+            "preview_timestamp_mismatch",
+            "The generated preview timestamps do not match the source timing.",
         )
 
 

@@ -2,9 +2,10 @@
 
 > **Status:** Accepted V0 architecture
 >
-> **Implementation status:** Building blocks 1 and 2 complete and user-accepted
+> **Implementation status:** Building blocks 1 and 2 complete and user-accepted;
+> Building block 3 implemented, pending opt-in acceptance
 >
-> **Last updated:** 2026-07-21
+> **Last updated:** 2026-07-22
 
 This document defines the smallest architecture needed for the mentor-facing
 V0. It is a build contract, not a description of existing software and not a
@@ -427,15 +428,42 @@ elapsed duration, fast-start MP4 layout, and actual decoded output at
 representative seeks with ffprobe/FFmpeg before publication. PyAV, its linked libraries, the processor version, input
 identities, topic, and every output setting participate in the cache identity.
 
+### 12.2 Building block 3 top-down profile
+
+The top-down processor pairs the unique `topdown_video` and
+`topdown_timestamps` components already catalogued for a recording. It requires
+one `unix_timestamp` value per decoded AVI frame, parses at most nanosecond
+precision without floating point, and rejects duplicate or unordered values.
+Full CSV and AVI validation remains worker work; the scanner continues to
+record companion presence only.
+
+The processor decodes and encodes sequentially with one frame in flight. It
+ignores nominal AVI timing and assigns each output frame a PTS from its CSV
+timestamp relative to the first CSV timestamp. The output reuses the fixed
+`h264-720p-v1` profile and publishes under the distinct `topdown_preview`
+artifact kind. Its cache identity includes metadata timing, AVI and CSV file
+identities, processor and encoder identities, and all output-affecting profile
+settings. Declared dimensions are checked before frame decoding, the decoder
+has an independent pixel ceiling, and decoded dimensions must remain stable.
+Before publication, validation rescales every encoded video packet PTS to the
+profile timescale and compares the complete ordered sequence with the
+CSV-derived sequence produced by the processor.
+
+Coverage is the first and last CSV timestamp relative to the bag start and is
+never clipped to the global recording duration. The browser uses the existing
+100-millisecond drift threshold for each player, force-seeks both players on an
+explicit scrub, and hides an individual pane outside measured coverage.
+
 ## 13. Delivery contracts
 
 The API exposes catalog, artifact, and timeline capabilities without leaking
-database rows or filesystem paths. Building block 2 uses GET and POST on
-`/api/recordings/{id}/front-preview` for state/request and a separate
-identity-specific GET/HEAD media route with one browser byte range, strong
-validator, and `If-Range` support. A stale artifact URL cannot resolve to a
-newer artifact. Scanner dispatch remains replaceable without changing its core
-contract, and ready media supports seeking without a complete download.
+database rows or filesystem paths. Front and top-down state/request operations
+use GET and POST on `/api/recordings/{id}/front-preview` and
+`/api/recordings/{id}/topdown-preview`. Each has a separate identity-specific
+GET/HEAD media route with one browser byte range, strong validator, and
+`If-Range` support. A stale artifact URL cannot resolve to a newer artifact.
+Scanner dispatch remains replaceable without changing its core contract, and
+ready media supports seeking without a complete download.
 
 ## 14. Operational boundaries
 

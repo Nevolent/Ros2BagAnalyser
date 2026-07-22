@@ -6,11 +6,13 @@ and present two cameras and one telemetry signal on a shared timeline.
 
 ## Current status
 
-Building blocks 1 and 2 are complete and user-accepted. The current vertical
-slice includes the front-camera preview processor, four-table PostgreSQL model,
-serial worker, validated derived artifact store, request/poll/range API, front
-player, and initial global timeline. Building blocks 3–5 have not started. The
-discarded local prototype is not a dependency or compatibility target.
+Building blocks 1 and 2 are complete and user-accepted. Building block 3
+implementation and automated verification are complete; its opt-in browser and
+real-archive acceptance remain pending. It adds a timestamped top-down preview
+and a two-camera review controller to the existing four-table PostgreSQL model,
+serial worker, validated artifact store, and request/poll/range API. Building
+blocks 4 and 5 have not started. The discarded local prototype is not a
+dependency or compatibility target.
 
 ## V0 proof
 
@@ -96,7 +98,7 @@ The topic and profile shown are the defaults. `ROS_BAG_ANALYSER_FFMPEG` and
 `ROS_BAG_ANALYSER_FFPROBE` may identify explicit executables; otherwise both
 are resolved from `PATH` at startup.
 
-Apply both migrations, then run the API and serial worker in separate sourced
+Apply the migrations, then run the API and serial worker in separate sourced
 shells:
 
 ```bash
@@ -111,9 +113,11 @@ source /opt/ros/humble/setup.bash
 Open `http://127.0.0.1:8000`. The application does not scan automatically;
 existing catalog rows load from PostgreSQL and the browser's **Rescan archive**
 button starts a bounded read-only scan. Open a readable recording and select
-**Generate preview**. The request returns immediately; only the separate worker
-reads image messages and creates media. Ready files are stored below the
-configured derived root, never in the archive.
+**Generate front preview**. The request returns immediately; only the separate
+worker reads image messages and creates media. Ready files are stored below
+the configured derived root, never in the archive. The top-down pane has its
+own **Generate top-down preview** action and uses the same serial worker and
+fixed output profile.
 
 The supported Building block 2 input is one configured
 `sensor_msgs/msg/Image` topic using `bgr8`. The fixed `h264-720p-v1` profile is
@@ -128,6 +132,15 @@ record-time jitter can look like a brief freeze even when camera header stamps
 are regular. This preserves the accepted synchronization clock; smoothing the
 preview with header timestamps or an assumed constant frame rate would change
 that contract.
+
+Top-down processing pairs the one catalogued AVI and CSV in the recording. The
+CSV `unix_timestamp` column is parsed directly to integer nanoseconds and must
+contain one strictly increasing value for every decoded AVI frame. The AVI's
+nominal frame rate is ignored; output frame PTS follow CSV elapsed time. Both
+camera panes use one browser-owned global timeline, report measured coverage,
+and hide rather than freeze outside their coverage. A damaged ROS recording may
+still show its AVI/CSV component facts, but synchronized top-down processing is
+unavailable when the bag origin is not trustworthy.
 
 Run routine tests without PostgreSQL, ROS, or the real archive:
 
@@ -235,5 +248,47 @@ ROS record timestamps rather than dropped preview frames. Exact evidence is
 recorded in [ROADMAP.md](ROADMAP.md).
 
 Future access to or processing of the real archive requires separate explicit
-approval. Building block 3 must not begin until its exact boundary is explicitly
-approved.
+approval. Building block 3 implementation was approved on 2026-07-21 and its
+automated verification was completed on 2026-07-22, but the block remains
+unaccepted until its opt-in browser/real-archive checks and user review are
+complete.
+
+## Building block 3 acceptance
+
+Routine synthetic tests do not access the real archive. The following manual
+procedure is opt-in and must not begin until access to the named recordings is
+approved. Keep the archive and derived-data roots separate throughout.
+
+1. Identify one short readable recording, one longer readable recording, and
+   the expected damaged recording. Before processing, inventory every source
+   item in those recording directories by relative name, kind, byte size, and
+   modification time. Do not create hashes, locks, indexes, or sidecars there.
+2. Apply migrations to a dedicated PostgreSQL database, then start the API and
+   exactly one serial worker with the same archive, derived-root, and profile
+   configuration.
+3. On the short recording, request the front and top-down previews. Observe
+   each transition from `not requested` through `queued`/`processing` to
+   `ready`, then confirm another request reuses the ready artifact.
+4. Play, pause, and scrub to times before, inside, and after each camera's
+   measured coverage. Confirm both visible cameras show matching global time,
+   an out-of-coverage camera is hidden with an explicit message, and the other
+   camera and global clock continue. Repeat several seeks while playing and
+   confirm no visible cumulative offset develops.
+5. Reload the page, rescan, and restart the API and worker. Confirm both ready
+   artifacts remain reusable and repeated requests create neither duplicate
+   active jobs nor duplicate artifacts.
+6. Open the damaged recording. Confirm its AVI/CSV component facts remain
+   visible, synchronized top-down media is unavailable, and requesting it does
+   not create a processing job.
+7. For the longer recording, run the worker under
+   `/usr/bin/time -v .venv/bin/rosbag-analyser-worker`, generate both previews,
+   and record logged duration, output size, and maximum resident set size.
+   Sustain playback, then seek near the start, middle, and end; confirm honest
+   coverage and no accumulating visible offset.
+8. Stop processing and capture the same source inventory again. Require an
+   exact before/after match and retain it with the review evidence. Confirm all
+   generated files are confined to the configured derived-data root.
+
+PostgreSQL verification and JavaScript runtime syntax checking passed on
+2026-07-22. This browser procedure and real-archive checks are separate pieces
+of evidence and must not be reported as complete unless they are actually run.

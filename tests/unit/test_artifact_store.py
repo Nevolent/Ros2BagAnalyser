@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import pytest
 
 from rosbag_analyser.artifact_store import ArtifactStore, ArtifactStoreError
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
+from rosbag_analyser.timeline import media_pts_digest_chunk
 
 
 def _store(derived_root: Path) -> ArtifactStore:
@@ -22,7 +24,12 @@ def _store(derived_root: Path) -> ArtifactStore:
     return ArtifactStore(derived_root, Path(ffmpeg), Path(ffprobe))
 
 
-def _write_preview(path: Path, *, faststart: bool = True) -> None:
+def _write_preview(
+    path: Path,
+    *,
+    faststart: bool = True,
+    pts_values: tuple[int, ...] = (0, 250_000),
+) -> None:
     options = {"movflags": "+faststart"} if faststart else None
     container = av.open(path, "w", format="mp4", options=options)
     stream = container.add_stream("libx264")
@@ -32,7 +39,7 @@ def _write_preview(path: Path, *, faststart: bool = True) -> None:
     stream.time_base = Fraction(1, 1_000_000)
     stream.codec_context.time_base = stream.time_base
     stream.codec_context.max_b_frames = 0
-    for pts in (0, 250_000):
+    for pts in pts_values:
         frame = av.VideoFrame.from_ndarray(
             np.zeros((2, 4, 3), dtype=np.uint8), format="bgr24"
         )
@@ -45,9 +52,17 @@ def _write_preview(path: Path, *, faststart: bool = True) -> None:
     container.close()
 
 
+def _media_pts_sha256(values: tuple[int, ...]) -> str:
+    digest = hashlib.sha256()
+    for value in values:
+        digest.update(media_pts_digest_chunk(value))
+    return digest.hexdigest()
+
+
 def _manifest(path: Path, identity: str) -> dict[str, object]:
     details = path.stat(follow_symlinks=False)
     return {
+        "artifact_kind": "front_preview",
         "cache_identity": identity,
         "schema_version": 1,
         "output": {
@@ -59,6 +74,65 @@ def _manifest(path: Path, identity: str) -> dict[str, object]:
             },
         },
     }
+
+
+def test_artifact_kind_has_an_independent_contained_path(tmp_path: Path) -> None:
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    assert ffmpeg is not None
+    assert ffprobe is not None
+    store = ArtifactStore(
+        derived,
+        Path(ffmpeg),
+        Path(ffprobe),
+        "topdown_preview",
+    )
+    workspace = store.create_workspace(2)
+    media = workspace / "preview.mp4"
+    media.write_bytes(b"topdown-media")
+    details = media.stat()
+    identity = "2" * 64
+    manifest = {
+        "artifact_kind": "topdown_preview",
+        "cache_identity": identity,
+        "output": {
+            "size_bytes": details.st_size,
+            "file_identity": {
+                "device_id": details.st_dev,
+                "inode": details.st_ino,
+                "mtime_ns": details.st_mtime_ns,
+            },
+        },
+    }
+
+    published = store.publish(workspace, 2, identity, manifest)
+
+    assert published.output_relative_path == (
+        f"rosbag-analyser/artifacts/topdown_preview/{identity[:2]}/"
+        f"{identity}/preview.mp4"
+    )
+    store.validate_media(
+        published.output_relative_path,
+        published.size_bytes,
+        identity,
+        manifest,
+    )
+
+
+def test_artifact_store_rejects_unknown_kind(tmp_path: Path) -> None:
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    assert ffmpeg is not None
+    assert ffprobe is not None
+
+    with pytest.raises(ArtifactStoreError) as captured:
+        ArtifactStore(derived, Path(ffmpeg), Path(ffprobe), "../../escape")
+
+    assert captured.value.code == "artifact_kind_invalid"
 
 
 def test_validation_checks_profile_duration_and_representative_seeks(
@@ -140,6 +214,28 @@ def test_validation_rejects_incomplete_frame_count(tmp_path: Path) -> None:
         )
 
     assert captured.value.code == "preview_validation_mismatch"
+
+
+def test_validation_rejects_wrong_interior_media_timestamp(tmp_path: Path) -> None:
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    store = _store(derived)
+    workspace = store.create_workspace(12)
+    output = workspace / "preview.mp4"
+    _write_preview(output, pts_values=(0, 450_000, 900_000))
+
+    with pytest.raises(ArtifactStoreError) as captured:
+        store.validate_preview(
+            output,
+            V0_PREVIEW_PROFILE,
+            expected_width=4,
+            expected_height=2,
+            expected_frame_count=3,
+            measured_span_ns=900_000_000,
+            expected_media_pts_sha256=_media_pts_sha256((0, 250_000, 900_000)),
+        )
+
+    assert captured.value.code == "preview_timestamp_mismatch"
 
 
 def test_partial_workspace_is_not_visible_until_atomic_publication(

@@ -5,6 +5,7 @@ import pytest
 from rosbag_analyser.timeline import (
     GlobalTimeline,
     StreamCoverage,
+    media_pts_digest_chunk,
     nanoseconds_to_media_pts,
     record_time_to_bag_time_ns,
 )
@@ -28,6 +29,22 @@ def test_coverage_maps_only_measured_global_time() -> None:
     assert coverage.media_time_ns(401) is None
 
 
+def test_csv_coverage_can_extend_outside_the_global_recording() -> None:
+    coverage = StreamCoverage(
+        start_ns=-100,
+        end_ns=600,
+        timestamp_provenance="csv_unix_timestamp",
+    )
+    timeline = GlobalTimeline(500)
+
+    assert coverage.timestamp_provenance == "csv_unix_timestamp"
+    assert coverage.bounds == "measured"
+    assert coverage.media_time_ns(-100) == 0
+    assert coverage.media_time_ns(0) == 100
+    assert coverage.media_time_ns(600) == 700
+    assert timeline.clamp(600) == 500
+
+
 def test_global_timeline_clamps_to_bag_duration() -> None:
     timeline = GlobalTimeline(500)
 
@@ -43,3 +60,10 @@ def test_invalid_timeline_values_are_rejected() -> None:
         GlobalTimeline(-1)
     with pytest.raises(ValueError):
         nanoseconds_to_media_pts(-1, 1_000_000)
+    with pytest.raises(ValueError):
+        media_pts_digest_chunk(-1)
+
+
+def test_media_pts_digest_chunk_is_fixed_width_and_unambiguous() -> None:
+    assert media_pts_digest_chunk(1) == b"\x00\x00\x00\x00\x00\x00\x00\x01"
+    assert media_pts_digest_chunk(256) == b"\x00\x00\x00\x00\x00\x00\x01\x00"

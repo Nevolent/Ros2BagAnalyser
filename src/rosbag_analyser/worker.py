@@ -17,10 +17,19 @@ from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
     JobRecord,
     ProcessingRepository,
+    TOPDOWN_PREVIEW_KIND,
 )
 from rosbag_analyser.processors.front_preview import (
     FrontPreviewProcessingError,
     FrontPreviewProcessor,
+)
+from rosbag_analyser.processors.topdown_preview import (
+    TopdownPreviewProcessingError,
+    TopdownPreviewProcessor,
+)
+from rosbag_analyser.topdown_preview import (
+    PROCESSOR_VERSION as TOPDOWN_PROCESSOR_VERSION,
+    TopdownSourceResolver,
 )
 
 
@@ -29,7 +38,7 @@ WORKER_LOCK_NAME = "rosbag_analyser_serial_worker"
 POLL_INTERVAL_SECONDS = 1.0
 
 
-class FrontPreviewWorker:
+class SerialWorker:
     def __init__(
         self,
         repository: ProcessingRepository,
@@ -38,6 +47,10 @@ class FrontPreviewWorker:
         artifact_store: ArtifactStore,
         topic_name: str,
         media_encoder_identity: str,
+        *,
+        topdown_resolver: TopdownSourceResolver | None = None,
+        topdown_processor: TopdownPreviewProcessor | None = None,
+        topdown_artifact_store: ArtifactStore | None = None,
     ) -> None:
         self.repository = repository
         self.resolver = resolver
@@ -45,6 +58,9 @@ class FrontPreviewWorker:
         self.artifact_store = artifact_store
         self.topic_name = topic_name
         self.media_encoder_identity = media_encoder_identity
+        self.topdown_resolver = topdown_resolver
+        self.topdown_processor = topdown_processor
+        self.topdown_artifact_store = topdown_artifact_store
 
     def recover_interrupted_jobs(self) -> tuple[int, ...]:
         interrupted = self.repository.mark_running_jobs_interrupted()
@@ -59,14 +75,22 @@ class FrontPreviewWorker:
         return True
 
     def _run_job(self, job: JobRecord) -> None:
+        if job.kind == FRONT_PREVIEW_KIND:
+            self._run_front_job(job)
+            return
+        if job.kind == TOPDOWN_PREVIEW_KIND:
+            self._run_topdown_job(job)
+            return
+        self.repository.fail_job(
+            job.id,
+            "artifact_kind_unsupported",
+            "The requested artifact kind is unsupported.",
+        )
+
+    def _run_front_job(self, job: JobRecord) -> None:
         workspace = None
         started = time.monotonic()
         try:
-            if job.kind != FRONT_PREVIEW_KIND:
-                raise FrontPreviewProcessingError(
-                    "artifact_kind_unsupported",
-                    "The requested artifact kind is unsupported.",
-                )
             resolution = self.resolver.resolve(job.recording_id)
             if resolution.descriptor is None:
                 message = (
@@ -200,8 +224,161 @@ class FrontPreviewWorker:
                         "Owned workspace cleanup failed for preview job %s.", job.id
                     )
 
+    def _run_topdown_job(self, job: JobRecord) -> None:
+        workspace = None
+        started = time.monotonic()
+        resolver = self.topdown_resolver
+        processor = self.topdown_processor
+        artifact_store = self.topdown_artifact_store
+        try:
+            if resolver is None or processor is None or artifact_store is None:
+                raise TopdownPreviewProcessingError(
+                    "topdown_processor_unavailable",
+                    "Top-down preview processing is unavailable.",
+                )
+            resolution = resolver.resolve(job.recording_id)
+            if resolution.descriptor is None:
+                message = (
+                    "Top-down preview prerequisites are no longer available."
+                    if resolution.diagnostic is None
+                    else resolution.diagnostic.message
+                )
+                code = (
+                    "topdown_prerequisites_changed"
+                    if resolution.diagnostic is None
+                    else resolution.diagnostic.code
+                )
+                raise TopdownPreviewProcessingError(code, message)
+            descriptor = resolution.descriptor
+            if descriptor.cache_identity != job.cache_identity:
+                raise TopdownPreviewProcessingError(
+                    "topdown_inputs_changed",
+                    "Top-down preview inputs changed after this job was requested.",
+                )
 
-def create_worker(config: AppConfig) -> FrontPreviewWorker:
+            workspace = artifact_store.create_workspace(job.id)
+            output_path = workspace / "preview.mp4"
+            result = processor.process(descriptor, output_path)
+            validation = artifact_store.validate_preview(
+                output_path,
+                processor.profile,
+                expected_width=result.output_width,
+                expected_height=result.output_height,
+                expected_frame_count=result.encoded_frame_count,
+                measured_span_ns=result.measured_span_ns,
+                expected_media_pts_sha256=result.media_pts_sha256,
+            )
+            manifest: dict[str, object] = {
+                "schema_version": 1,
+                "artifact_kind": TOPDOWN_PREVIEW_KIND,
+                "cache_identity": job.cache_identity,
+                "processor_version": TOPDOWN_PROCESSOR_VERSION,
+                "encoder_identity": self.media_encoder_identity,
+                "source": {
+                    "video_role": "topdown_video",
+                    "timestamps_role": "topdown_timestamps",
+                    "timestamp_column": "unix_timestamp",
+                },
+                "timing": {
+                    "timestamp_provenance": "csv_unix_timestamp",
+                    "bounds": "measured",
+                    "coverage_start_ns": str(result.coverage_start_ns),
+                    "coverage_end_ns": str(result.coverage_end_ns),
+                    "measured_span_ns": str(result.measured_span_ns),
+                    "media_timescale": processor.profile.media_timescale,
+                    "media_pts_sha256": result.media_pts_sha256,
+                },
+                "profile": processor.profile.identity_values(),
+                "output": {
+                    "file_name": "preview.mp4",
+                    "mime_type": processor.profile.mime_type,
+                    "size_bytes": validation.size_bytes,
+                    "file_identity": {
+                        "device_id": validation.device_id,
+                        "inode": validation.inode,
+                        "mtime_ns": validation.mtime_ns,
+                    },
+                    "width": validation.width,
+                    "height": validation.height,
+                    "codec": validation.codec,
+                    "pixel_format": validation.pixel_format,
+                    "duration_seconds": validation.duration_seconds,
+                },
+                "frames": {
+                    "video": result.input_frame_count,
+                    "timestamps": result.timestamp_count,
+                    "encoded": result.encoded_frame_count,
+                },
+                "warnings": list(result.warnings),
+            }
+            current = resolver.resolve(job.recording_id)
+            if (
+                current.descriptor is None
+                or current.descriptor.cache_identity != job.cache_identity
+            ):
+                raise TopdownPreviewProcessingError(
+                    "topdown_inputs_changed",
+                    "Top-down preview inputs changed during generation.",
+                )
+            published = artifact_store.publish(
+                workspace,
+                job.id,
+                job.cache_identity,
+                manifest,
+                replace_conflicting=True,
+            )
+            self.repository.complete_job(
+                job.id,
+                ArtifactWrite(
+                    recording_id=job.recording_id,
+                    kind=job.kind,
+                    cache_identity=job.cache_identity,
+                    output_relative_path=published.output_relative_path,
+                    mime_type=processor.profile.mime_type,
+                    size_bytes=published.size_bytes,
+                    coverage_start_ns=result.coverage_start_ns,
+                    coverage_end_ns=result.coverage_end_ns,
+                    manifest=manifest,
+                ),
+            )
+            logger.info(
+                "Top-down preview job %s succeeded in %.3f seconds (%s bytes).",
+                job.id,
+                time.monotonic() - started,
+                published.size_bytes,
+            )
+        except (TopdownPreviewProcessingError, ArtifactStoreError) as error:
+            self.repository.fail_job(job.id, error.code, error.safe_message)
+            logger.warning(
+                "Top-down preview job %s failed with code %s.",
+                job.id,
+                error.code,
+                exc_info=True,
+            )
+        except Exception:
+            self.repository.fail_job(
+                job.id,
+                "topdown_processing_failed",
+                "Top-down preview generation failed unexpectedly. Request it again.",
+            )
+            logger.exception(
+                "Top-down preview job %s failed unexpectedly.", job.id
+            )
+        finally:
+            if (
+                workspace is not None
+                and workspace.exists()
+                and artifact_store is not None
+            ):
+                try:
+                    artifact_store.clean_workspace(workspace, job.id)
+                except ArtifactStoreError:
+                    logger.exception(
+                        "Owned workspace cleanup failed for top-down job %s.", job.id
+                    )
+
+
+def create_worker(config: AppConfig) -> SerialWorker:
     repository = ProcessingRepository(config.database_url)
     media_encoder_identity = encoder_identity()
     resolver = FrontSourceResolver(
@@ -214,13 +391,28 @@ def create_worker(config: AppConfig) -> FrontPreviewWorker:
     artifact_store = ArtifactStore(
         config.derived_root, config.ffmpeg_path, config.ffprobe_path
     )
-    return FrontPreviewWorker(
+    topdown_artifact_store = ArtifactStore(
+        config.derived_root,
+        config.ffmpeg_path,
+        config.ffprobe_path,
+        TOPDOWN_PREVIEW_KIND,
+    )
+    topdown_resolver = TopdownSourceResolver(
+        config.archive_root,
+        repository,
+        config.preview_profile,
+        media_encoder_identity,
+    )
+    return SerialWorker(
         repository,
         resolver,
         FrontPreviewProcessor(config.preview_profile),
         artifact_store,
         config.front_topic,
         media_encoder_identity,
+        topdown_resolver=topdown_resolver,
+        topdown_processor=TopdownPreviewProcessor(config.preview_profile),
+        topdown_artifact_store=topdown_artifact_store,
     )
 
 
@@ -252,7 +444,9 @@ def main() -> None:
             raise SystemExit("Another ROS Bag Analyser worker is already running.")
         interrupted = worker.recover_interrupted_jobs()
         if interrupted:
-            logger.warning("Marked %s interrupted preview job(s) failed.", len(interrupted))
+            logger.warning(
+                "Marked %s interrupted processing job(s) failed.", len(interrupted)
+            )
         while not stop_requested:
             if not worker.run_once():
                 time.sleep(POLL_INTERVAL_SECONDS)

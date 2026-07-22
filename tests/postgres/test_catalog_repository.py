@@ -6,6 +6,7 @@ import threading
 from urllib.parse import unquote, urlsplit
 
 import httpx
+import psycopg
 import pytest
 
 from conftest import create_recording, require_optional_prerequisite
@@ -150,6 +151,33 @@ def test_migration_contains_exactly_four_v0_domain_tables(postgres_url: str) -> 
         "recordings",
         "source_components",
     ]
+
+
+@pytest.mark.postgres
+def test_front_and_topdown_kinds_are_allowed_and_isolated(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    identity = "c" * 64
+
+    front = repository.request_job(recording_id, "front_preview", identity)
+    topdown = repository.request_job(recording_id, "topdown_preview", identity)
+
+    assert front.job is not None
+    assert topdown.job is not None
+    assert front.job.id != topdown.job.id
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with open_connection(postgres_url) as connection:
+            connection.execute(
+                """
+                INSERT INTO jobs (recording_id, kind, cache_identity, state)
+                VALUES (%s, 'unknown', %s, 'queued')
+                """,
+                (recording_id, "f" * 64),
+            )
 
 
 @pytest.mark.postgres

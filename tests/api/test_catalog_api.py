@@ -115,15 +115,27 @@ async def test_list_detail_and_static_browser_contract() -> None:
     assert 'renderRecordingShell("Recording details")' in script.text
     assert "document.title" in script.text
     assert "PREVIEW_RETRY_DELAY_MS" in script.text
-    assert 'video.addEventListener("error", showMediaFailure)' in script.text
+    assert 'video.addEventListener("error", () => {' in script.text
+    assert "showMediaFailure(kind);" in script.text
     assert "VIDEO_DRIFT_TOLERANCE_SECONDS" in script.text
-    end_tick = script.text.index("const reachedEnd = next >= durationSeconds;")
+    assert 'paneId: "front-preview-pane"' in script.text
+    assert 'paneId: "topdown-preview-pane"' in script.text
+    assert script.text.count('node("button", "Play")') == 1
+    assert "Object.values(controller.players).forEach" in script.text
+    assert "forceSeek" in script.text
+    assert "playPending" in script.text
+    assert "player.playAttempt !== playAttempt" in script.text
+    assert "reviewController !== controller" in script.text
+    end_tick = script.text.index(
+        "const reachedEnd = next >= controller.durationSeconds;"
+    )
     stop_clock = script.text.index("clock.playing = false;", end_tick)
     synchronize_media = script.text.index("applyGlobalTime(next);", end_tick)
     assert stop_clock < synchronize_media
     assert stylesheet.status_code == 200
     assert ".table-wrapper:focus-visible" in stylesheet.text
     assert ".preview-player video[hidden]" in stylesheet.text
+    assert ".camera-grid" in stylesheet.text
     assert listing.headers["x-content-type-options"] == "nosniff"
     assert "default-src 'self'" in listing.headers["content-security-policy"]
     assert "media-src 'self'" in listing.headers["content-security-policy"]

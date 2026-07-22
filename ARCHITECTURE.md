@@ -2,7 +2,7 @@
 
 > **Status:** Accepted V0 architecture
 >
-> **Implementation status:** Building blocks 1–4 accepted; Building block 5 implementation, automated verification, and real-archive acceptance complete, with user review pending
+> **Implementation status:** Building blocks 1–5 complete and user-accepted; V0 complete
 >
 > **Last updated:** 2026-07-22
 

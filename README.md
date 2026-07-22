@@ -6,13 +6,12 @@ and present two cameras and one telemetry signal on a shared timeline.
 
 ## Current status
 
-Building blocks 1, 2, 3, and 4 are complete and user-accepted. Building block 5
-implementation was approved on 2026-07-22 for the exact V0 integration and
-mentor-readiness boundary in `ROADMAP.md`. Its implementation and automated
-verification are complete, and its explicit opt-in real-archive acceptance
-matrix passed on 2026-07-22. User review remains pending. The four-table
-PostgreSQL model and one serial worker remain unchanged. The discarded local
-prototype is not a dependency or compatibility target.
+Building blocks 1–5 are complete and user-accepted. Building block 5's
+implementation, automated verification, and explicit opt-in real-archive
+acceptance matrix were completed on 2026-07-22, and the user approved the
+result that day. The mentor-facing V0 is complete. The four-table PostgreSQL
+model and one serial worker remain unchanged. The discarded local prototype is
+not a dependency or compatibility target.
 
 ## V0 proof
 

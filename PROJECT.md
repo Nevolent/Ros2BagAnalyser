@@ -1,8 +1,8 @@
 # ROS 2 Bag Analyser — Project Definition
 
-**Status:** Building blocks 1–4 complete and user-accepted; Building block 5 implementation, automated verification, and real-archive acceptance complete, with user review pending
+**Status:** Building blocks 1–5 complete and user-accepted; mentor-facing V0 complete
 
-**Repository baseline:** Building block 5 V0 integration and mentor readiness
+**Repository baseline:** Completed mentor-facing V0
 
 **Initial environment:** Ubuntu 22.04 under WSL2, ROS 2 Humble
 

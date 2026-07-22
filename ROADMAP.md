@@ -18,7 +18,8 @@ accepted it on 2026-07-22. Building block 5 implementation was approved on
 2026-07-22 for the exact V0 integration and mentor-readiness boundary below.
 Implementation and automated verification were completed on 2026-07-22. The
 user approved, and the explicit opt-in real-archive acceptance matrix was
-completed, on 2026-07-22. User review remains pending.
+completed, on 2026-07-22. The user reviewed and accepted Building block 5 that
+day, completing the mentor-facing V0.
 
 This roadmap defines V0 scope and order. Building block 1 implementation was
 explicitly approved on 2026-07-20. That approval does not grant work on later
@@ -384,7 +385,7 @@ same timeline as both cameras.
 
 ## 9. Building block 5 — V0 integration and mentor readiness
 
-**Status:** Implementation, automated verification, and real-archive acceptance complete on 2026-07-22; user review pending
+**Status:** Completed and user-accepted on 2026-07-22
 
 **Dependency:** Building blocks 1–4 reviewed and accepted
 
@@ -506,6 +507,8 @@ adding another infrastructure subsystem.
   No source was modified and every generated file remained outside the archive.
 
 ## 10. Final V0 gate
+
+**Status:** Passed and user-approved on 2026-07-22
 
 V0 is complete only when:
 

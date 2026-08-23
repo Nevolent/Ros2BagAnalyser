@@ -1,0 +1,14 @@
+[Unit]
+Description=ROS Bag Analyser derived artifact filesystem
+Documentation=file:/opt/rosbag-analyser/current/docs/NAS_TRIAL_RUNBOOK.md
+Before=rosbag-analyser-preflight.service rosbag-analyser-api.service rosbag-analyser-worker.service
+
+[Mount]
+What=/dev/disk/by-uuid/REPLACE_WITH_DERIVED_UUID
+Where=/var/lib/rosbag-analyser/derived
+Type=ext4
+Options=rw,nosuid,nodev
+TimeoutSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -11,7 +11,7 @@ import pytest
 from rosbag_analyser.api.app import create_app
 from rosbag_analyser.artifact_store import OpenedMedia
 from rosbag_analyser.catalog.types import SafeDiagnostic
-from rosbag_analyser.imu_series import ImuSeriesDisplay
+from rosbag_analyser.imu_series import IMU_SERIES_DEFINITIONS, ImuSeriesDisplay
 from rosbag_analyser.persistence.processing_repository import ArtifactRecord
 
 
@@ -43,15 +43,24 @@ def _artifact() -> ArtifactRecord:
             "cache_identity": "c" * 64,
             "source": {
                 "topic": "/sensors/imu",
-                "component": "angular_velocity.z",
+                "default_component": "angular_velocity.z",
+                "default_series_id": "angular_velocity_z",
             },
+            "series": [
+                {
+                    **definition.identity_values(),
+                    "finite": 200,
+                    "non_finite": 1,
+                    "minimum": -1.5,
+                    "maximum": 2.25,
+                    "available": True,
+                }
+                for definition in IMU_SERIES_DEFINITIONS
+            ],
             "samples": {
                 "source": 201,
                 "delivered": 201,
-                "finite": 200,
-                "non_finite": 1,
-                "minimum": -1.5,
-                "maximum": 2.25,
+                "duplicate_timestamps": 2,
             },
             "reduction": {"method": "none"},
             "warnings": ["non_finite_values_present"],
@@ -167,16 +176,22 @@ async def test_ready_metadata_is_exact_and_does_not_expose_paths() -> None:
         "coverage_end_ns": "2100000000",
         "timestamp_provenance": "ros_record_timestamp",
         "bounds": "measured",
-        "display_label": "IMU angular_velocity.z (rad/s)",
         "topic": "/sensors/imu",
-        "component": "angular_velocity.z",
-        "units": "rad/s",
+        "default_series_id": "angular_velocity_z",
         "source_sample_count": "201",
         "delivered_sample_count": "201",
-        "finite_sample_count": "200",
-        "non_finite_sample_count": "1",
-        "minimum_value": -1.5,
-        "maximum_value": 2.25,
+        "duplicate_timestamp_count": "2",
+        "series": [
+            {
+                **definition.identity_values(),
+                "finite_sample_count": "200",
+                "non_finite_sample_count": "1",
+                "minimum_value": -1.5,
+                "maximum_value": 2.25,
+                "available": True,
+            }
+            for definition in IMU_SERIES_DEFINITIONS
+        ],
         "reduction_method": "none",
         "warnings": [
             {
@@ -192,9 +207,39 @@ async def test_ready_metadata_is_exact_and_does_not_expose_paths() -> None:
     assert "cache_identity" not in response.text
 
 
+async def test_unavailable_configured_default_falls_back_to_a_finite_series() -> None:
+    artifact = _artifact()
+    manifest = artifact.manifest
+    series = manifest["series"]
+    assert isinstance(series, list)
+    default = next(
+        item for item in series if item["id"] == "angular_velocity_z"
+    )
+    default.update(
+        {
+            "finite": 0,
+            "non_finite": 201,
+            "minimum": None,
+            "maximum": None,
+            "available": False,
+        }
+    )
+    service = FakeImuService(
+        ImuSeriesDisplay(True, "ready", 2_500_000_000, artifact=artifact)
+    )
+
+    async with client_for(service) as client:
+        response = await client.get("/api/recordings/7/imu-series")
+
+    assert response.status_code == 200
+    assert response.json()["artifact"]["default_series_id"] == "angular_velocity_x"
+
+
 async def test_data_endpoint_supports_identity_head_and_ranges(tmp_path: Path) -> None:
     data = tmp_path / "series.json"
-    data.write_bytes(b'{"schema_version":1,"samples":[["0",1.0]]}')
+    data.write_bytes(
+        b'{"schema_version":2,"samples":[["0",1.0,2.0,3.0,4.0,5.0,6.0]]}'
+    )
     artifact = _artifact()
     artifact = ArtifactRecord(**{**artifact.__dict__, "size_bytes": data.stat().st_size})
     service = FakeImuService(

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 1 ]] || {
+  echo "Usage: activate-release RELEASE_ID" >&2
+  exit 2
+}
+readonly release_id="$1"
+readonly deployment_root="/opt/rosbag-analyser"
+readonly candidate="$deployment_root/releases/$release_id"
+readonly current="$deployment_root/current"
+
+[[ "$(id -u)" -eq 0 ]] || {
+  echo "Release activation must run as root inside the approved VM." >&2
+  exit 1
+}
+[[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "The release identity is invalid." >&2
+  exit 1
+}
+[[ -d "$candidate" && ! -L "$candidate" ]] || {
+  echo "The candidate release is unavailable." >&2
+  exit 1
+}
+"$candidate/venv/bin/python" -c '
+import pathlib, sys
+from rosbag_analyser.preflight import validate_release_manifest
+root = pathlib.Path(sys.argv[1])
+validate_release_manifest(
+    root / "release-manifest.json",
+    root / "wheelhouse" / "SHA256SUMS",
+    root / "deploy" / "release-contract.json",
+    expected_release_id=sys.argv[2],
+)
+' "$candidate" "$release_id"
+readonly previous="$(readlink -- "$current" 2>/dev/null || true)"
+readonly next_link="$deployment_root/.current.$release_id.$$"
+ln -s -- "releases/$release_id" "$next_link"
+mv -T -- "$next_link" "$current"
+echo "Activated release $release_id; previous pointer: ${previous:-none}."

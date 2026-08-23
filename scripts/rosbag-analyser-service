@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly project_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+  pwd -P
+)"
+readonly settings_file="${ROS_BAG_ANALYSER_SETTINGS_FILE:-$HOME/.config/rosbag-analyser/environment}"
+readonly database_secret_file="${ROS_BAG_ANALYSER_DATABASE_SECRET_FILE:-$HOME/.config/rosbag-analyser/database.env}"
+
+[[ -r "$settings_file" ]] || {
+  echo "Missing local settings: $settings_file" >&2
+  exit 1
+}
+[[ -r "$database_secret_file" ]] || {
+  echo "Missing database secret: $database_secret_file" >&2
+  exit 1
+}
+
+set -a
+source "$settings_file"
+source "$database_secret_file"
+set +a
+
+: "${ROS_BAG_ANALYSER_DATABASE_PASSWORD:?database password is not configured}"
+
+database_host="${ROS_BAG_ANALYSER_DATABASE_HOST:-$(
+  awk '$1 == "nameserver" { print $2; exit }' /etc/resolv.conf
+)}"
+database_user="${ROS_BAG_ANALYSER_DATABASE_USER:-rosbag_analyser}"
+database_name="${ROS_BAG_ANALYSER_DATABASE_NAME:-rosbag_analyser}"
+database_port="${ROS_BAG_ANALYSER_DATABASE_PORT:-5432}"
+
+if [[ ! "$database_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Could not resolve the Windows host gateway for PostgreSQL." >&2
+  exit 1
+fi
+
+encoded_password="$(
+  ROS_BAG_ANALYSER_PASSWORD_TO_ENCODE="$ROS_BAG_ANALYSER_DATABASE_PASSWORD" \
+    "$project_root/.venv/bin/python" -c \
+    'import os, urllib.parse; print(urllib.parse.quote(os.environ["ROS_BAG_ANALYSER_PASSWORD_TO_ENCODE"], safe=""))'
+)"
+unset ROS_BAG_ANALYSER_DATABASE_PASSWORD
+
+export ROS_BAG_ANALYSER_DATABASE_URL="postgresql://${database_user}:${encoded_password}@${database_host}:${database_port}/${database_name}"
+unset encoded_password
+
+cd "$project_root"
+
+case "${1:-}" in
+  api)
+    exec .venv/bin/rosbag-analyser
+    ;;
+  worker)
+    set +u
+    source /opt/ros/humble/setup.bash
+    set -u
+    exec .venv/bin/rosbag-analyser-worker
+    ;;
+  migrate)
+    exec .venv/bin/rosbag-analyser-migrate
+    ;;
+  *)
+    echo "Usage: rosbag-analyser-service {api|worker|migrate}" >&2
+    exit 2
+    ;;
+esac

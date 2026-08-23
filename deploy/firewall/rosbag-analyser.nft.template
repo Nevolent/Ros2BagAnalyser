@@ -1,0 +1,56 @@
+#!/usr/sbin/nft -f
+
+# Documentation-only addresses make accidental application fail closed. Replace
+# all four sets in the private reviewed site copy before activation.
+table inet rosbag_analyser {
+    set administration_ipv4 {
+        type ipv4_addr
+        flags interval
+        elements = { 192.0.2.0/24 }
+    }
+
+    set administration_ipv6 {
+        type ipv6_addr
+        flags interval
+        elements = { 2001:db8:1::/48 }
+    }
+
+    set trial_ipv4 {
+        type ipv4_addr
+        flags interval
+        elements = { 198.51.100.0/24 }
+    }
+
+    set trial_ipv6 {
+        type ipv6_addr
+        flags interval
+        elements = { 2001:db8:2::/48 }
+    }
+
+    chain input {
+        type filter hook input priority 0; policy drop;
+        iifname "lo" accept
+        ct state established,related accept
+        ct state invalid drop
+
+        ip protocol icmp accept
+        meta l4proto ipv6-icmp icmpv6 type {
+            destination-unreachable, packet-too-big, time-exceeded,
+            parameter-problem, nd-router-solicit, nd-router-advert,
+            nd-neighbor-solicit, nd-neighbor-advert
+        } accept
+
+        ip saddr @administration_ipv4 tcp dport 22 accept
+        ip6 saddr @administration_ipv6 tcp dport 22 accept
+        ip saddr @trial_ipv4 tcp dport 443 accept
+        ip6 saddr @trial_ipv6 tcp dport 443 accept
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+    }
+}

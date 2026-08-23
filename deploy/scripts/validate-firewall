@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 1 ]] || {
+  echo "Usage: validate-firewall RENDERED_NFTABLES_FILE" >&2
+  exit 2
+}
+readonly rules="$1"
+[[ -f "$rules" && ! -L "$rules" ]] || {
+  echo "The rendered firewall rules are unavailable." >&2
+  exit 1
+}
+if grep -Eq '192\.0\.2\.|198\.51\.100\.|2001:db8:' "$rules"; then
+  echo "Documentation-only firewall addresses remain unresolved." >&2
+  exit 1
+fi
+if grep -Eq '(^|[[:space:]])(0\.0\.0\.0/0|::/0)([[:space:],}]|$)' "$rules"; then
+  echo "A public-any firewall network is not permitted." >&2
+  exit 1
+fi
+for required in \
+  'table inet rosbag_analyser' \
+  'policy drop' \
+  'ip saddr @administration_ipv4 tcp dport 22 accept' \
+  'ip6 saddr @administration_ipv6 tcp dport 22 accept' \
+  'ip saddr @trial_ipv4 tcp dport 443 accept' \
+  'ip6 saddr @trial_ipv6 tcp dport 443 accept'
+do
+  grep -Fq "$required" "$rules" || {
+    echo "A required dual-stack firewall control is missing." >&2
+    exit 1
+  }
+done
+if grep -Eo 'dport[[:space:]]+[0-9]+' "$rules" \
+  | awk '$2 != 22 && $2 != 443 { found = 1 } END { exit found ? 0 : 1 }'
+then
+  echo "The firewall opens an unexpected inbound port." >&2
+  exit 1
+fi
+nft --check --file "$rules"
+echo "Firewall syntax is valid. No rule was applied."

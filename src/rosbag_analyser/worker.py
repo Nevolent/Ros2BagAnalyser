@@ -3,18 +3,32 @@ from __future__ import annotations
 import logging
 import signal
 import time
+from collections.abc import Callable
 
-from rosbag_analyser.artifact_store import ArtifactStore, ArtifactStoreError
+from rosbag_analyser.artifact_store import (
+    ArtifactStore,
+    ArtifactStoreError,
+    SeriesColumnExpectation,
+)
 from rosbag_analyser.config import AppConfig, ConfigurationError
+from rosbag_analyser.catalog.types import SafeDiagnostic
+from rosbag_analyser.deployment import (
+    DeploymentConfigurationError,
+    DeploymentSettings,
+    build_admission_guard,
+    validate_startup_mounts,
+)
 from rosbag_analyser.front_preview import (
+    FRONT_TIMESTAMP_PROVENANCE,
+    FRONT_TIMING_POLICY,
     PROCESSOR_VERSION,
     FrontSourceResolver,
     encoder_identity,
 )
 from rosbag_analyser.imu_series import (
     DUPLICATE_TIMESTAMP_POLICY,
-    IMU_DISPLAY_LABEL,
-    IMU_UNITS,
+    IMU_SERIES_BY_COMPONENT,
+    IMU_SERIES_DEFINITIONS,
     NON_FINITE_POLICY,
     PROCESSOR_VERSION as IMU_PROCESSOR_VERSION,
     SERIES_SCHEMA_VERSION,
@@ -28,6 +42,7 @@ from rosbag_analyser.persistence.processing_repository import (
     JobRecord,
     ProcessingRepository,
     TOPDOWN_PREVIEW_KIND,
+    WORKER_LOCK_NAME,
 )
 from rosbag_analyser.processors.front_preview import (
     FrontPreviewProcessingError,
@@ -41,6 +56,7 @@ from rosbag_analyser.processors.topdown_preview import (
     TopdownPreviewProcessingError,
     TopdownPreviewProcessor,
 )
+from rosbag_analyser.safe_logging import configure_safe_logging
 from rosbag_analyser.topdown_preview import (
     PROCESSOR_VERSION as TOPDOWN_PROCESSOR_VERSION,
     TopdownSourceResolver,
@@ -48,7 +64,6 @@ from rosbag_analyser.topdown_preview import (
 
 
 logger = logging.getLogger(__name__)
-WORKER_LOCK_NAME = "rosbag_analyser_serial_worker"
 POLL_INTERVAL_SECONDS = 1.0
 
 
@@ -68,6 +83,7 @@ class SerialWorker:
         imu_resolver: ImuSourceResolver | None = None,
         imu_processor: ImuSeriesProcessor | None = None,
         imu_artifact_store: ArtifactStore | None = None,
+        admission_check: Callable[[], SafeDiagnostic | None] | None = None,
     ) -> None:
         self.repository = repository
         self.resolver = resolver
@@ -81,6 +97,8 @@ class SerialWorker:
         self.imu_resolver = imu_resolver
         self.imu_processor = imu_processor
         self.imu_artifact_store = imu_artifact_store
+        self.admission_check = admission_check
+        self._paused_code: str | None = None
 
     def recover_interrupted_jobs(self) -> tuple[int, ...]:
         interrupted = self.repository.mark_running_jobs_interrupted()
@@ -88,6 +106,16 @@ class SerialWorker:
         return interrupted
 
     def run_once(self) -> bool:
+        if self.admission_check is not None:
+            diagnostic = self.admission_check()
+            if diagnostic is not None:
+                if diagnostic.code != self._paused_code:
+                    logger.warning("Worker claim paused: %s", diagnostic.code)
+                    self._paused_code = diagnostic.code
+                return False
+            if self._paused_code is not None:
+                logger.info("Worker claim resumed after capability recovery.")
+                self._paused_code = None
         job = self.repository.claim_next_job()
         if job is None:
             return False
@@ -145,9 +173,10 @@ class SerialWorker:
                 expected_height=result.output_height,
                 expected_frame_count=result.encoded_frame_count,
                 measured_span_ns=result.measured_span_ns,
+                expected_media_pts_sha256=result.media_pts_sha256,
             )
             manifest: dict[str, object] = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "artifact_kind": FRONT_PREVIEW_KIND,
                 "cache_identity": job.cache_identity,
                 "processor_version": PROCESSOR_VERSION,
@@ -158,12 +187,20 @@ class SerialWorker:
                     "serialization_format": descriptor.topic.serialization_format,
                 },
                 "timing": {
-                    "timestamp_provenance": "ros_record_timestamp",
+                    "timestamp_provenance": FRONT_TIMESTAMP_PROVENANCE,
+                    "policy": FRONT_TIMING_POLICY,
                     "bounds": "measured",
                     "coverage_start_ns": str(result.coverage_start_ns),
                     "coverage_end_ns": str(result.coverage_end_ns),
                     "measured_span_ns": str(result.measured_span_ns),
+                    "header_span_ns": str(result.header_span_ns),
+                    "affine_scale_numerator": str(result.measured_span_ns),
+                    "affine_scale_denominator": str(result.header_span_ns),
+                    "maximum_presentation_gap_ns": str(
+                        result.maximum_presentation_gap_ns
+                    ),
                     "media_timescale": self.processor.profile.media_timescale,
+                    "media_pts_sha256": result.media_pts_sha256,
                 },
                 "profile": self.processor.profile.identity_values(),
                 "output": {
@@ -184,7 +221,7 @@ class SerialWorker:
                 "frames": {
                     "input": result.input_frame_count,
                     "encoded": result.encoded_frame_count,
-                    "duplicate_timestamps": result.duplicate_timestamp_count,
+                    "duplicate_record_timestamps": result.duplicate_timestamp_count,
                 },
             }
             current = self.resolver.resolve(job.recording_id)
@@ -434,19 +471,29 @@ class SerialWorker:
             workspace = artifact_store.create_workspace(job.id)
             output_path = workspace / "series.json"
             result = processor.process(descriptor, output_path)
+            result_by_id = {series.id: series for series in result.series}
             validation = artifact_store.validate_series(
                 output_path,
                 expected_schema_version=SERIES_SCHEMA_VERSION,
                 expected_sample_count=result.sample_count,
-                expected_finite_count=result.finite_count,
-                expected_non_finite_count=result.non_finite_count,
+                expected_columns=tuple(
+                    SeriesColumnExpectation(
+                        id=definition.id,
+                        finite_count=result_by_id[definition.id].finite_count,
+                        non_finite_count=result_by_id[
+                            definition.id
+                        ].non_finite_count,
+                        minimum_value=result_by_id[definition.id].minimum_value,
+                        maximum_value=result_by_id[definition.id].maximum_value,
+                    )
+                    for definition in IMU_SERIES_DEFINITIONS
+                ),
                 expected_coverage_start_ns=result.coverage_start_ns,
                 expected_coverage_end_ns=result.coverage_end_ns,
-                expected_minimum_value=result.minimum_value,
-                expected_maximum_value=result.maximum_value,
             )
+            default_series = IMU_SERIES_BY_COMPONENT[descriptor.component]
             manifest: dict[str, object] = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "artifact_kind": IMU_SERIES_KIND,
                 "cache_identity": job.cache_identity,
                 "processor_version": IMU_PROCESSOR_VERSION,
@@ -455,10 +502,22 @@ class SerialWorker:
                     "topic": descriptor.topic.name,
                     "message_type": descriptor.topic.message_type,
                     "serialization_format": descriptor.topic.serialization_format,
-                    "component": descriptor.component,
-                    "display_label": IMU_DISPLAY_LABEL,
-                    "units": IMU_UNITS,
+                    "default_component": descriptor.component,
+                    "default_series_id": default_series.id,
                 },
+                "series": [
+                    {
+                        **definition.identity_values(),
+                        "finite": result_by_id[definition.id].finite_count,
+                        "non_finite": result_by_id[
+                            definition.id
+                        ].non_finite_count,
+                        "minimum": result_by_id[definition.id].minimum_value,
+                        "maximum": result_by_id[definition.id].maximum_value,
+                        "available": result_by_id[definition.id].finite_count > 0,
+                    }
+                    for definition in IMU_SERIES_DEFINITIONS
+                ],
                 "timing": {
                     "timestamp_provenance": "ros_record_timestamp",
                     "bounds": "measured",
@@ -469,11 +528,7 @@ class SerialWorker:
                 "samples": {
                     "source": result.sample_count,
                     "delivered": result.sample_count,
-                    "finite": result.finite_count,
-                    "non_finite": result.non_finite_count,
                     "duplicate_timestamps": result.duplicate_timestamp_count,
-                    "minimum": result.minimum_value,
-                    "maximum": result.maximum_value,
                     "non_finite_policy": NON_FINITE_POLICY,
                 },
                 "reduction": {"method": "none"},
@@ -550,7 +605,11 @@ class SerialWorker:
                     )
 
 
-def create_worker(config: AppConfig) -> SerialWorker:
+def create_worker(
+    config: AppConfig,
+    *,
+    admission_check: Callable[[], SafeDiagnostic | None] | None = None,
+) -> SerialWorker:
     repository = ProcessingRepository(config.database_url)
     media_encoder_identity = encoder_identity()
     resolver = FrontSourceResolver(
@@ -600,16 +659,24 @@ def create_worker(config: AppConfig) -> SerialWorker:
         imu_resolver=imu_resolver,
         imu_processor=ImuSeriesProcessor(),
         imu_artifact_store=imu_artifact_store,
+        admission_check=admission_check,
     )
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    configure_safe_logging()
     try:
         config = AppConfig.from_environment()
-    except ConfigurationError as error:
+        deployment = DeploymentSettings.from_environment()
+        admission_guard = build_admission_guard(
+            config.archive_root,
+            config.derived_root,
+            deployment,
+        )
+        validate_startup_mounts(deployment, admission_guard)
+    except (ConfigurationError, DeploymentConfigurationError) as error:
         raise SystemExit(str(error)) from error
-    worker = create_worker(config)
+    worker = create_worker(config, admission_check=admission_guard.diagnostic)
     stop_requested = False
 
     def request_stop(signum: int, frame: object) -> None:

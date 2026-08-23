@@ -2,94 +2,131 @@
 
 ## Purpose
 
-This file contains standing instructions for Codex and other automated
-contributors working in this repository.
+This file contains the active standing instructions for Codex and other
+automated contributors working on ROS 2 Bag Analyser V1.
 
-ROS 2 Bag Analyser is a fresh implementation. The previous local codebase was
-deliberately discarded. Do not reconstruct or depend on old prototypes unless
-the user explicitly requests a specific recovery.
+V0 is complete. Its historical contracts and evidence are frozen under
+`docs/v0/`. Do not rewrite that evidence to make V1 appear older or more
+complete than it is.
 
-Building blocks 1 and 2 were completed and user-accepted on 2026-07-21.
-Building block 3 implementation was approved on 2026-07-21 for the exact
-top-down-camera and dual-video-synchronization boundary in `ROADMAP.md`, and
-its implementation and automated verification were completed on 2026-07-22.
-The user reviewed and accepted Building block 3, approved Building block 4,
-then reviewed and accepted Building block 4 on 2026-07-22. Building block 5
-implementation was approved on 2026-07-22 for the exact V0 integration and
-mentor-readiness boundary in `ROADMAP.md`. Its implementation, automated
-verification, and explicitly approved real-archive acceptance matrix were
-completed on 2026-07-22. The user reviewed and accepted Building block 5 that
-day, completing the mentor-facing V0.
+The static files under `archive/` are the user-authored V1 frontend reference.
+They contain mock data, but their design and interaction flow are intentional.
+Do not treat them as disposable generated output or redesign them for
+convenience.
+
+## Current status
+
+The V1 product, architecture, roadmap, and detailed building-block prompts were
+approved on 2026-08-04. Building block 1 was accepted on the same date.
+Building block 2 was then implemented, verified, and accepted. A separately
+approved smooth front-camera corrective slice was implemented synthetically as
+part of the accumulated pre-overhaul baseline. An approved moved-path catalog correction now
+keeps retained missing history out of ordinary current catalog projections. A
+separately approved move-aware artifact-reuse correction preserves compatible
+processed output across unambiguous folder moves. Building block 3 was invoked
+on 2026-08-16. Its repository-readiness phase is implemented and locally
+verified. On 2026-08-23 the user accepted all preceding application and
+repository-readiness work as the working pre-overhaul baseline and authorized
+its Git checkpoint and push. Prompt 2A, the big UI overhaul and real
+processing-controls correction, is approved and invoked. Gate 0 and every live
+Building block 3 phase remain pending and paused during the overhaul.
+
+V1 has three sequential blocks:
+
+1. backend preparation and processing operations;
+2. reference frontend integration; and
+3. TrueNAS VM deployment and trial commissioning.
+
+An implementation block starts only when the user explicitly invokes or
+approves its prompt from `BUILDING_BLOCK_PROMPTS.md`.
 
 ## Required reading
 
-Before planning or changing the project, read:
+Before planning or changing the project, read completely:
 
 - `README.md`;
 - `PROJECT.md`;
 - `ARCHITECTURE.md`;
 - `ROADMAP.md`;
-- this file.
+- this file; and
+- the active block prompt in `BUILDING_BLOCK_PROMPTS.md`.
+
+Read the relevant archived V0 sections when a task touches existing processors,
+artifact safety, synchronization, real-data evidence, or accepted limitations.
 
 Also inspect relevant code, tests, configuration, documentation, Git status,
-and existing diffs. `ROADMAP.md` is the authority for whether a building block
-has started or finished.
+and existing diffs. Existing uncommitted work belongs to the user unless proven
+otherwise.
 
 ## Working method
 
-- Work on one approved, coherent subsystem at a time.
-- Prefer a visible vertical slice over isolated infrastructure.
-- State the subsystem boundary before implementation.
-- Do not begin work assigned to a later roadmap block.
-- Follow the accepted product and architecture contracts.
+- Work on one approved V1 building block at a time.
+- State the exact block boundary before implementation.
+- Implement one visible vertical slice rather than disconnected infrastructure.
+- Follow the active V1 contracts and preserve inherited V0 safety/timing
+  behavior.
+- Prefer direct code and explicit domain names over speculative abstractions.
 - Keep the implementation understandable to a first-year software-development
   student.
-- Prefer direct code over speculative abstractions.
-- Treat development paths, filenames, and topic names as configuration
-  examples, not permanent constants.
-- Stop for direction if work needs a material architecture decision, safety
-  exception, major dependency, or scope expansion.
+- Treat paths, hostnames, topics, profiles, limits, and deployment values as
+  validated configuration rather than permanent constants.
+- Measure expensive operations and queries rather than guessing.
+- Record limitations instead of expanding the active block silently.
+- Stop for direction at the stop conditions in the active block prompt.
 
 ## Approval boundaries
 
 User approval is required before:
 
-- starting a roadmap building block;
-- crossing into another building block;
-- changing an accepted product or architecture contract;
+- starting a V1 implementation block;
+- crossing into another block;
+- changing the accepted V1 product, visual, architecture, data, timing, or
+  deployment contract;
 - introducing or installing a major runtime dependency;
-- changing the persistent storage or processing-job model;
-- processing original data outside the approved subsystem;
-- taking a destructive filesystem or Git action;
+- adding another worker, job kind, processor, source format, or telemetry family;
+- accessing or processing real source data beyond the explicit acceptance in
+  the active user-invoked prompt;
+- performing a destructive filesystem, database, deployment, or Git action;
 - committing completed work;
-- pushing or otherwise changing a remote repository.
+- pushing, opening a pull request, changing a remote, or publishing a release;
+  or
+- exposing the service outside the approved private trial boundary.
 
-An audit, review, diagnosis, plan, or documentation change is not permission to
-implement application code.
+Documentation, audit, diagnosis, and planning approval is not application-code
+implementation approval. A pasted block prompt is approval only for its stated
+boundary and explicit real-data acceptance.
 
 ## Before editing
 
 Briefly report:
 
 - what was inspected;
-- the approved roadmap block, or the exact documentation/audit task when no
-  implementation block is active;
+- the active block or exact documentation/audit task;
 - files expected to change;
-- the verification plan;
+- verification and acceptance plan;
+- real-data or deployment access, if any; and
 - assumptions affecting the result.
 
-Check Git status and relevant diffs first. Preserve unrelated user changes.
+Check Git status and relevant diffs before editing. Preserve unrelated changes.
+
+## Visual reference rules
+
+- `archive/index.html`, `archive/styles.css`, `archive/script.js`, and
+  `archive/assets/` define the V1 visual reference.
+- Keep `archive/` unchanged during normal Building block 2 implementation;
+  adapt or port it into `src/rosbag_analyser/web/`.
+- Do not replace the design with the V0 frontend, a framework, a generic admin
+  template, or personal aesthetic preferences.
+- Do not show mock preview images, mock recordings, mock jobs, or simulated
+  timers as real data.
+- Backend-controlled values must use safe DOM construction and must not become
+  HTML, selectors, URLs, or paths without validation.
+- Preserve keyboard access, visible focus, reduced motion, live status, status
+  text independent of color, and responsive behavior.
 
 ## Source-archive safety
 
-The original development archive is always read-only:
-
-```text
-Windows: D:\Rosbags
-WSL:     /mnt/d/Rosbags
-```
-
-These are development examples, not production configuration.
+Original recordings are always read-only, including development and NAS roots.
 
 Never modify, rename, move, delete, repair, reindex, truncate, vacuum, or write
 beside an original recording, including its:
@@ -98,163 +135,209 @@ beside an original recording, including its:
 - `metadata.yaml`;
 - camera video;
 - timestamp CSV;
-- recording directory or related source file.
+- directory; or
+- related source file.
 
 Never run a command that could create a journal, WAL, lock, index, repaired
-metadata, cache, or sidecar in an original recording directory.
+metadata, cache, or sidecar in a source directory.
 
-Open original SQLite databases explicitly read-only. Use immutable mode when it
-is safe and compatible. A `SELECT` statement alone is not proof that a
-connection cannot create auxiliary files.
+Open source SQLite databases explicitly read-only. Use immutable mode when safe
+and compatible. A `SELECT` statement alone is not proof that a connection
+cannot write auxiliary files.
 
-Never run `ros2 bag reindex` or an equivalent repair operation on an original.
+Never run `ros2 bag reindex` or an equivalent repair against an original.
 Report damaged data without changing it.
 
-Generated output must go to the configured derived-data root, never into
-`/mnt/d/Rosbags` or beside a source.
+The recursive V1 scanner must:
 
-Real-archive checks must compare a safe before/after inventory. Do not hash more
-than 100 GiB for routine evidence when names, sizes, and modification times are
-sufficient.
+- stay below configured depth, entry, and recording bounds;
+- never follow symlinks;
+- contain every path below the configured root;
+- distinguish a malformed recording from an incomplete root traversal;
+- apply missing reconciliation only after a complete successful scan; and
+- create no artifact or processing job.
+
+Move reconciliation is transactional metadata work only. It may update the
+current catalog path and database ownership of existing history after a
+one-to-one match, but it never moves, copies, renames, or rewrites source or
+derived files. Ambiguous matches remain separate.
+
+Real-data checks capture a safe before/after inventory of relative names, kinds,
+sizes, and high-resolution modification times. Do not hash large source payloads
+when the lightweight manifest is sufficient.
 
 ## Derived-data safety
 
-- Keep archive and derived roots separate and reject overlapping roots.
-- Constrain every generated path to the derived root.
-- Treat discovered names as untrusted path components.
-- Prevent path traversal and output collisions.
-- Write incomplete work to a temporary workspace under the derived root.
-- Validate output before publishing it, using an atomic rename where practical.
+- Archive and derived roots remain separate and non-overlapping.
+- Every generated path is constrained to the derived root.
+- Discovered names are untrusted and never become unchecked output paths.
+- Incomplete work stays in a proven job-owned temporary workspace.
+- Validate before publishing; use atomic rename where practical.
 - Never present partial or invalid output as ready.
-- Clean up only paths proven to belong to the derived root.
-- Do not replace or delete a valid artifact before its replacement is valid.
-- Never serve an artifact whose input identity or output settings no longer
-  match the current request.
-- Keep large generated payloads in the approved artifact store, not application
-  metadata storage.
+- Clean only paths proven to belong to the derived root and the relevant job.
+- Do not delete or replace a valid artifact before its replacement is valid.
+- Do not serve an artifact whose identity, manifest, file, or requested settings
+  no longer match.
+- A low-space condition rejects new work safely; it does not delete ready output.
+- Keep generated media and telemetry out of PostgreSQL and Git.
 
-Never commit:
+Never commit recordings, generated videos, telemetry artifacts, credentials,
+tokens, private keys, `.env` files, password files, certificates, database
+dumps, private mount paths, or service state.
 
-- `*.db3` or `*.mcap` files;
-- generated videos or extracted frames;
-- large telemetry artifacts or test data;
-- credentials, tokens, private keys, `.env` files, or environment secrets;
-- sensitive machine-specific storage locations.
+## Catalog and preparation discipline
 
-## Implementation discipline
+- Ordinary catalog and Processing reads use PostgreSQL projections; they do not
+  parse or stat source files per row.
+- Current output identity comes from the successful-scan
+  `preparation_targets` projection.
+- A planner/configuration mismatch requires explicit rescan.
+- The worker independently revalidates source identity before processing.
+- **Prepare selected** is bounded and idempotent.
+- Bulk preparation retains three artifact jobs; do not add a combined processor
+  or duplicate recording lifecycle.
+- Source unavailability creates no failed job.
+- Retry recomputes current identity rather than rerunning stale work.
+- Queue order displayed by the API must match worker claim order.
+- Elapsed time is factual; estimates are approximate and may be unavailable or
+  exceeded.
+- Do not add fabricated percentage progress.
 
-Follow `ARCHITECTURE.md` for accepted technical boundaries and `ROADMAP.md` for
-the exact scope of the active building block. In particular:
+## Existing processor and timing contracts
 
-- scanning must not generate previews or telemetry;
-- expensive ROS, video, or telemetry processing must not run in route code;
-- ROS readers and processors must remain usable without FastAPI or the browser;
-- the frontend must never read source files directly;
-- later features must not be introduced for convenience.
+Do not silently change:
 
-Do not silently change the accepted time model:
+- immutable source access;
+- front-camera record-endpoint coverage with image-header cadence affinely
+  mapped between those endpoints (`front-preview-v2`);
+- top-down CSV Unix-timestamp timing;
+- fixed H.264/yuv420p preview profile behavior;
+- schema-version-2 six-axis IMU bundle;
+- decimal nanoseconds, source order, duplicate-last lookup, or per-series null
+  gaps;
+- identity-bound range delivery;
+- one browser-owned full-recording clock;
+- 100-millisecond camera correction; or
+- measured coverage with hide/clear outside coverage.
 
-- ROS record timestamps drive ROS stream alignment;
-- CSV Unix timestamps drive top-down timing;
-- synchronized streams report their time provenance and coverage;
-- the UI must not freeze a boundary frame in a way that implies false coverage.
+A visual integration request is not permission to change backend truth for
+smoother playback or simpler UI code. The current front-camera rule is the
+separately user-approved, versioned exception recorded in `ARCHITECTURE.md` and
+`ROADMAP.md`.
+
+## Deployment safety
+
+- V1 deployment is private and internal. Never create public DNS, public
+  firewall exposure, or port forwarding for the raw API.
+- The application and PostgreSQL use private or loopback listeners behind the
+  approved access proxy.
+- Source storage is mounted read-only; never test it with a write probe.
+- Derived storage is separate and writable only by the service account.
+- Machine configuration and secrets live outside Git with least privilege.
+- Migrations run once through the controlled release process, not concurrently
+  from API and worker startup.
+- Back up PostgreSQL before a schema-changing release and verify restore in a
+  disposable target.
+- Do not assume code rollback is schema-safe; follow the release's recorded
+  compatibility or database-restore rule.
+- Use disposable mounts/databases for outage and full-disk drills.
+- Destructive deployment actions require exact target resolution and explicit
+  user authority.
 
 ## Testing
 
-Each approved subsystem must have:
+Each approved block requires:
 
-- focused automated tests for its core logic;
-- relevant failure coverage;
-- a visible manual acceptance procedure;
-- source-immutability evidence when real data is used.
+- focused unit tests for core logic;
+- relevant failure and boundary coverage;
+- PostgreSQL migration/repository tests where persistence changes;
+- API contract tests where delivery changes;
+- dependency-free browser tests where frontend behavior changes;
+- visible manual acceptance;
+- source-immutability evidence whenever real data is accessed; and
+- deployment evidence when a VM or service is changed.
 
-Prefer tiny synthetic fixtures, generated messages, narrow external-tool mocks,
-and temporary output directories. Routine tests should not require ROS or the
-full archive where a smaller fixture can prove the behavior.
+Prefer tiny synthetic archives, generated ROS messages, narrow external-tool
+mocks, disposable databases, and temporary derived roots. Routine tests never
+depend on the real NAS archive.
 
-Real-archive checks are opt-in, strictly read-only, identifiable by recording
-and topic, and not required in generic CI. Exact minimum tests and real-data
-acceptance cases belong to the active roadmap block.
-
-Do not weaken an accepted test merely to make a change pass. If an accepted
-contract changes, explain and update the test visibly.
+Do not weaken an accepted test to make a change pass. If a reviewed contract
+changes, update the owning document and test visibly.
 
 ## Dependencies
 
-Do not install dependencies without approval. A dependency proposal must
-explain:
+Do not install a major dependency without the approval contained in the active
+block or a separate user decision. A proposal explains:
 
-- the problem it solves;
-- why existing dependencies or standard-library code are insufficient;
-- maintenance and deployment impact;
-- relevant licence considerations;
-- why the active V0 block needs it now.
+- the exact problem;
+- why existing dependencies or the standard library are insufficient;
+- runtime, maintenance, and deployment impact;
+- licence considerations; and
+- why the active block needs it now.
 
-Pin and document approved dependencies through the selected package-management
-approach.
+Pin and document approved application dependencies. OS deployment packages and
+their role still belong in the deployment inventory and runbook.
 
 ## Code quality
 
-- Use explicit domain names and focused functions or classes.
-- Avoid circular dependencies between catalog, persistence, processing, API,
-  and UI code.
-- Centralize and validate configuration.
-- Keep local paths out of core logic and browser responses.
-- Sanitize browser errors while retaining useful server diagnostics.
-- Add comments only when the reasoning is not apparent from the code.
-- Measure expensive operations rather than guessing.
-- Document non-obvious safety, identity, and timing decisions close to code.
+- Keep catalog, persistence, preparation, processing view, processors, API,
+  worker, and frontend boundaries acyclic.
+- Use explicit application services rather than putting workflow in routes.
+- Bound list queries, request sizes, traversal, history, and estimation samples.
+- Prefer cursor-based processing history where concurrent inserts matter.
+- Sanitize browser errors while preserving private server diagnostics.
+- Add comments only for non-obvious safety, identity, timing, or operational
+  reasoning.
+- Keep test fixtures narrow and intention-revealing.
 
 ## Document ownership
 
-- `README.md`: brief purpose, maturity, architecture summary, and links.
-- `PROJECT.md`: product goals, source-data facts, V0 scope, and success criteria.
-- `ARCHITECTURE.md`: accepted V0 technical boundaries and decisions.
-- `ROADMAP.md`: build order, block scope, visible acceptance, and minimum tests.
-- `AGENTS.md`: contribution process, safety, approvals, Git, and coding
-  discipline.
+- `README.md`: concise V1 purpose, status, shape, safety, and navigation.
+- `PROJECT.md`: V1 users, workflow, requirements, scope, and success criteria.
+- `ARCHITECTURE.md`: V1 technical, data, API, timing, estimation, and deployment
+  decisions.
+- `ROADMAP.md`: V1 block order, boundaries, tests, and acceptance gates.
+- `BUILDING_BLOCK_PROMPTS.md`: paste-ready execution instructions for each block.
+- `AGENTS.md`: contribution, safety, approval, testing, and Git discipline.
+- `docs/v0/`: frozen historical contracts and evidence.
 
-Keep each fact in its owning document. Other files should link or summarize
-rather than restating detailed requirements.
+Keep facts in their owner. Other documents link or summarize rather than copy
+large requirements.
 
 ## Git rules
 
-- Inspect `git status` before starting and before reporting completion.
-- Preserve unrelated user changes.
+- Inspect Git status before starting and before handoff.
+- Preserve unrelated user changes and untracked files.
 - Do not use destructive Git commands without explicit permission.
-- Do not rewrite history, force-push, or delete branches without permission.
-- Do not add or change remotes, fetch, pull, push, or open a pull request unless
+- Do not rewrite history, force-push, delete branches, or change remotes.
+- Do not fetch, pull, push, open a pull request, or publish a release unless
   requested.
 - Do not commit completed work until the user reviews and approves it.
-- Keep each eventual commit focused on one accepted subsystem.
+- Keep eventual commits focused on one accepted V1 block.
 
 ## Completion handoff
 
 After implementation, report:
 
-- the approved boundary and files changed;
-- commands and automated tests run;
-- manual and real-data verification;
-- visible behavior and performance observations;
+- approved boundary and files changed;
+- migrations and API contracts;
+- commands and tests run;
+- manual, browser, real-data, and deployment verification actually completed;
+- visible behavior and measured performance;
 - source-immutability evidence;
-- assumptions, limitations, and deferred work;
-- Git status and uncommitted state.
-
-User review is required before committing or beginning the next block.
+- assumptions, limitations, deferred work, and stop conditions encountered;
+- Git status and uncommitted state; and
+- the exact review needed before the next block.
 
 ## Current instruction
 
-After Building block 5 and V0 acceptance:
-
-- Building blocks 1–5 are complete and accepted;
-- the mentor-facing V0 final gate has passed;
-- no later roadmap block is active;
-- keep further work to user-requested documentation or review corrections until
-  another roadmap boundary is separately approved;
-- preserve the accepted front/top-down behavior and four-table, one-worker
-  processing model;
-- do not add arbitrary telemetry, extra graphs, custom-message processing, or
-  later-roadmap features;
-- do not access the real archive again without explicit opt-in approval;
-- stop for direction if integration requires a new architecture subsystem,
-  dependency, persistent model, processing kind, or timing contract.
+The complete application and repository-readiness state preceding Prompt 2A is
+the accepted working baseline. Preserve all accepted backend, processor,
+artifact, timing, safety, moved-path, frontend, local-operation, and deployment-
+readiness behavior except where the invoked Prompt 2A explicitly changes the
+product contract. Establish the authorized baseline Git checkpoint before
+Prompt 2A application-code work. Keep `archive/` unchanged as the frozen
+overhaul reference and exclude its mock/generated payloads from Git/runtime.
+Do not begin live VM mutation until Gate 0 and the exact command/rollback review
+are approved; do not read authoritative source content until the real-data
+annex is approved.

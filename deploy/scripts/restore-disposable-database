@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 2 ]] || {
+  echo "Usage: restore-disposable-database DUMP DISPOSABLE_DATABASE_NAME" >&2
+  exit 2
+}
+readonly dump="$1"
+readonly database_name="$2"
+[[ "$(id -un)" == "postgres" ]] || {
+  echo "Disposable restore must run as the local PostgreSQL operating-system owner." >&2
+  exit 1
+}
+[[ "${ROS_BAG_ANALYSER_ADMIN_DATABASE_URL:-}" == \
+  "postgresql:///postgres?host=/run/postgresql" ]] || {
+  echo "The local restore administration target is invalid." >&2
+  exit 1
+}
+[[ "$database_name" =~ ^rosbag_analyser_restore_[a-z0-9_]{1,40}$ ]] || {
+  echo "The restore target must use the disposable restore prefix." >&2
+  exit 1
+}
+[[ -f "$dump" && ! -L "$dump" ]] || {
+  echo "The database dump is unavailable." >&2
+  exit 1
+}
+[[ "$dump" == /* && "$(realpath -e -- "$dump")" == "$dump" ]] || {
+  echo "The database dump must use a canonical absolute path." >&2
+  exit 1
+}
+pg_restore --list "$dump" >/dev/null
+exists="$(psql --no-psqlrc --tuples-only --no-align \
+  --dbname="$ROS_BAG_ANALYSER_ADMIN_DATABASE_URL" \
+  --set=database_name="$database_name" \
+  --command="SELECT 1 FROM pg_database WHERE datname = :'database_name'")"
+[[ -z "$exists" ]] || {
+  echo "The disposable restore database already exists; it was not replaced." >&2
+  exit 1
+}
+createdb --maintenance-db="$ROS_BAG_ANALYSER_ADMIN_DATABASE_URL" \
+  --template=template0 "$database_name"
+pg_restore --exit-on-error \
+  --dbname="$database_name" "$dump"
+echo "Database dump restored into the new disposable target $database_name."

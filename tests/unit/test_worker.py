@@ -11,12 +11,14 @@ from rosbag_analyser.artifact_store import (
     SeriesValidation,
 )
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
+from rosbag_analyser.imu_series import IMU_SERIES_DEFINITIONS
 from rosbag_analyser.persistence.processing_repository import JobRecord
 from rosbag_analyser.processors.front_preview import (
     FrontPreviewProcessingError,
     FrontPreviewResult,
 )
 from rosbag_analyser.processors.imu_series import (
+    ImuComponentResult,
     ImuSeriesProcessingError,
     ImuSeriesResult,
 )
@@ -124,6 +126,9 @@ class SuccessfulProcessor:
             output_width=640,
             output_height=360,
             measured_span_ns=800_000_000,
+            header_span_ns=790_000_000,
+            maximum_presentation_gap_ns=60_000_000,
+            media_pts_sha256="c" * 64,
         )
 
 
@@ -168,18 +173,26 @@ class SuccessfulImuProcessor:
     def process(self, descriptor, output_path: Path) -> ImuSeriesResult:
         del descriptor
         output_path.write_text(
-            '{"schema_version":1,"samples":[["100000000",1.5],'
-            '["300000000",null],["900000000",-2.0]]}'
+            '{"schema_version":2,"samples":[["100000000",1.5,1.5,1.5,1.5,1.5,1.5],'
+            '["300000000",null,null,null,null,null,null],'
+            '["900000000",-2.0,-2.0,-2.0,-2.0,-2.0,-2.0]]}'
         )
         return ImuSeriesResult(
             sample_count=3,
-            finite_count=2,
-            non_finite_count=1,
             duplicate_timestamp_count=0,
             coverage_start_ns=100_000_000,
             coverage_end_ns=900_000_000,
-            minimum_value=-2.0,
-            maximum_value=1.5,
+            series=tuple(
+                ImuComponentResult(
+                    id=definition.id,
+                    component=definition.component,
+                    finite_count=2,
+                    non_finite_count=1,
+                    minimum_value=-2.0,
+                    maximum_value=1.5,
+                )
+                for definition in IMU_SERIES_DEFINITIONS
+            ),
             warnings=("non_finite_values_present",),
         )
 
@@ -247,12 +260,9 @@ class FakeArtifactStore:
             inode=details.st_ino,
             mtime_ns=details.st_mtime_ns,
             sample_count=3,
-            finite_count=2,
-            non_finite_count=1,
+            column_count=6,
             coverage_start_ns=100_000_000,
             coverage_end_ns=900_000_000,
-            minimum_value=-2.0,
-            maximum_value=1.5,
         )
 
     def publish_series(
@@ -323,14 +333,46 @@ def test_worker_publishes_only_after_validation_and_completes_job(
         "mtime_ns": published_stat.st_mtime_ns,
     }
     assert store.published_manifest["timing"] == {
-        "timestamp_provenance": "ros_record_timestamp",
+        "timestamp_provenance": "ros_image_header_affine_to_record_span",
+        "policy": "capture_header_affine_to_record_span_v2",
         "bounds": "measured",
         "coverage_start_ns": "100000000",
         "coverage_end_ns": "900000000",
         "measured_span_ns": "800000000",
+        "header_span_ns": "790000000",
+        "affine_scale_numerator": "800000000",
+        "affine_scale_denominator": "790000000",
+        "maximum_presentation_gap_ns": "60000000",
         "media_timescale": 1_000_000,
+        "media_pts_sha256": "c" * 64,
     }
+    assert store.validation_expectations is not None
+    assert store.validation_expectations["expected_media_pts_sha256"] == "c" * 64
     assert not (tmp_path / "job-5-owned").exists()
+
+
+def test_worker_leaves_queue_untouched_when_admission_is_paused(
+    tmp_path: Path,
+) -> None:
+    repository = FakeRepository(_job())
+    store = FakeArtifactStore(tmp_path)
+    worker = SerialWorker(
+        repository,  # type: ignore[arg-type]
+        FakeResolver(),  # type: ignore[arg-type]
+        SuccessfulProcessor(),  # type: ignore[arg-type]
+        store,  # type: ignore[arg-type]
+        "/camera/image_raw",
+        "test-encoder-v1",
+        admission_check=lambda: SimpleNamespace(
+            code="derived_space_low",
+            message="New preparation is paused because derived storage is low on space.",
+        ),
+    )
+
+    assert not worker.run_once()
+    assert repository.job is not None
+    assert repository.completed == []
+    assert repository.failures == []
 
 
 def test_worker_dispatches_topdown_job_with_csv_provenance(tmp_path: Path) -> None:
@@ -442,18 +484,32 @@ def test_worker_dispatches_imu_series_with_record_time_provenance(
     assert imu_store.published_manifest["reduction"] == {"method": "none"}
     source = imu_store.published_manifest["source"]
     assert isinstance(source, dict)
-    assert source["display_label"] == "IMU angular_velocity.z (rad/s)"
-    assert source["units"] == "rad/s"
-    assert imu_store.validation_expectations == {
-        "expected_schema_version": 1,
-        "expected_sample_count": 3,
-        "expected_finite_count": 2,
-        "expected_non_finite_count": 1,
-        "expected_coverage_start_ns": 100_000_000,
-        "expected_coverage_end_ns": 900_000_000,
-        "expected_minimum_value": -2.0,
-        "expected_maximum_value": 1.5,
-    }
+    assert source["default_component"] == "angular_velocity.z"
+    assert source["default_series_id"] == "angular_velocity_z"
+    series = imu_store.published_manifest["series"]
+    assert isinstance(series, list)
+    assert [item["id"] for item in series] == [
+        definition.id for definition in IMU_SERIES_DEFINITIONS
+    ]
+    assert all(item["available"] for item in series)
+    assert imu_store.validation_expectations is not None
+    assert imu_store.validation_expectations["expected_schema_version"] == 2
+    assert imu_store.validation_expectations["expected_sample_count"] == 3
+    assert (
+        imu_store.validation_expectations["expected_coverage_start_ns"]
+        == 100_000_000
+    )
+    assert (
+        imu_store.validation_expectations["expected_coverage_end_ns"]
+        == 900_000_000
+    )
+    columns = imu_store.validation_expectations["expected_columns"]
+    assert isinstance(columns, tuple)
+    assert [column.id for column in columns] == [
+        definition.id for definition in IMU_SERIES_DEFINITIONS
+    ]
+    assert all(column.finite_count == 2 for column in columns)
+    assert all(column.non_finite_count == 1 for column in columns)
 
 
 def test_imu_failure_creates_no_ready_artifact(tmp_path: Path) -> None:

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from rosbag_analyser.preparation_planner import RecordingPreparationFacts
 
 
 class SourceRole(str, Enum):
@@ -68,6 +72,11 @@ class RecordingScanResult:
     diagnostic: SafeDiagnostic | None
     source_revision: str
     components: tuple[SourceComponentResult, ...]
+    preparation_facts: RecordingPreparationFacts | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly release_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+  pwd -P
+)"
+readonly ros_setup="/opt/ros/humble/setup.bash"
+export ROS_BAG_ANALYSER_RELEASE_ROOT="$release_root"
+
+if [[ -n "${CREDENTIALS_DIRECTORY:-}" ]]; then
+  readonly database_credential="$CREDENTIALS_DIRECTORY/database-pass"
+  [[ -f "$database_credential" && ! -L "$database_credential" ]] || {
+    echo "The private database credential is unavailable." >&2
+    exit 1
+  }
+  export PGPASSFILE="$database_credential"
+fi
+
+[[ -r "$ros_setup" ]] || {
+  echo "The approved ROS 2 Humble runtime is unavailable." >&2
+  exit 1
+}
+[[ -x "$release_root/venv/bin/python" ]] || {
+  echo "The installed release virtual environment is unavailable." >&2
+  exit 1
+}
+
+set +u
+source "$ros_setup"
+set -u
+
+case "${1:-}" in
+  api)
+    exec "$release_root/venv/bin/rosbag-analyser"
+    ;;
+  worker)
+    exec "$release_root/venv/bin/rosbag-analyser-worker"
+    ;;
+  migrate)
+    [[ "${ROS_BAG_ANALYSER_DATABASE_URL:-}" == \
+      "postgresql://rosbag_analyser_migration@/rosbag_analyser?host=/run/postgresql" ]] || {
+      echo "The local migration database target is invalid." >&2
+      exit 1
+    }
+    exec "$release_root/venv/bin/rosbag-analyser-migrate"
+    ;;
+  preflight)
+    shift
+    exec "$release_root/venv/bin/rosbag-analyser-preflight" "$@"
+    ;;
+  *)
+    echo "Usage: run-service {api|worker|migrate|preflight}" >&2
+    exit 2
+    ;;
+esac

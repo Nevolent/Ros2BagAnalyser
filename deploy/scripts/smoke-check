@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly release_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+  pwd -P
+)"
+exec "$release_root/venv/bin/python" \
+  "$release_root/deploy/scripts/smoke_check.py" "$@"

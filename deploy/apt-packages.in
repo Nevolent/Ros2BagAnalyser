@@ -1,0 +1,16 @@
+# Resolve exact versions from the approved Ubuntu 22.04 and ROS 2 Humble APT
+# repositories, record them in the private release evidence, then install.
+apache2-utils
+ca-certificates
+curl
+ffmpeg
+nfs-common
+nginx
+nftables
+openssl
+postgresql-14
+postgresql-client-14
+python3.10
+python3.10-venv
+ros-humble-rclpy
+ros-humble-sensor-msgs

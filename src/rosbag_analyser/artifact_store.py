@@ -54,18 +54,24 @@ class PublishedArtifact:
 
 
 @dataclass(frozen=True)
+class SeriesColumnExpectation:
+    id: str
+    finite_count: int
+    non_finite_count: int
+    minimum_value: float | None
+    maximum_value: float | None
+
+
+@dataclass(frozen=True)
 class SeriesValidation:
     size_bytes: int
     device_id: int
     inode: int
     mtime_ns: int
     sample_count: int
-    finite_count: int
-    non_finite_count: int
+    column_count: int
     coverage_start_ns: int
     coverage_end_ns: int
-    minimum_value: float
-    maximum_value: float
 
 
 @dataclass(frozen=True)
@@ -314,12 +320,9 @@ class ArtifactStore:
         *,
         expected_schema_version: int,
         expected_sample_count: int,
-        expected_finite_count: int,
-        expected_non_finite_count: int,
+        expected_columns: tuple[SeriesColumnExpectation, ...],
         expected_coverage_start_ns: int,
         expected_coverage_end_ns: int,
-        expected_minimum_value: float,
-        expected_maximum_value: float,
     ) -> SeriesValidation:
         self._assert_contained(series_path)
         try:
@@ -354,20 +357,27 @@ class ArtifactStore:
             if document["schema_version"] != expected_schema_version:
                 raise ValueError("unexpected series schema")
             samples = document["samples"]
-            if not isinstance(samples, list) or len(samples) != expected_sample_count:
+            if (
+                not isinstance(samples, list)
+                or len(samples) != expected_sample_count
+                or not expected_columns
+            ):
                 raise ValueError("unexpected sample count")
 
-            finite_count = 0
-            non_finite_count = 0
+            finite_counts = [0] * len(expected_columns)
+            non_finite_counts = [0] * len(expected_columns)
             previous_time: int | None = None
             first_time: int | None = None
             last_time: int | None = None
-            minimum_value: float | None = None
-            maximum_value: float | None = None
+            minimum_values: list[float | None] = [None] * len(expected_columns)
+            maximum_values: list[float | None] = [None] * len(expected_columns)
             for sample in samples:
-                if not isinstance(sample, list) or len(sample) != 2:
+                if (
+                    not isinstance(sample, list)
+                    or len(sample) != len(expected_columns) + 1
+                ):
                     raise ValueError("invalid sample")
-                time_text, raw_value = sample
+                time_text = sample[0]
                 if not isinstance(time_text, str) or not _is_decimal_integer(time_text):
                     raise ValueError("invalid sample time")
                 time_ns = int(time_text)
@@ -377,30 +387,41 @@ class ArtifactStore:
                     first_time = time_ns
                 previous_time = time_ns
                 last_time = time_ns
-                if raw_value is None:
-                    non_finite_count += 1
-                    continue
-                if (
-                    isinstance(raw_value, bool)
-                    or not isinstance(raw_value, (int, float))
-                    or not math.isfinite(float(raw_value))
-                ):
-                    raise ValueError("invalid sample value")
-                value = float(raw_value)
-                finite_count += 1
-                minimum_value = value if minimum_value is None else min(minimum_value, value)
-                maximum_value = value if maximum_value is None else max(maximum_value, value)
+                for index, raw_value in enumerate(sample[1:]):
+                    if raw_value is None:
+                        non_finite_counts[index] += 1
+                        continue
+                    if (
+                        isinstance(raw_value, bool)
+                        or not isinstance(raw_value, (int, float))
+                        or not math.isfinite(float(raw_value))
+                    ):
+                        raise ValueError("invalid sample value")
+                    value = float(raw_value)
+                    finite_counts[index] += 1
+                    minimum_values[index] = (
+                        value
+                        if minimum_values[index] is None
+                        else min(minimum_values[index], value)
+                    )
+                    maximum_values[index] = (
+                        value
+                        if maximum_values[index] is None
+                        else max(maximum_values[index], value)
+                    )
+            columns_match = all(
+                finite_counts[index] == expectation.finite_count
+                and non_finite_counts[index] == expectation.non_finite_count
+                and minimum_values[index] == expectation.minimum_value
+                and maximum_values[index] == expectation.maximum_value
+                for index, expectation in enumerate(expected_columns)
+            )
             if (
                 first_time is None
                 or last_time is None
-                or minimum_value is None
-                or maximum_value is None
-                or finite_count != expected_finite_count
-                or non_finite_count != expected_non_finite_count
+                or not columns_match
                 or first_time != expected_coverage_start_ns
                 or last_time != expected_coverage_end_ns
-                or minimum_value != expected_minimum_value
-                or maximum_value != expected_maximum_value
             ):
                 raise ValueError("series facts do not match")
             after = series_path.stat(follow_symlinks=False)
@@ -424,12 +445,9 @@ class ArtifactStore:
             inode=before.st_ino,
             mtime_ns=before.st_mtime_ns,
             sample_count=expected_sample_count,
-            finite_count=finite_count,
-            non_finite_count=non_finite_count,
+            column_count=len(expected_columns),
             coverage_start_ns=first_time,
             coverage_end_ns=last_time,
-            minimum_value=minimum_value,
-            maximum_value=maximum_value,
         )
 
     def publish_series(

@@ -15,7 +15,7 @@ from rosbag_analyser.processors.imu_series import ImuSeriesProcessor
 pytestmark = pytest.mark.ros
 
 
-def test_generated_imu_messages_use_record_time_and_angular_velocity_z(
+def test_generated_imu_messages_use_record_time_for_all_supported_axes(
     tmp_path: Path,
 ) -> None:
     serialization = pytest.importorskip("rclpy.serialization")
@@ -45,6 +45,9 @@ def test_generated_imu_messages_use_record_time_and_angular_velocity_z(
             message.angular_velocity.x = 50.0 + index
             message.angular_velocity.y = 60.0 + index
             message.angular_velocity.z = value
+            message.linear_acceleration.x = 70.0 + index
+            message.linear_acceleration.y = 80.0 + index
+            message.linear_acceleration.z = 90.0 + index
             connection.execute(
                 "INSERT INTO messages VALUES (?, 1, ?, ?)",
                 (index, record_time, serialization.serialize_message(message)),
@@ -77,10 +80,16 @@ def test_generated_imu_messages_use_record_time_and_angular_velocity_z(
 
     assert result.coverage_start_ns == 100_000_000
     assert result.coverage_end_ns == 400_000_000
-    assert result.finite_count == 2
-    assert result.non_finite_count == 1
+    result_by_component = {series.component: series for series in result.series}
+    assert result_by_component["angular_velocity.z"].finite_count == 2
+    assert result_by_component["angular_velocity.z"].non_finite_count == 1
+    assert all(
+        series.finite_count == 3
+        for component, series in result_by_component.items()
+        if component != "angular_velocity.z"
+    )
     assert json.loads((tmp_path / "series.json").read_text())["samples"] == [
-        ["100000000", 1.25],
-        ["250000000", None],
-        ["400000000", -2.5],
+        ["100000000", 51.0, 61.0, 1.25, 71.0, 81.0, 91.0],
+        ["250000000", 52.0, 62.0, None, 72.0, 82.0, 92.0],
+        ["400000000", 53.0, 63.0, -2.5, 73.0, 83.0, 93.0],
     ]

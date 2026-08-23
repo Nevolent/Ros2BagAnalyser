@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: build-wheelhouse OUTPUT_DIRECTORY SOURCE_REPOSITORY_LABEL" >&2
+  exit 2
+}
+
+[[ $# -eq 2 ]] || usage
+readonly output_directory="$1"
+readonly source_repository_label="$2"
+readonly project_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+  pwd -P
+)"
+readonly python_command="${ROS_BAG_ANALYSER_BUILD_PYTHON:-python3.10}"
+
+command -v "$python_command" >/dev/null 2>&1 || {
+  echo "CPython 3.10 is required to build the wheelhouse." >&2
+  exit 1
+}
+readonly output_parent="$(dirname -- "$output_directory")"
+[[ "$output_directory" == /* \
+  && -d "$output_parent" \
+  && ! -L "$output_parent" \
+  && "$(realpath -e -- "$output_parent")" == "$output_parent" ]] || {
+  echo "The wheelhouse output must have an existing canonical absolute parent." >&2
+  exit 1
+}
+[[ ! -e "$output_directory" ]] || {
+  echo "The wheelhouse output target already exists; it was not replaced." >&2
+  exit 1
+}
+[[ "$source_repository_label" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "The sanitized source-repository label is invalid." >&2
+  exit 1
+}
+
+mkdir -m 0700 -- "$output_directory"
+"$python_command" -m pip download \
+  --dest "$output_directory" \
+  --only-binary=:all: \
+  --implementation cp \
+  --python-version 310 \
+  --abi cp310 \
+  --platform manylinux_2_28_x86_64 \
+  --platform manylinux_2_17_x86_64 \
+  --requirement "$project_root/deploy/runtime-requirements.in" \
+  --requirement "$project_root/deploy/build-requirements.in"
+
+"$python_command" "$project_root/deploy/scripts/wheelhouse_inventory.py" \
+  "$output_directory" "$output_directory/LICENSES.json" \
+  "$source_repository_label"
+(
+  cd -- "$output_directory"
+  find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
+    | LC_ALL=C sort \
+    | xargs -r sha256sum -- > SHA256SUMS
+  sha256sum --check --strict SHA256SUMS
+)
+"$python_command" "$project_root/deploy/scripts/validate_wheelhouse.py" \
+  "$output_directory"
+chmod 0600 \
+  "$output_directory/SHA256SUMS" \
+  "$output_directory/LICENSES.json" \
+  "$output_directory/WHEELHOUSE-BUILD.json"
+echo "Checksummed CPython 3.10 wheelhouse created at the explicit output target."

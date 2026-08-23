@@ -38,7 +38,12 @@ def _artifact() -> ArtifactRecord:
         size_bytes=10,
         coverage_start_ns=100_000_000,
         coverage_end_ns=2_100_000_000,
-        manifest={"cache_identity": "a" * 64},
+        manifest={
+            "cache_identity": "a" * 64,
+            "timing": {
+                "timestamp_provenance": "ros_image_header_affine_to_record_span"
+            },
+        },
         created_at=datetime.now(timezone.utc),
     )
 
@@ -148,7 +153,7 @@ async def test_ready_metadata_uses_decimal_nanoseconds_and_no_source_path() -> N
         "size_bytes": "10",
         "coverage_start_ns": "100000000",
         "coverage_end_ns": "2100000000",
-        "timestamp_provenance": "ros_record_timestamp",
+        "timestamp_provenance": "ros_image_header_affine_to_record_span",
         "bounds": "measured",
         "media_url": "/api/recordings/7/front-preview/media/3",
     }

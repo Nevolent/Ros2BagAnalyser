@@ -7,6 +7,7 @@ import pytest
 
 from rosbag_analyser.catalog import paths as catalog_paths
 from rosbag_analyser.catalog.paths import (
+    CatalogScanLimits,
     UnsafeSourcePath,
     archive_relative_path,
     discover_recording_directories,
@@ -41,16 +42,19 @@ class _ScandirPastLimit:
         raise AssertionError("Enumeration continued past limit + 1")
 
 
-def test_discovers_only_direct_real_directories(tmp_path: Path) -> None:
+def test_discovers_recording_candidate_and_does_not_follow_symlink(tmp_path: Path) -> None:
     archive = tmp_path / "archive"
     archive.mkdir()
     recording = archive / "recording"
     recording.mkdir()
+    (recording / "metadata.yaml").write_text("invalid but a candidate", encoding="utf-8")
     (recording / "nested").mkdir()
     (archive / "file.txt").write_text("not a recording", encoding="utf-8")
     (archive / "linked").symlink_to(recording, target_is_directory=True)
 
-    assert discover_recording_directories(archive) == (recording,)
+    discovered = discover_recording_directories(archive)
+
+    assert tuple(item.path for item in discovered) == (recording,)
 
 
 @pytest.mark.parametrize(
@@ -83,11 +87,10 @@ def test_archive_entry_limit_stops_enumeration(
 ) -> None:
     archive = tmp_path / "archive"
     archive.mkdir()
-    monkeypatch.setattr(catalog_paths, "MAX_ARCHIVE_ENTRIES", 2)
     monkeypatch.setattr(catalog_paths.os, "scandir", lambda path: _ScandirPastLimit())
 
     with pytest.raises(RootScanError) as captured:
-        discover_recording_directories(archive)
+        discover_recording_directories(archive, CatalogScanLimits(max_entries=2))
 
     assert captured.value.diagnostic.code == "archive_entry_limit_exceeded"
 
@@ -97,11 +100,10 @@ def test_recording_entry_limit_stops_enumeration(
 ) -> None:
     recording = tmp_path / "recording"
     recording.mkdir()
-    monkeypatch.setattr(catalog_paths, "MAX_RECORDING_ENTRIES", 2)
     monkeypatch.setattr(catalog_paths.os, "scandir", lambda path: _ScandirPastLimit())
 
     with pytest.raises(UnsafeSourcePath) as captured:
-        inventory_direct_entries(recording)
+        inventory_direct_entries(recording, max_entries=2)
 
     assert captured.value.code == "recording_entry_limit_exceeded"
 

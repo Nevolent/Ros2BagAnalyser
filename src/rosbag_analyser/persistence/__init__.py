@@ -1,5 +1,3 @@
-"""Small PostgreSQL persistence boundary for the V0 catalog."""
+"""PostgreSQL persistence boundaries for catalog and processing operations."""
 
-from .catalog_repository import CatalogRepository
-
-__all__ = ["CatalogRepository"]
+__all__: list[str] = []

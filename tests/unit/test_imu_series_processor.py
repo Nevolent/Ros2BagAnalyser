@@ -75,6 +75,10 @@ def _descriptor(database: Path, bag_start_ns: int, count: int) -> ImuSourceDescr
     )
 
 
+def _all_components(value: float) -> tuple[float, ...]:
+    return (value, value, value, value, value, value)
+
+
 def test_extracts_record_time_values_nulls_and_duplicates_without_source_writes(
     tmp_path: Path,
 ) -> None:
@@ -87,26 +91,33 @@ def test_extracts_record_time_values_nulls_and_duplicates_without_source_writes(
     before = inventory(archive)
     decoded = {1: 1.25, 2: math.nan, 3: -2.0}
 
-    result = ImuSeriesProcessor(lambda payload: decoded[payload[0]]).process(
+    result = ImuSeriesProcessor(
+        lambda payload: _all_components(decoded[payload[0]])
+    ).process(
         _descriptor(database, 1_000, 3), derived / "series.json"
     )
 
     assert result.sample_count == 3
-    assert result.finite_count == 2
-    assert result.non_finite_count == 1
     assert result.duplicate_timestamp_count == 1
     assert result.coverage_start_ns == 100
     assert result.coverage_end_ns == 300
-    assert result.minimum_value == -2.0
-    assert result.maximum_value == 1.25
+    assert len(result.series) == 6
+    assert all(series.finite_count == 2 for series in result.series)
+    assert all(series.non_finite_count == 1 for series in result.series)
+    assert all(series.minimum_value == -2.0 for series in result.series)
+    assert all(series.maximum_value == 1.25 for series in result.series)
     assert result.warnings == (
         "coverage_starts_after_recording",
         "coverage_ends_before_recording",
         "non_finite_values_present",
     )
     assert json.loads((derived / "series.json").read_text()) == {
-        "schema_version": 1,
-        "samples": [["100", 1.25], ["100", None], ["300", -2.0]],
+        "schema_version": 2,
+        "samples": [
+            ["100", 1.25, 1.25, 1.25, 1.25, 1.25, 1.25],
+            ["100", None, None, None, None, None, None],
+            ["300", -2.0, -2.0, -2.0, -2.0, -2.0, -2.0],
+        ],
     }
     assert inventory(archive) == before
     assert not (archive / "recording.db3-journal").exists()
@@ -118,7 +129,9 @@ def test_coverage_can_extend_beyond_declared_recording(tmp_path: Path) -> None:
     database = tmp_path / "recording.db3"
     _create_imu_database(database, [900, 1_700])
 
-    result = ImuSeriesProcessor(lambda payload: float(payload[0])).process(
+    result = ImuSeriesProcessor(
+        lambda payload: _all_components(float(payload[0]))
+    ).process(
         _descriptor(database, 1_000, 2), tmp_path / "series.json"
     )
 
@@ -137,7 +150,7 @@ def test_all_non_finite_values_fail_instead_of_publishing_empty_graph(
     _create_imu_database(database, [1_000])
 
     with pytest.raises(ImuSeriesProcessingError) as captured:
-        ImuSeriesProcessor(lambda payload: math.inf).process(
+        ImuSeriesProcessor(lambda payload: _all_components(math.inf)).process(
             _descriptor(database, 1_000, 1), tmp_path / "series.json"
         )
 
@@ -162,9 +175,9 @@ def test_unsupported_component_fails_before_database_read(tmp_path: Path) -> Non
     descriptor = _descriptor(missing_database, 1_000, 1)
 
     with pytest.raises(ImuSeriesProcessingError) as captured:
-        ImuSeriesProcessor(lambda payload: 1.0).process(
+        ImuSeriesProcessor(lambda payload: _all_components(1.0)).process(
             ImuSourceDescriptor(
-                **{**descriptor.__dict__, "component": "angular_velocity.x"}
+                **{**descriptor.__dict__, "component": "orientation.x"}
             ),
             tmp_path / "series.json",
         )
@@ -183,10 +196,10 @@ def test_oversized_serialized_message_is_rejected_before_decoder(
     )
     decoder_called = False
 
-    def decoder(payload: bytes) -> float:
+    def decoder(payload: bytes) -> tuple[float, ...]:
         nonlocal decoder_called
         decoder_called = True
-        return 1.0
+        return _all_components(1.0)
 
     with pytest.raises(ImuSeriesProcessingError) as captured:
         ImuSeriesProcessor(decoder).process(
@@ -205,7 +218,7 @@ def test_derived_series_size_is_bounded(
     monkeypatch.setattr(imu_processor_module, "MAX_SERIES_BYTES", 40)
 
     with pytest.raises(ImuSeriesProcessingError) as captured:
-        ImuSeriesProcessor(lambda payload: 123.456).process(
+        ImuSeriesProcessor(lambda payload: _all_components(123.456)).process(
             _descriptor(database, 1_000, 2), tmp_path / "series.json"
         )
 
@@ -216,7 +229,7 @@ def test_decoder_failure_is_sanitized(tmp_path: Path) -> None:
     database = tmp_path / "recording.db3"
     _create_imu_database(database, [1_000])
 
-    def decoder(payload: bytes) -> float:
+    def decoder(payload: bytes) -> tuple[float, ...]:
         del payload
         raise ValueError("private decoder detail")
 
@@ -227,3 +240,26 @@ def test_decoder_failure_is_sanitized(tmp_path: Path) -> None:
 
     assert captured.value.code == "imu_deserialization_failed"
     assert "private" not in captured.value.safe_message
+
+
+def test_one_all_null_component_does_not_hide_other_series(tmp_path: Path) -> None:
+    database = tmp_path / "recording.db3"
+    _create_imu_database(database, [1_000, 1_100])
+
+    result = ImuSeriesProcessor(
+        lambda payload: (
+            math.nan,
+            float(payload[0]),
+            float(payload[0]),
+            float(payload[0]),
+            float(payload[0]),
+            float(payload[0]),
+        )
+    ).process(_descriptor(database, 1_000, 2), tmp_path / "series.json")
+
+    unavailable, available = result.series[0], result.series[1]
+    assert unavailable.finite_count == 0
+    assert unavailable.non_finite_count == 2
+    assert unavailable.minimum_value is None
+    assert unavailable.maximum_value is None
+    assert available.finite_count == 2

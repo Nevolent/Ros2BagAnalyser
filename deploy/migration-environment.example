@@ -1,0 +1,3 @@
+# Placeholder-only migration EnvironmentFile. Install as
+# /etc/rosbag-analyser/migration.env, owned by root:rosbag-analyser, mode 0640.
+ROS_BAG_ANALYSER_DATABASE_URL=postgresql://rosbag_analyser_migration@/rosbag_analyser?host=/run/postgresql

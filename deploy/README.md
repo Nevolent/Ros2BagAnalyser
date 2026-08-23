@@ -1,0 +1,48 @@
+# V1 NAS trial deployment assets
+
+This directory contains repository-owned templates and tooling for V1 Building
+block 3. It does not contain an active site configuration and none of these
+files changes TrueNAS.
+
+Repository Phase 1 was implemented and locally verified on 2026-08-16. Gate 0,
+clean immutable release creation, live VM installation, authoritative-source
+access, guest reboot, and trial admission remain incomplete.
+
+The deployment is intentionally split into four gates:
+
+1. complete `GATE0_HANDOFF.example.md` and the private site inventory;
+2. build a checksummed wheelhouse and a clean-source immutable release;
+3. render and review the exact guest files, commands, interruption, backup, and
+   rollback before installing anything; and
+4. complete `REAL_DATA_ANNEX.example.md` before the first content read from the
+   authoritative source.
+
+The default guest layout is:
+
+```text
+/opt/rosbag-analyser/releases/<release-id>/
+/opt/rosbag-analyser/current -> releases/<release-id>
+/etc/rosbag-analyser/application.env
+/etc/rosbag-analyser/runtime.pgpass
+/etc/rosbag-analyser/migration.pgpass
+/srv/rosbag-analyser/source
+/var/lib/rosbag-analyser/derived
+```
+
+`environment.example` contains placeholders only. Active configuration,
+credentials, certificates, htpasswd files, mount identities, firewall
+allowlists, database dumps, source manifests, and support bundles stay outside
+Git and are root-owned.
+
+`apt-packages.in`, the runtime/build requirement inputs, `release-contract.json`,
+and the wheelhouse/release scripts bind the reviewed runtime and application
+identity. `systemd/`, `nginx/`, and `firewall/` are templates, not files to copy
+without rendering. `migration-environment.example` and
+`backup-environment.example` keep privileged database paths distinct from the
+runtime role. `GATE0_HANDOFF.example.md` and `REAL_DATA_ANNEX.example.md` remain
+deliberately incomplete until their private owner records are approved.
+
+Repository scripts fail closed and use explicit targets. They do not edit
+TrueNAS, create public listeners, rescan on startup, or automatically delete a
+release, database, backup, derived artifact, or source file. See
+`docs/NAS_TRIAL_RUNBOOK.md` for the reviewed sequence and rollback rules.

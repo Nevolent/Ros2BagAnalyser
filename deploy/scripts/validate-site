@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 11 ]] || {
+  echo "Usage: validate-site APPLICATION_ENV MIGRATION_ENV BACKUP_ENV RUNTIME_PGPASS MIGRATION_PGPASS BACKUP_PGPASS TLS_CERT TLS_KEY ENGINEER_HTPASSWD OPERATOR_HTPASSWD APPROVED_HOSTNAME" >&2
+  exit 2
+}
+readonly application_environment="$1"
+readonly migration_environment="$2"
+readonly backup_environment="$3"
+readonly runtime_password="$4"
+readonly migration_password="$5"
+readonly backup_password="$6"
+readonly tls_certificate="$7"
+readonly tls_private_key="$8"
+readonly engineer_access="$9"
+readonly operator_access="${10}"
+readonly approved_hostname="${11}"
+[[ "$approved_hostname" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}[A-Za-z0-9]$ ]] || {
+  echo "The approved TLS hostname is invalid." >&2
+  exit 1
+}
+
+[[ "$(id -u)" -eq 0 ]] || {
+  echo "Site-file validation must run as root inside the approved VM." >&2
+  exit 1
+}
+for private_file in \
+  "$application_environment" \
+  "$migration_environment" \
+  "$backup_environment" \
+  "$runtime_password" \
+  "$migration_password" \
+  "$backup_password" \
+  "$tls_private_key" \
+  "$engineer_access" \
+  "$operator_access"
+do
+  [[ "$private_file" == /* \
+    && "$(realpath -e -- "$private_file")" == "$private_file" ]] || {
+    echo "A required private deployment file path is unsafe." >&2
+    exit 1
+  }
+  [[ -f "$private_file" && ! -L "$private_file" ]] || {
+    echo "A required private deployment file is unavailable." >&2
+    exit 1
+  }
+  mode="$(stat -c '%a' "$private_file")"
+  [[ "$mode" =~ ^(400|600|640)$ ]] || {
+    echo "A required private deployment file has an unsafe mode." >&2
+    exit 1
+  }
+  [[ "$(stat -c '%u' "$private_file")" -eq 0 ]] || {
+    echo "A required private deployment file is not root-owned." >&2
+    exit 1
+  }
+done
+
+[[ "$tls_certificate" == /* \
+  && "$(realpath -e -- "$tls_certificate")" == "$tls_certificate" ]] || {
+  echo "The TLS certificate path is unsafe." >&2
+  exit 1
+}
+[[ -f "$tls_certificate" && ! -L "$tls_certificate" ]] || {
+  echo "The TLS certificate is unavailable." >&2
+  exit 1
+}
+[[ "$(stat -c '%u' "$tls_certificate")" -eq 0 ]] || {
+  echo "The TLS certificate is not root-owned." >&2
+  exit 1
+}
+[[ "$(stat -c '%a' "$tls_certificate")" =~ ^(400|440|444|600|640|644)$ ]] || {
+  echo "The TLS certificate has an unsafe mode." >&2
+  exit 1
+}
+
+validate_pgpass() {
+  local credential="$1"
+  local expected_user="$2"
+  awk -F: -v expected_user="$expected_user" '
+    NF != 5 || $1 != "localhost" || $2 != "5432" ||
+    $3 != "rosbag_analyser" || $4 != expected_user || $5 == "" || NR != 1 { exit 1 }
+    END { if (NR != 1) exit 1 }
+  ' "$credential" || {
+    echo "A PostgreSQL credential file has an invalid structure." >&2
+    exit 1
+  }
+}
+validate_pgpass "$runtime_password" rosbag_analyser_runtime
+validate_pgpass "$migration_password" rosbag_analyser_migration
+validate_pgpass "$backup_password" rosbag_analyser_backup
+
+if grep -Eq 'REPLACE_WITH|example\.invalid|(^|=)[[:space:]]*$' \
+  "$application_environment" "$migration_environment" "$backup_environment"; then
+  echo "The application environment still contains a placeholder or empty value." >&2
+  exit 1
+fi
+for access_file in "$engineer_access" "$operator_access"; do
+  awk -F: '
+    NF < 2 || $1 == "" || $2 == "" || seen[$1]++ { exit 1 }
+    END { if (NR == 0) exit 1 }
+  ' "$access_file" || {
+    echo "An access credential file has an invalid structure." >&2
+    exit 1
+  }
+done
+cmp --silent "$engineer_access" "$operator_access" && {
+  echo "Engineer and operator credential sets must be distinct." >&2
+  exit 1
+}
+openssl x509 -checkend 604800 -noout -in "$tls_certificate" >/dev/null || {
+  echo "The TLS certificate is invalid or expires inside seven days." >&2
+  exit 1
+}
+openssl x509 -checkhost "$approved_hostname" -noout \
+  -in "$tls_certificate" >/dev/null || {
+  echo "The TLS certificate does not cover the approved hostname." >&2
+  exit 1
+}
+openssl pkey -check -noout -in "$tls_private_key" >/dev/null 2>&1 || {
+  echo "The TLS private key is invalid." >&2
+  exit 1
+}
+certificate_public_key="$(
+  openssl x509 -pubkey -noout -in "$tls_certificate" | sha256sum | awk '{print $1}'
+)"
+private_public_key="$(
+  openssl pkey -pubout -in "$tls_private_key" 2>/dev/null \
+    | sha256sum | awk '{print $1}'
+)"
+[[ "$certificate_public_key" == "$private_public_key" ]] || {
+  echo "The TLS certificate and private key do not match." >&2
+  exit 1
+}
+echo "Private configuration, credentials, certificate, and access files are valid."

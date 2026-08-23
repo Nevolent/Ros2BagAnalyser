@@ -26,6 +26,8 @@ dev = [
 [project.scripts]
 rosbag-analyser = "rosbag_analyser.api.app:main"
 rosbag-analyser-migrate = "rosbag_analyser.persistence.migrate:main"
+rosbag-analyser-preflight = "rosbag_analyser.preflight:main"
+rosbag-analyser-source-manifest = "rosbag_analyser.source_manifest:main"
 rosbag-analyser-worker = "rosbag_analyser.worker:main"
 
 [tool.setuptools.packages.find]
@@ -37,12 +39,14 @@ rosbag_analyser = [
     "web/*.css",
     "web/*.html",
     "web/*.js",
+    "web/assets/*.svg",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
+    "deployment: requires an explicitly configured disposable deployment tool",
     "postgres: requires a disposable PostgreSQL database",
     "real_archive: requires explicit opt-in access to a real recording archive",
     "ros: requires a sourced ROS 2 Humble environment",

@@ -39,6 +39,7 @@ def _service(request: Request) -> CatalogService:
 
 @router.post("/catalog/rescan", response_model=RescanResponse)
 async def rescan_catalog(request: Request) -> RescanResponse:
+    _require_source_capability(request)
     try:
         result = await _run_catalog_call(
             request,
@@ -61,6 +62,18 @@ async def rescan_catalog(request: Request) -> RescanResponse:
     except psycopg.Error as error:
         raise _catalog_database_error("rescan", error) from error
     return rescan_response(result)
+
+
+def _require_source_capability(request: Request) -> None:
+    guard = getattr(request.app.state, "admission_guard", None)
+    if guard is None:
+        return
+    diagnostic = guard.source_diagnostic()
+    if diagnostic is not None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": diagnostic.code, "message": diagnostic.message},
+        )
 
 
 @router.get("/recordings", response_model=RecordingListResponse)

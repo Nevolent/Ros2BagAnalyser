@@ -1,0 +1,37 @@
+[Unit]
+Description=ROS Bag Analyser loopback API
+Documentation=file:/opt/rosbag-analyser/current/docs/NAS_TRIAL_RUNBOOK.md
+Wants=network-online.target postgresql.service srv-rosbag\x2danalyser-source.mount var-lib-rosbag\x2danalyser-derived.mount
+After=network-online.target postgresql.service srv-rosbag\x2danalyser-source.mount var-lib-rosbag\x2danalyser-derived.mount
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=rosbag-analyser
+Group=rosbag-analyser
+UMask=0027
+WorkingDirectory=/opt/rosbag-analyser/current
+EnvironmentFile=/etc/rosbag-analyser/application.env
+LoadCredential=database-pass:/etc/rosbag-analyser/runtime.pgpass
+ExecStartPre=/opt/rosbag-analyser/current/deploy/scripts/run-service preflight --activation
+ExecStart=/opt/rosbag-analyser/current/deploy/scripts/run-service api
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=90
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/rosbag-analyser/source
+ReadWritePaths=/var/lib/rosbag-analyser/derived
+
+[Install]
+WantedBy=rosbag-analyser.target

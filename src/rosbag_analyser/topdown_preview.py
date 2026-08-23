@@ -354,8 +354,8 @@ def _cache_identity(
         "artifact_kind": TOPDOWN_PREVIEW_KIND,
         "processor_version": PROCESSOR_VERSION,
         "recording": {
-            "id": record.id,
-            "archive_relative_path": record.archive_relative_path,
+            "id": record.identity_recording_id,
+            "archive_relative_path": record.identity_relative_path,
             "bag_start_ns": record.start_time_ns,
             "bag_duration_ns": record.duration_ns,
         },

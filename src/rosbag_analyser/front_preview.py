@@ -34,7 +34,9 @@ from rosbag_analyser.persistence.processing_repository import (
 )
 
 
-PROCESSOR_VERSION = "front-preview-v1"
+PROCESSOR_VERSION = "front-preview-v2"
+FRONT_TIMING_POLICY = "capture_header_affine_to_record_span_v2"
+FRONT_TIMESTAMP_PROVENANCE = "ros_image_header_affine_to_record_span"
 IMAGE_MESSAGE_TYPE = "sensor_msgs/msg/Image"
 CDR_SERIALIZATION = "cdr"
 
@@ -394,9 +396,10 @@ def _cache_identity(
     document = {
         "artifact_kind": FRONT_PREVIEW_KIND,
         "processor_version": PROCESSOR_VERSION,
+        "timing_policy": FRONT_TIMING_POLICY,
         "recording": {
-            "id": record.id,
-            "archive_relative_path": record.archive_relative_path,
+            "id": record.identity_recording_id,
+            "archive_relative_path": record.identity_relative_path,
             "bag_start_ns": record.start_time_ns,
             "bag_duration_ns": record.duration_ns,
         },

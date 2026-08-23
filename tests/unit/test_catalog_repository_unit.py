@@ -41,6 +41,7 @@ class _DetailConnection:
             return _QueryResult(
                 row={
                     "id": 1,
+                    "archive_relative_path": "folder/recording",
                     "display_name": "recording",
                     "start_time_ns": 100,
                     "duration_ns": 200,
@@ -52,6 +53,8 @@ class _DetailConnection:
                     "ros_health": "readable",
                     "diagnostic_code": None,
                     "diagnostic_message": None,
+                    "source_present": True,
+                    "last_seen_generation": 2,
                 }
             )
         return _QueryResult(

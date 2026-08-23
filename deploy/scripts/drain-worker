@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly base_url="${ROS_BAG_ANALYSER_LOCAL_URL:-http://127.0.0.1:8000}"
+readonly timeout_seconds="${ROS_BAG_ANALYSER_DRAIN_TIMEOUT_SECONDS:-3600}"
+[[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || {
+  echo "The drain timeout must be a positive integer." >&2
+  exit 1
+}
+readonly started="$(date +%s)"
+
+while true; do
+  readonly_snapshot="$(curl --fail --silent --show-error \
+    "$base_url/api/v1/processing/overview")"
+  running_count="$(
+    SNAPSHOT="$readonly_snapshot" python3.10 -c \
+      'import json, os; print(int(json.loads(os.environ["SNAPSHOT"])["running_count"]))'
+  )"
+  if [[ "$running_count" -eq 0 ]]; then
+    echo "The worker is idle. Queued jobs remain persistent and were not changed."
+    exit 0
+  fi
+  if (( $(date +%s) - started >= timeout_seconds )); then
+    echo "The worker did not become idle inside the approved drain window." >&2
+    exit 1
+  fi
+  sleep 5
+done

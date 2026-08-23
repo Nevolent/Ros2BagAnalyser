@@ -4,9 +4,8 @@ from pydantic import BaseModel
 
 from rosbag_analyser.catalog.types import SafeDiagnostic
 from rosbag_analyser.imu_series import (
-    IMU_COMPONENT,
-    IMU_DISPLAY_LABEL,
-    IMU_UNITS,
+    IMU_SERIES_BY_COMPONENT,
+    IMU_SERIES_DEFINITIONS,
     ImuSeriesDisplay,
 )
 
@@ -24,6 +23,19 @@ WARNING_MESSAGES = {
 }
 
 
+class ImuSeriesOptionResponse(BaseModel):
+    id: str
+    component: str
+    display_label: str
+    units: str
+    column_index: int
+    finite_sample_count: str
+    non_finite_sample_count: str
+    minimum_value: float | None
+    maximum_value: float | None
+    available: bool
+
+
 class ImuArtifactResponse(BaseModel):
     mime_type: str
     size_bytes: str
@@ -31,16 +43,12 @@ class ImuArtifactResponse(BaseModel):
     coverage_end_ns: str
     timestamp_provenance: str
     bounds: str
-    display_label: str
     topic: str
-    component: str
-    units: str
+    default_series_id: str
     source_sample_count: str
     delivered_sample_count: str
-    finite_sample_count: str
-    non_finite_sample_count: str
-    minimum_value: float
-    maximum_value: float
+    duplicate_timestamp_count: str
+    series: list[ImuSeriesOptionResponse]
     reduction_method: str
     warnings: list[DiagnosticResponse]
     data_url: str
@@ -63,6 +71,29 @@ def imu_series_response(
         source = _mapping(manifest.get("source"))
         samples = _mapping(manifest.get("samples"))
         reduction = _mapping(manifest.get("reduction"))
+        series = _series_responses(manifest.get("series"))
+        default_component = _text(
+            source.get("default_component"), "angular_velocity.z"
+        )
+        default_definition = IMU_SERIES_BY_COMPONENT.get(
+            default_component,
+            IMU_SERIES_BY_COMPONENT["angular_velocity.z"],
+        )
+        default_series_id = _text(
+            source.get("default_series_id"), default_definition.id
+        )
+        available_series_ids = {
+            option.id for option in series if option.available
+        }
+        if default_series_id not in available_series_ids:
+            default_series_id = next(
+                (
+                    option.id
+                    for option in series
+                    if option.id in available_series_ids
+                ),
+                default_series_id,
+            )
         raw_warnings = manifest.get("warnings", [])
         warnings: list[DiagnosticResponse] = []
         if isinstance(raw_warnings, list):
@@ -78,16 +109,14 @@ def imu_series_response(
             coverage_end_ns=str(display.artifact.coverage_end_ns),
             timestamp_provenance="ros_record_timestamp",
             bounds="measured",
-            display_label=IMU_DISPLAY_LABEL,
             topic=_text(source.get("topic"), "Configured IMU topic"),
-            component=_text(source.get("component"), IMU_COMPONENT),
-            units=IMU_UNITS,
+            default_series_id=default_series_id,
             source_sample_count=str(_integer(samples.get("source"))),
             delivered_sample_count=str(_integer(samples.get("delivered"))),
-            finite_sample_count=str(_integer(samples.get("finite"))),
-            non_finite_sample_count=str(_integer(samples.get("non_finite"))),
-            minimum_value=_number(samples.get("minimum")),
-            maximum_value=_number(samples.get("maximum")),
+            duplicate_timestamp_count=str(
+                _integer(samples.get("duplicate_timestamps"))
+            ),
+            series=series,
             reduction_method=_text(reduction.get("method"), "none"),
             warnings=warnings,
             data_url=(
@@ -122,7 +151,36 @@ def _integer(value: object) -> int:
     return int(value) if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
-def _number(value: object) -> float:
+def _optional_number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0.0
+        return None
     return float(value)
+
+
+def _series_responses(value: object) -> list[ImuSeriesOptionResponse]:
+    raw_items = value if isinstance(value, list) else []
+    by_id = {
+        item.get("id"): item
+        for item in raw_items
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    responses: list[ImuSeriesOptionResponse] = []
+    for definition in IMU_SERIES_DEFINITIONS:
+        item = by_id.get(definition.id, {})
+        finite_count = _integer(item.get("finite"))
+        non_finite_count = _integer(item.get("non_finite"))
+        responses.append(
+            ImuSeriesOptionResponse(
+                id=definition.id,
+                component=definition.component,
+                display_label=definition.display_label,
+                units=definition.units,
+                column_index=definition.column_index,
+                finite_sample_count=str(finite_count),
+                non_finite_sample_count=str(non_finite_count),
+                minimum_value=_optional_number(item.get("minimum")),
+                maximum_value=_optional_number(item.get("maximum")),
+                available=item.get("available") is True and finite_count > 0,
+            )
+        )
+    return responses

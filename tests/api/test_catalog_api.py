@@ -23,6 +23,7 @@ from rosbag_analyser.persistence.catalog_repository import (
 def _recording() -> CatalogRecording:
     return CatalogRecording(
         id=7,
+        archive_relative_path="folder/healthy-run",
         display_name="healthy-run",
         start_time_ns=1_700_000_000_000_000_000,
         duration_ns=2_500_000_000,
@@ -33,6 +34,8 @@ def _recording() -> CatalogRecording:
         topic_count=1,
         ros_health="readable",
         diagnostic=None,
+        source_present=True,
+        last_seen_generation=1,
     )
 
 
@@ -95,10 +98,13 @@ async def test_list_detail_and_static_browser_contract() -> None:
         listing = await client.get("/api/recordings")
         detail = await client.get("/api/recordings/7")
         page = await client.get("/")
+        processing_page = await client.get("/processing")
         detail_page = await client.get("/recordings/7")
+        invalid_detail_page = await client.get("/recordings/not-a-number")
         script = await client.get("/app.js")
         imu_script = await client.get("/imu_graph.js")
         stylesheet = await client.get("/styles.css")
+        icon = await client.get("/assets/tech-trace-icon.svg")
 
     assert listing.status_code == 200
     assert listing.json()["items"][0]["start_time_ns"] == "1700000000000000000"
@@ -108,49 +114,93 @@ async def test_list_detail_and_static_browser_contract() -> None:
     assert detail.json()["components"][0]["file_name"] == "metadata.yaml"
     assert "relative_path" not in detail.text
     assert page.status_code == 200
-    assert "Recording archive" in page.text
+    assert "Tectrace" in page.text
+    assert 'data-view-panel="recordings"' in page.text
+    assert 'data-view-panel="processing"' in page.text
+    assert 'data-view-panel="analyzer"' in page.text
+    assert 'id="recording-rows"' in page.text
+    assert 'id="folder-tree"' in page.text
+    assert 'id="prepare-selected"' in page.text
+    assert 'id="current-job-host"' in page.text
+    assert 'id="processing-error-dialog"' in page.text
+    assert 'id="front-preview-pane"' in page.text
+    assert 'id="topdown-preview-pane"' in page.text
+    assert 'id="imu-series-pane"' in page.text
+    assert 'id="sensor-picker-menu"' in page.text
+    assert 'role="slider"' in page.text
+    assert 'id="global-time-slider"' in page.text
+    assert 'id="component-rows"' in page.text
+    assert 'id="catalog-notice"' not in page.text
+    assert 'id="front-summary"' not in page.text
+    assert 'id="topdown-summary"' not in page.text
+    assert "Skip to content" in page.text
+    assert "preview-front.png" not in page.text
+    assert "preview-top.png" not in page.text
+    assert "https://" not in page.text
+    assert processing_page.status_code == 200
+    assert processing_page.text == page.text
     assert detail_page.status_code == 200
+    assert detail_page.text == page.text
+    assert page.headers["cache-control"] == "no-store"
+    assert processing_page.headers["cache-control"] == "no-store"
+    assert detail_page.headers["cache-control"] == "no-store"
+    assert invalid_detail_page.status_code == 404
     assert script.status_code == 200
-    assert "wrapper.tabIndex = 0" in script.text
-    assert "current table could not be refreshed" in script.text
-    assert 'renderRecordingShell("Recording details")' in script.text
+    assert script.headers["cache-control"] == "no-store"
+    assert 'requestJson("/api/v1/catalog"' in script.text
+    assert 'requestJson("/api/v1/catalog/rescan"' in script.text
+    assert 'requestJson("/api/v1/recordings/prepare"' in script.text
+    assert 'requestJson("/api/v1/processing/overview"' in script.text
+    assert "/api/v1/processing/jobs" in script.text
+    assert '/api/v1/recordings/${recordingId}' in script.text
     assert "document.title" in script.text
-    assert "PREVIEW_RETRY_DELAY_MS" in script.text
-    assert "status check failed" in script.text
-    assert "Retry loading catalog" in script.text
-    assert "timestampProvenanceLabels" in script.text
-    assert 'video.addEventListener("error", () => {' in script.text
     assert "showMediaFailure(kind);" in script.text
     assert "VIDEO_DRIFT_TOLERANCE_SECONDS" in script.text
-    assert 'paneId: "front-preview-pane"' in script.text
-    assert 'paneId: "topdown-preview-pane"' in script.text
-    assert 'imuPane.id = "imu-series-pane"' in script.text
-    assert "IMU angular_velocity.z (rad/s)" in script.text
-    assert script.text.count('node("button", "Play")') == 1
-    assert "Object.values(controller.players).forEach" in script.text
+    assert "front-preview" in script.text
+    assert "topdown-preview" in script.text
+    assert "imu-series" in script.text
+    assert 'link.href = `/recordings/${recording.id}`' in script.text
+    assert "Object.entries(controller.players).forEach" in script.text
     assert "forceSeek" in script.text
     assert "playPending" in script.text
-    assert "player.playAttempt !== playAttempt" in script.text
-    assert "reviewController !== controller" in script.text
-    assert "updateImuAtGlobalTime(clock.globalTime);" in script.text
-    assert "const hasTelemetry = reviewController.telemetry !== null;" in script.text
-    assert 'telemetry.currentValue.textContent = "—";' in script.text
-    end_tick = script.text.index(
-        "const reachedEnd = next >= controller.durationSeconds;"
-    )
+    assert "reviewController === controller" in script.text
+    assert "updateImuAtGlobalTime(controller.clock.globalTime);" in script.text
+    assert "applyImuSeriesSelection" in script.text
+    assert "moveImuSeek" in script.text
+    assert 'imuElements.plot.addEventListener("pointerdown"' in script.text
+    assert "telemetry.cursor.style.transform" in script.text
+    assert "createLinearGradient" in script.text
+    assert "Back to Recordings" not in script.text
+    end_tick = script.text.index("const ended = next >= reviewController.durationSeconds;")
     stop_clock = script.text.index("clock.playing = false;", end_tick)
     synchronize_media = script.text.index("applyGlobalTime(next);", end_tick)
     assert stop_clock < synchronize_media
     assert stylesheet.status_code == 200
+    assert stylesheet.headers["content-type"].startswith("text/css")
+    assert stylesheet.headers["cache-control"] == "no-store"
     assert imu_script.status_code == 200
+    assert imu_script.headers["cache-control"] == "no-store"
     assert "sampleAtOrBefore" in imu_script.text
     assert "cursorFraction" in imu_script.text
-    assert ".table-wrapper:focus-visible" in stylesheet.text
-    assert ".preview-player video[hidden]" in stylesheet.text
-    assert ".camera-grid" in stylesheet.text
+    assert "selectSeries" in imu_script.text
+    assert "timeFromPlotPosition" in imu_script.text
+    assert ".skip-link" in stylesheet.text
+    assert 'grid-template-areas:' in stylesheet.text
+    assert ".camera-card--front .camera-viewport" in stylesheet.text
+    assert ".camera-card--top .camera-viewport" in stylesheet.text
     assert ".imu-cursor" in stylesheet.text
-    assert ".preview-state-unavailable" in stylesheet.text
-    assert ".loading-state" in stylesheet.text
+    assert ".state-badge.unavailable" in stylesheet.text
+    assert ".state-badge.queued" in stylesheet.text
+    assert ".coverage-message" in stylesheet.text
+    assert "@media (prefers-reduced-motion: reduce)" in stylesheet.text
+    assert "innerHTML" not in script.text
+    assert "setInterval" not in script.text
+    assert "mockRecordings" not in script.text
+    assert "mockJobs" not in script.text
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/svg+xml")
+    assert icon.headers["cache-control"] == "no-store"
+    assert "__MACOSX" not in page.text + script.text + stylesheet.text
     assert listing.headers["x-content-type-options"] == "nosniff"
     assert "default-src 'self'" in listing.headers["content-security-policy"]
     assert "media-src 'self'" in listing.headers["content-security-policy"]

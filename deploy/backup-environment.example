@@ -1,0 +1,4 @@
+# Placeholder-only root-operator EnvironmentFile. Install as
+# /etc/rosbag-analyser/backup.env, owned by root:root, mode 0600.
+ROS_BAG_ANALYSER_DATABASE_URL=postgresql://rosbag_analyser_backup@/rosbag_analyser?host=/run/postgresql
+ROS_BAG_ANALYSER_ADMIN_DATABASE_URL=postgresql:///postgres?host=/run/postgresql

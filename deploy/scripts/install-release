@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: install-release RELEASE_ID ARCHIVE EXPECTED_SHA256" >&2
+  exit 2
+}
+
+[[ $# -eq 3 ]] || usage
+readonly release_id="$1"
+readonly archive="$2"
+readonly expected_sha256="$3"
+readonly deployment_root="/opt/rosbag-analyser"
+readonly release_target="$deployment_root/releases/$release_id"
+
+[[ "$(id -u)" -eq 0 ]] || {
+  echo "Release installation must run as root inside the approved VM." >&2
+  exit 1
+}
+[[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "The release identity is invalid." >&2
+  exit 1
+}
+[[ "$expected_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+  echo "The expected release checksum is invalid." >&2
+  exit 1
+}
+[[ -f "$archive" && ! -L "$archive" ]] || {
+  echo "The release archive is unavailable." >&2
+  exit 1
+}
+[[ ! -e "$release_target" ]] || {
+  echo "The immutable release target already exists; it was not replaced." >&2
+  exit 1
+}
+readonly actual_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+[[ "$actual_sha256" == "$expected_sha256" ]] || {
+  echo "The release archive checksum does not match." >&2
+  exit 1
+}
+readonly script_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+
+install -d -o root -g root -m 0755 \
+  "$deployment_root" "$deployment_root/releases" "$deployment_root/staging"
+readonly staging="$(mktemp -d "$deployment_root/staging/$release_id.XXXXXX")"
+trap 'rm -rf -- "$staging"' EXIT
+readonly archive_copy="$staging/release.tar.gz"
+install -o root -g root -m 0600 -- "$archive" "$archive_copy"
+echo "$expected_sha256  $archive_copy" | sha256sum --check --strict
+python3.10 "$script_root/validate_release_archive.py" "$archive_copy"
+tar -xzf "$archive_copy" --no-same-owner --no-same-permissions -C "$staging"
+rm -- "$archive_copy"
+(
+  cd -- "$staging/release"
+  sha256sum --check --strict RELEASE-CONTENTS.sha256
+  sha256sum --check --strict wheelhouse/SHA256SUMS
+)
+python3.10 "$staging/release/deploy/scripts/validate_wheelhouse.py" \
+  "$staging/release/wheelhouse"
+python3.10 -m venv "$staging/release/venv"
+"$staging/release/venv/bin/python" -m pip install \
+  --no-index \
+  --find-links "$staging/release/wheelhouse" \
+  --requirement "$staging/release/runtime-requirements.in"
+mapfile -t application_wheels < <(
+  find "$staging/release/wheels" -maxdepth 1 -type f \
+    -name 'rosbag_analyser-*.whl' -print
+)
+[[ ${#application_wheels[@]} -eq 1 ]] || {
+  echo "The release must contain exactly one application wheel." >&2
+  exit 1
+}
+"$staging/release/venv/bin/python" -m pip install \
+  --no-index --no-deps "${application_wheels[0]}"
+"$staging/release/venv/bin/python" -m pip check
+find "$staging/release/deploy/scripts" -maxdepth 1 -type f -exec chmod 0755 {} +
+chown -R root:root "$staging/release"
+find "$staging/release" -type d -exec chmod 0755 {} +
+find "$staging/release" -type f -exec chmod go-w {} +
+mv -- "$staging/release" "$release_target"
+echo "Release $release_id installed but not activated."

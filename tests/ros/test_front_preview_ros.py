@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 
+import av
 import pytest
 
 from rosbag_analyser.catalog.metadata import TopicFact
@@ -15,7 +16,7 @@ from rosbag_analyser.processors.front_preview import FrontPreviewProcessor
 pytestmark = pytest.mark.ros
 
 
-def test_generated_ros_images_deserialize_and_encode_with_record_time(
+def test_generated_ros_images_deserialize_and_encode_with_smooth_capture_cadence(
     tmp_path: Path,
 ) -> None:
     serialization = pytest.importorskip("rclpy.serialization")
@@ -35,8 +36,12 @@ def test_generated_ros_images_deserialize_and_encode_with_record_time(
             "INSERT INTO topics VALUES (1, '/camera/image_raw', "
             "'sensor_msgs/msg/Image', 'cdr', '')"
         )
-        for index, timestamp in enumerate((1_000_000_000, 1_250_000_000), start=1):
+        for index, timestamp in enumerate(
+            (1_000_000_000, 1_050_000_000, 1_250_000_000), start=1
+        ):
             message = sensor_messages.Image()
+            message.header.stamp.sec = 10
+            message.header.stamp.nanosec = (index - 1) * 100_000_000
             message.width = 4
             message.height = 2
             message.encoding = "bgr8"
@@ -64,15 +69,21 @@ def test_generated_ros_images_deserialize_and_encode_with_record_time(
             name="/camera/image_raw",
             message_type="sensor_msgs/msg/Image",
             serialization_format="cdr",
-            message_count=2,
+            message_count=3,
         ),
         cache_identity="a" * 64,
     )
 
-    result = FrontPreviewProcessor(V0_PREVIEW_PROFILE).process(
-        descriptor, tmp_path / "preview.mp4"
-    )
+    output = tmp_path / "preview.mp4"
+    result = FrontPreviewProcessor(V0_PREVIEW_PROFILE).process(descriptor, output)
 
     assert result.coverage_start_ns == 100_000_000
     assert result.coverage_end_ns == 350_000_000
-    assert result.encoded_frame_count == 2
+    assert result.encoded_frame_count == 3
+    assert result.header_span_ns == 200_000_000
+    with av.open(output) as container:
+        times = [
+            float(frame.pts * frame.time_base)
+            for frame in container.decode(video=0)
+        ]
+    assert times == pytest.approx([0.0, 0.125, 0.25], abs=0.000_002)

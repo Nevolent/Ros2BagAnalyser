@@ -1,550 +1,1087 @@
-# ROS 2 Bag Analyser — Roadmap
+# ROS 2 Bag Analyser — V1 Roadmap
 
 ## 1. Status
 
-Building block 1 is complete and was accepted by the user on 2026-07-21.
-Building block 2 and its audit corrections are complete and were accepted by
-the user on 2026-07-21. It adds the two remaining V0 PostgreSQL tables,
-front-preview processor, serial worker, validated artifact publication,
-request/poll/range API, and initial global timeline. Its synthetic,
-ROS-message, PostgreSQL, browser, and approved real-archive acceptance evidence
-is recorded below. Building block 3 implementation was approved on 2026-07-21,
-completed with automated verification on 2026-07-22, and reviewed and accepted
-by the user on 2026-07-22. Building block 4 implementation was approved on
-2026-07-22 for the exact synchronized IMU graph boundary below. Its
-implementation, confirmed audit corrections, automated verification, and
-approved real-archive handoff were completed, and the user reviewed and
-accepted it on 2026-07-22. Building block 5 implementation was approved on
-2026-07-22 for the exact V0 integration and mentor-readiness boundary below.
-Implementation and automated verification were completed on 2026-07-22. The
-user approved, and the explicit opt-in real-archive acceptance matrix was
-completed, on 2026-07-22. The user reviewed and accepted Building block 5 that
-day, completing the mentor-facing V0.
+V1 product and architecture planning was approved on 2026-08-04. The V0 proof
+and post-V0 work are preserved in [docs/v0](docs/v0/INDEX.md).
 
-This roadmap defines V0 scope and order. Building block 1 implementation was
-explicitly approved on 2026-07-20. That approval does not grant work on later
-building blocks or access to the real archive outside a separately approved
-acceptance run.
+Building block 1 was explicitly accepted on 2026-08-04. Building block 2 was
+then explicitly invoked, implemented, verified, and accepted on the same date.
+An explicitly approved smooth front-camera corrective slice was implemented
+after that acceptance without entering Building block 3. An approved moved-path
+catalog corrective slice was then implemented after nested archive moves
+exposed retained missing history as duplicate damaged recordings. A separately
+approved move-aware artifact-reuse correction now preserves compatible work
+across unambiguous folder moves and repairs the already-split development
+catalog without rewriting derived files. Building block 3 was explicitly
+invoked on 2026-08-16. Its
+repository-readiness phase is implemented and locally verified. On 2026-08-23
+the user accepted all preceding application and repository-readiness work as
+the working pre-overhaul baseline and authorized a Git checkpoint and push.
+Prompt 2A, the big UI overhaul and real processing-controls correction, was
+approved and invoked for the next implementation phase. Gate 0, live VM
+commissioning, authoritative-source acceptance, and trial admission remain
+incomplete and paused during the overhaul.
 
-`ROADMAP.md` owns block scope, visible acceptance, and minimum testing. The
-other governing documents must be aligned with it before implementation.
+V1 has three sequential building blocks:
 
-## 2. V0 objective
+1. backend preparation and processing operations;
+2. reference frontend integration; and
+3. TrueNAS VM deployment and trial commissioning.
 
-V0 proves that the application can:
+Each block delivers one reviewable vertical slice and must be accepted before
+the next starts.
 
-1. Scan the six known recording folders.
-2. Show metadata and identify the damaged ROS database.
-3. Generate and reuse a front-camera preview.
-4. Synchronize the timestamped top-down camera with the front camera.
-5. Show one IMU graph on the same timeline.
+Prompt 2A is a separately approved corrective overhaul inserted after Building
+block 3 repository readiness and before its live commissioning phases. Its
+detailed boundary and resolved product decisions are in
+`BUILDING_BLOCK_PROMPTS.md`.
 
-V0 uses a small PostgreSQL catalog and one serial worker. It is a mentor
-demonstration, not a production operations platform.
+## 2. V1 final outcome
 
-## 3. Mentor and acceptance matrix
+V1 is complete when a limited group of engineers can reach the application on
+an internal NAS-hosted Ubuntu VM, browse the physical recording hierarchy,
+prepare selected recordings, understand the persistent serial queue, and review
+real synchronized outputs through the unchanged reference design.
 
-Real-data cases are selected through configuration and recorded in acceptance
-notes; application logic must not hard-code their labels or filenames.
+The final trial remains a prototype. Its purpose is structured product feedback,
+not public production service guarantees.
 
-| Case | Purpose | Required evidence |
-|---|---|---|
-| All six | Catalog | Six unique rows; five readable; one damaged; idempotent rescan |
-| Short healthy | Main flow | Reusable front/top-down/IMU output on one transport |
-| Long healthy | Final scale acceptance | Bounded work, sync, seeks, responsive graph |
-| Damaged | Honest failure | Useful diagnosis; no crash; unavailable work creates no job |
-| Original archive | Safety | Names, sizes, and modification times remain unchanged |
+## 3. Rules for every block
 
-The short case is used routinely. The complete longer case is a final opt-in
-acceptance run, never a routine development test, automated suite, or generic
-CI requirement.
+- Original recordings remain strictly read-only.
+- `archive/` remains the visual reference and is not casually edited.
+- Scanning does not generate artifacts or jobs.
+- Starting services does not scan or prepare recordings.
+- Full source processing remains in one serial worker.
+- Front, top-down, and IMU remain separate artifact identities.
+- Bulk preparation is idempotent and bounded.
+- Ready output is identity-compatible and validated; partial output is never
+  ready.
+- Source unavailability is not recorded as a failed processing attempt.
+- Existing timing, coverage, range delivery, IMU null/duplicate, and artifact
+  safety contracts remain unless the active block explicitly changes them.
+- Routine tests use synthetic fixtures. Real-data and deployment checks are
+  explicit, recorded, and source-immutable.
+- A block does not imply Git publication authority. The user separately
+  authorized the pre-overhaul baseline checkpoint commit and push on
+  2026-08-23; later commits, pushes, and remote changes still require explicit
+  authority.
+- Material scope expansion is documented and reviewed rather than smuggled into
+  a convenient change.
 
-## 4. Rules for every block
+## 4. Building block 1 — Backend preparation and processing operations
 
-- Originals are strictly read-only and are never repaired or reindexed.
-- Scanning and artifact processing remain separate operations.
-- Expensive processing runs outside normal HTTP requests in one serial worker.
-- Reuse requires a matching source, processor, configuration, and output
-  identity.
-- All streams follow the shared bag-relative time model defined in
-  `ARCHITECTURE.md`.
-- `unavailable` means prerequisites prevent work and no job is created;
-  `failed` means attempted processing ended with an error.
-- Each block receives user review before the next begins.
+**Status:** Accepted on 2026-08-04
 
-## 5. Building block 1 — Archive catalog and bag table
-
-**Status:** Completed and user-accepted on 2026-07-21
-
-### Goal
-
-Deliver an independently testable read-only scanner, small persistent catalog,
-thin API, browser table, and recording detail view.
-
-### Included
-
-- Configure one archive root, one separate derived root, and PostgreSQL.
-- Discover direct recording folders and treat each as one logical recording.
-- Parse `metadata.yaml` and inventory expected source files by safe relative
-  path, role, size, and modification time.
-- Perform bounded read-only checks that distinguish the five readable ROS
-  databases from the damaged database without full integrity scans.
-- Persist only:
-  - `recordings`, uniquely keyed by archive-relative folder, with table/detail
-    metadata, ROS readability, safe diagnostic, and source signature;
-  - `source_components`, keyed by recording and role, with bounded file
-    facts and component condition.
-- Keep topic count on the recording; processors later validate configured topics.
-- Apply completed scan results transactionally and make unchanged rescans
-  idempotent.
-- Keep the scanner callable without FastAPI, ORM objects, or a worker.
-- Provide minimal rescan, list, and detail API operations.
-- Show metadata, ROS readability, diagnostics, and companion presence in the UI.
-- Continue scanning when one folder is damaged.
-
-### Excluded
-
-- Preview, video, telemetry, artifacts, processing jobs, and artifact columns.
-- Scan jobs/history, `scan_runs`, audit history, tombstones, missing-history
-  retention, removal reconciliation, and rename reconciliation.
-- Full database/message/video reads, top-down validation, and topic capability
-  classification.
-- Multiple roots, uploads, watchers, and additional bag formats.
-
-### Visible acceptance
-
-- **Rescan** shows exactly six rows: five readable and one specifically damaged.
-- Healthy and damaged detail views show useful metadata and components.
-- A second rescan still shows six rows and starts no processing.
-- Restarting the application reloads the PostgreSQL catalog.
-
-### Minimum tests
-
-- Tiny valid and truncated/malformed fixtures cover metadata, bounded health,
-  safe paths, and failure isolation.
-- Configuration tests reject overlapping roots and path escapes.
-- One PostgreSQL test applies the same result twice and proves stable row counts.
-- Minimal API tests cover rescan result, list, and detail.
-- One opt-in real scan proves six/five/one and an unchanged archive inventory.
-
-## 6. Building block 2 — Front-camera preview and initial timeline
-
-**Status:** Completed and user-accepted on 2026-07-21
-
-**Dependency:** Building block 1 reviewed and accepted
+**Dependency:** Completed V0 backend and accepted V1 documents
 
 ### Goal
 
-Generate and reuse one browser-playable front preview without blocking ordinary
-API traffic, then control it with the first global timeline.
+Expose the complete backend contract required by the Recordings and Processing
+views without changing the existing processors, artifact formats, or serial
+worker model.
+
+At the end of this block, API-driven clients can browse real physical folders,
+read aggregate analysis state, prepare multiple recordings with one request,
+and inspect or retry persistent processing work.
+
+### Boundary
+
+This is a backend and API block. It may add the approved catalog-state migration,
+repository queries, application services, schemas, routes, focused query
+indexes, configuration bounds, and tests. It does not port the new frontend or
+deploy the NAS VM.
 
 ### Included
 
-- Configure one preferred topic and preview output profile.
-- Require `sensor_msgs/msg/Image`; initially support the observed `bgr8` format.
-- Validate type, dimensions, step, and payload; decode with bounded memory.
-- Build frame time from ROS record timestamps and generate seekable browser media.
-- Add a minimal `artifacts` table containing only validated ready output, its
-  cache identity, contained path, and required timing/manifest data.
-- Add a minimal `jobs` table with artifact identity, timestamps, safe error, and
-  `queued`, `running`, `succeeded`, or `failed` state.
-- Use one serial worker and prevent duplicate active jobs per artifact identity.
-- Reuse a matching ready artifact; a mismatch is a cache miss, not stale history.
-- Validate temporary output before atomic publication where practical.
-- Treat interrupted work as a visible failure and require an explicit new request.
-- Provide request, polling, metadata, and byte-range media API operations.
-- Show `not requested`, `queued/processing`, `ready`, `failed`, and `unavailable`.
-- Add the front player and elapsed-time play, pause, and seek controls.
+#### Catalog and folders
+
+- Replace direct-root-only discovery with bounded recursive physical-folder
+  discovery.
+- Treat supported metadata directories as recording roots and intermediate
+  directories as navigation folders.
+- Reject symlink traversal and contain every discovered path.
+- Distinguish complete root snapshots from incomplete traversal failures.
+- Add a durable successful catalog generation and scan facts.
+- Plan and persist one current target per recording/artifact kind during a
+  successful scan, including identity or safe unavailability.
+- Treat planner/configuration mismatch as rescan-required without route-time
+  source reads.
+- Reconcile absent recordings as missing only after a complete snapshot.
+- Preserve rows, IDs, jobs, artifacts, and history rather than deleting absent
+  recordings.
+- Keep retained missing history out of ordinary catalog lists, folder nodes,
+  summaries, and current scan counts so path moves remain visually singular.
+- Expose safe folder nodes, descendant counts, and recording `folder_path`.
+
+#### Aggregate state
+
+- Resolve current front, top-down, and IMU states from catalogued identities.
+- Join aggregate state only through the current `preparation_targets`
+  projection; do not parse metadata or stat source paths for table rows.
+- Add the exact aggregate precedence: processing, queued, failed, ready, then
+  not planned.
+- Expose precise output facts and a readable/damaged health presentation.
+- Produce one bounded catalog response without per-recording browser requests.
+
+#### Bulk preparation
+
+- Add `POST /api/v1/recordings/prepare` with a bounded ordered list of numeric
+  IDs.
+- Reuse ready artifacts and active jobs.
+- Queue missing or explicitly retried current work in stable recording and
+  artifact order.
+- Preflight all three targets and create no new job for a recording when its
+  complete analyzer bundle is unavailable.
+- Return per-recording, per-output outcomes and partial failures.
+- Preserve advisory-lock and unique-index duplicate prevention under concurrent
+  requests.
+
+#### Processing operations
+
+- Add overview and paginated job-query APIs for current work, queue, failures,
+  and history.
+- Keep API queue positions identical to worker claim order.
+- Return safe failure details, completed runtime, output size, and numeric
+  recording links.
+- Add retry-by-failed-job that recomputes the current identity.
+- Report worker online/offline by probing the existing advisory lock without
+  mutating worker or jobs.
+- Return server time and exact stored timestamps.
+
+#### Estimation
+
+- Add a pure, bounded estimation service using compatible succeeded jobs and
+  exact artifact manifest identity.
+- Use median seconds per relevant input byte with at least two samples.
+- Exclude failed, interrupted, stale, malformed, and missing-artifact samples.
+- Return estimate status, predicted total, remaining time, and sample count.
+- Return unavailable or exceeded rather than inventing a value.
+
+#### Compatibility and documentation
+
+- Preserve existing V0 state, media, and IMU routes during the transition.
+- Update root documents only where implementation evidence or a reviewed
+  correction belongs.
+- Add migration and rollback notes for the exact schema change.
+
+### Expected implementation areas
+
+- `src/rosbag_analyser/catalog/paths.py`
+- `src/rosbag_analyser/catalog/scanner.py`
+- `src/rosbag_analyser/catalog/types.py`
+- `src/rosbag_analyser/catalog/service.py`
+- `src/rosbag_analyser/persistence/catalog_repository.py`
+- `src/rosbag_analyser/persistence/processing_repository.py`
+- `src/rosbag_analyser/persistence/migrations/`
+- `src/rosbag_analyser/config.py`
+- new focused preparation and processing-view application modules
+- versioned API routes and schemas under `src/rosbag_analyser/api/`
+- `src/rosbag_analyser/api/app.py`
+- focused unit, PostgreSQL, API, migration, and safety tests
+
+The exact file list may differ after inspection. New modules must represent a
+real responsibility rather than a speculative layer.
 
 ### Excluded
 
-- Top-down media, telemetry, and scan jobs.
-- Leases, heartbeats, automatic retry, durable phases, priorities, cancellation,
-  multiple workers, and distributed coordination.
-- Stale-artifact history, audit retention, and automated cleanup.
-- Arbitrary topics/encodings, adaptive streaming, and production scheduling.
+- Changing front, top-down, or IMU processor output.
+- Replacing the artifact cache or adding a combined preparation artifact.
+- Multiple workers, priorities, cancellation, reordering, automatic retry,
+  leases, or percentage progress.
+- Queue completion-time promises for waiting jobs.
+- Filesystem watchers, scheduled rescans, uploads, or source writes.
+- Frontend visual integration.
+- Nginx, system services, VM installation, or public deployment.
+- Deleting missing recordings or ready artifacts.
 
-### Visible acceptance
+### Implementation sequence
 
-- The short healthy case processes in the worker and remains playable/seekable.
-- Reload, restart, and rescan reuse its completed preview.
-- A repeated request creates no duplicate active job or ready artifact.
-- The damaged case reports unavailable and creates no job.
-- One opt-in longer-case run records duration, output size, and bounded memory.
+1. Freeze current Git and schema evidence; inspect overlapping user changes.
+2. Write nested discovery and complete/incomplete snapshot tests first.
+3. Implement recursive discovery without touching persistence.
+4. Add and verify the catalog-state migration and safe backfill.
+5. Implement transactional generation apply and missing reconciliation.
+6. Add bulk current-state repository queries and aggregate resolution.
+7. Implement bounded preparation orchestration and concurrency tests.
+8. Add processing overview/history queries, stable cursors, and focused indexes.
+9. Implement and test the pure estimator.
+10. Add versioned schemas/routes and safe validation.
+11. Run accumulated processor, worker, PostgreSQL, API, ROS-message, and browser
+    regression suites.
+12. Run the approved bounded real rescan with before/after source inventory.
+13. Record evidence and stop for user review.
 
-### Minimum tests
+### Minimum automated tests
 
-- Tiny image sequences cover selection, validation, record-time mapping, and
-  streaming rather than frame accumulation; one malformed case fails safely.
-- Cache tests cover reuse and a relevant-input cache miss.
-- PostgreSQL tests cover one active job and one ready artifact per identity.
-- One interrupted-job test proves `failed`, no ready artifact, and an explicit
-  new request can run safely.
-- Publication tests prove partial output cannot become ready.
-- Minimal API tests cover request, poll, unavailable, ready, and byte ranges.
-- Short and opt-in longer real checks prove playback/reuse and source immutability.
+- Recursive folder discovery at root and multiple depths.
+- Exact folder paths and direct/descendant counts.
+- Symlink, path escape, permission failure, depth bound, entry bound, duplicate
+  candidate, malformed metadata, and recording isolation.
+- Incomplete scans preserve the previous generation and do not mark rows
+  missing.
+- Complete scans preserve unchanged IDs and mark unseen rows missing without
+  deletion.
+- Unambiguous path moves preserve the recording ID, history, private cache
+  anchors, and compatible artifacts; ambiguous identical candidates remain
+  separate. Retained missing history cannot inflate recording or damaged
+  counts.
+- Migration from a faithful V0 schema preserves every ID, job, and artifact;
+  the first explicit V1 rescan establishes current preparation targets without
+  regenerating compatible output.
+- Preparation-target planning covers available, unavailable, stale planner,
+  scan-generation replacement, and worker-side source-change revalidation.
+- Aggregate-state precedence for every combination needed to distinguish
+  ready, partial, queued, processing, failed, not planned, and unavailable.
+- Catalog response remains bounded and performs no per-row source read.
+- Preparation validates IDs, order, duplicates, body size, and maximum count.
+- Preparation reuses ready/active work, retries explicitly, reports
+  unavailability, and isolates partial database failure.
+- All-three preflight prevents partially scheduled unavailable recordings.
+- Concurrent identical requests create one active job per identity.
+- Queue order and positions match claim order.
+- Failure/history pagination is stable while new rows arrive.
+- Retry recomputes current identity and cannot retry a succeeded or unknown job.
+- Worker lock probe reports online/offline and leaves no acquired lock behind.
+- Estimate median, minimum samples, compatibility filtering, zero/invalid size,
+  malformed timestamps, exceeded estimate, and bounded sample query.
+- API database failures return sanitized diagnostics.
+- Existing front, top-down, IMU, artifact, worker, and range tests remain green.
 
-### Acceptance evidence — 2026-07-21
+### Visible/manual acceptance
 
-- The routine suite passed with 144 tests and 12 environment-specific skips;
-  the isolated generated ROS-message test passed; and all 10 PostgreSQL tests
-  passed against a disposable PostgreSQL 14 database.
-- PostgreSQL 14 exposed and verified corrections for a reserved catalog-query
-  alias and version-specific predicate parentheses. Regression coverage was
-  added, and the final PostgreSQL suite passed.
-- The approved short figure-eight recording produced 3,051 frames and an
-  84,118,694-byte preview in 305.742 seconds. The user confirmed playback;
-  byte-range delivery, representative seeking, restart persistence, rescan and
-  repeated-request reuse all passed.
-- The approved 758.739-second longer recording produced a 482,413,143-byte
-  preview in 2,011.547 seconds. Peak worker RSS was 163,520 kB with no swap, and
-  representative seeking passed.
-- Reuse left exactly two succeeded jobs and two ready artifacts. The damaged
-  recording remained `unavailable` and created no job or artifact.
-- During long processing, ordinary catalog and completed-preview requests
-  remained responsive, partial output stayed unpublished, and the temporary
-  job workspace was empty after atomic publication.
-- The archive still contained exactly six directories and 24 files. All 24
-  source components retained their recorded sizes and nanosecond modification
-  times, with no extra files or sidecars.
-- Reported short-preview stutters were traced read-only to existing ROS record
-  timestamp gaps of approximately 0.245–0.422 seconds. The source and MP4 each
-  contained exactly 3,051 frames with the same timestamp-interval sequence;
-  camera header stamps remained mostly near 0.05 seconds. Preserving these
-  visible holds is the accepted record-clock synchronization behavior.
+- A synthetic nested archive produces the exact physical folder tree.
+- Saved catalog loads without scanning.
+- Explicit rescan updates the successful timestamp and retains data on an
+  induced incomplete scan.
+- Multiple recording IDs prepare in stable order; current artifacts are reused.
+- One job runs while later jobs show stable queue positions.
+- Restart preserves queue and history.
+- A failed job appears with a safe diagnostic and explicit retry.
+- Elapsed time is exact; estimates show approximate, unavailable, or exceeded
+  states honestly.
+- Damaged and missing recordings create no impossible work.
 
-## 7. Building block 3 — Top-down camera and dual-video synchronization
+### Real-data acceptance
 
-**Status:** Completed and user-accepted on 2026-07-22
+Use the explicitly approved development archive only for a bounded recursive
+rescan in this block. Capture a before/after inventory of relative names, kinds,
+sizes, and nanosecond modification times. Do not process artifacts merely to
+prove the backend API; reuse existing database history for estimate evidence.
 
-**Dependency:** Building block 2 reviewed and accepted
+Require unchanged inventory, stable known recording IDs for unchanged paths,
+and no jobs created by scanning.
+
+### Completion evidence
+
+Report migration version, schema/table/index changes, API contracts, query
+measurements, all tests, manual states, real-scan inventory result, assumptions,
+limitations, and Git status. Leave all work uncommitted for review.
+
+#### Recorded Building block 1 evidence — 2026-08-04
+
+- Additive migration `0005_v1_operations.sql` preserves V0 rows and IDs,
+  backfills present generation-zero rows, creates three conservative
+  rescan-required targets per legacy recording, and adds catalog state,
+  preparation targets, estimate fields, the global-running constraint, and
+  focused indexes.
+- `/api/v1` now exposes saved catalog, explicit rescan, recording detail,
+  Prepare selected, processing overview, queued/failed/history pages, and
+  retry-current-identity contracts. V0 routes remain intact.
+- The accumulated routine/API/ROS run passed 262 tests; the disposable
+  PostgreSQL run passed 29 tests; 14 dependency-free browser tests and both
+  browser syntax checks passed.
+- At the configured maximum of 5,000 synthetic recordings, the catalog query
+  and serialization path returned 15,000 output facts in 471 ms and a
+  2,652,445-byte response. Processing queries completed in 32 ms on the warm
+  repeated run (398 ms on the first measured run).
+- `EXPLAIN ANALYZE` used `jobs_succeeded_history`,
+  `jobs_actionable_failure`, and `preparation_targets_current_identity`; the
+  measured executions were 0.059 ms, 0.301 ms, and 0.029 ms respectively.
+- Nested synthetic operational acceptance covered saved startup, folders,
+  mixed ready/failed/new/unavailable selection, FIFO positions, offline and
+  active worker views, elapsed/available/exceeded estimate states, retry,
+  incomplete-scan retention, active-job responsiveness, and restart
+  persistence.
+- The single approved real V1 rescan found six recordings: five readable and
+  the known damaged `2025_11_04_plain_figure8_spotlight_0.db3`. Before/after
+  relative-name/kind/size/nanosecond-mtime inventories matched exactly. The
+  disposable database contained 6 recordings, 18 targets, 0 jobs, and 0
+  artifacts afterward.
+- No frontend-reference file, processor format, timing rule, deployment, Git
+  commit, or remote was changed by this block.
+
+### Stop conditions
+
+Stop for direction if implementation requires changing a processor format,
+source time model, artifact identity rule, adding another worker, deleting
+catalog history, following source symlinks, or weakening source immutability.
+
+## 5. Building block 2 — Reference frontend integration
+
+**Status:** Implemented, verified, and accepted on 2026-08-04
+
+**Dependency:** Building block 1 reviewed and accepted on 2026-08-04
 
 ### Goal
 
-Add the known AVI/CSV pair and make both cameras follow one honest bag-relative
-timeline.
+Make the served application visually match the user-authored `archive/`
+frontend while replacing every mock recording, folder, job, media, telemetry,
+timer, and interaction with the accepted backend contracts.
+
+### Boundary
+
+This is a frontend integration block. The visual reference is stable. Backend
+changes are limited to corrections required to satisfy the already accepted V1
+API; any new product capability returns to roadmap review.
 
 ### Included
 
-- Resolve AVI/CSV components catalogued in block 1.
-- Validate timestamp column/parsing/order, AVI decoding/frame count, and one CSV
-  timestamp per decoded frame.
-- Convert CSV Unix timestamps to bag-relative integer nanoseconds.
-- Generate browser media whose timing follows CSV elapsed time, not AVI rate.
-- Reuse block 2's worker, cache, temporary output, and publication behavior.
-- Store only required provenance, start/end, coverage, and warnings.
-- Display both panes; one transport controls play, pause, and seek.
-- Correct observable cumulative drift against the global clock.
-- Show an explicit outside-coverage player state.
-- Preserve healthy AVI/CSV facts for the damaged case while synchronized media
-  remains unavailable when its bag origin is untrustworthy.
+#### Reference preservation
+
+- Inventory the reference DOM, CSS, assets, interactions, breakpoints, and
+  accessibility behavior before editing served files.
+- Keep `archive/` unchanged as comparison material.
+- Port its top bar, rail, Recordings view, folder panel, cards, table,
+  Processing view, dialogs, metadata panel, camera grid, sensor selector,
+  telemetry graph, and responsive behavior.
+- Use supplied local visual assets only where they remain truthful interface
+  decoration; never show mock preview imagery as real recording output.
+
+#### Recordings integration
+
+- Load `/api/v1/catalog` on startup without rescanning.
+- Build the real folder tree and counts.
+- Render real summaries, rows, health, aggregate state, and output tooltips.
+- Preserve search, filters, sort, pagination, selection, folder collapse, empty
+  states, and retained-table rescan failure.
+- Send one bulk prepare request and render each outcome.
+- Navigate with refreshable numeric recording URLs.
+
+#### Processing integration
+
+- Render backend current work, queue, failures, and history.
+- Implement manual and live refresh, hidden-page throttling, and stale-response
+  protection.
+- Tick elapsed display locally between authoritative responses.
+- Display only backend estimate facts; delete mock elapsed and simulated job
+  mutations.
+- Wire failure details, retry, and Open Recording.
+- Show worker-offline/queue-paused state without rewriting job facts.
+
+#### Analyzer integration
+
+- Render real metadata, components, and analysis outputs.
+- Attach real identity-bound front and top-down media.
+- Load and validate the real six-channel IMU bundle.
+- Preserve the accepted global clock, coverage, drift correction, graph seek,
+  cursor, selection, null gaps, duplicate lookup, and consumer isolation.
+- Remove ordinary per-pane Generate actions.
+- Provide a clear route to Recordings or Processing for incomplete preparation.
+
+#### Quality
+
+- Preserve safe DOM construction, CSP, security headers, keyboard access,
+  visible focus, status text, live/busy semantics, reduced motion, and current
+  responsive breakpoints.
+- Remove all mock arrays, static counts, fake history, fake paths, fake dates,
+  simulated rescan, simulated retry, and automatic mock timers from the served
+  runtime.
+- Keep dependency-free browser delivery unless a separately reviewed need is
+  demonstrated.
+
+### Expected implementation areas
+
+- `src/rosbag_analyser/web/index.html`
+- `src/rosbag_analyser/web/styles.css`
+- `src/rosbag_analyser/web/app.js`
+- `src/rosbag_analyser/web/imu_graph.js` only where integration requires it
+- packaged local assets derived from `archive/assets/`
+- static delivery and API package tests
+- dependency-free JavaScript unit/runtime tests
+- browser visual and interaction acceptance fixtures
 
 ### Excluded
 
-- Telemetry; manual/CV alignment; extra cameras; arbitrary pairing UI; live
-  streaming; frame export; playback-rate controls; sync dashboards.
-- New job states, retries, leases, or distributed coordination.
+- Redesigning, simplifying, or restyling the user-authored frontend.
+- Editing `archive/` as the served implementation.
+- A frontend framework, npm runtime, external CDN, analytics, icon library,
+  chart library, or remote font.
+- Separate per-output generation controls.
+- Browser access to source paths or generated filesystem paths.
+- A changed clock, drift threshold, coverage rule, or processor format.
+- Job cancellation, priority, reordering, or multiple workers.
+- NAS service/deployment configuration.
 
-### Visible acceptance
+### Implementation sequence
 
-- The short case plays, pauses, and seeks both cameras at matching bag time.
-- Top-down playback visibly follows CSV timing and honest coverage.
-- Reload reuses both artifacts.
-- The longer case sustains playback and seeks near start, middle, and end without
-  accumulating visible offset.
-- The damaged case shows companions but synchronized media is unavailable.
+1. Capture reference screenshots and DOM behavior at every accepted viewport.
+2. Map every mock field/action to a V1 API fact or mark it as static decoration.
+3. Establish the served shell and routing without data behavior.
+4. Implement catalog/folder rendering and retained rescan behavior.
+5. Implement selection and bulk preparation outcomes.
+6. Implement Processing tabs, polling, retry, and history.
+7. Integrate recording detail and ready artifacts.
+8. Reconnect the accepted shared timeline and IMU graph.
+9. Remove mock runtime and prove no mock content can appear.
+10. Run syntax, unit, runtime, API, and accumulated backend tests.
+11. Perform visual, keyboard, responsive, reduced-motion, failure, and real-data
+    acceptance.
+12. Record evidence and stop for user review.
 
-### Minimum tests
+### Minimum automated tests
 
-- Pure tests cover CSV precision/order, duplicate time, frame-count mismatch,
-  bag-relative conversion, coverage, and global-to-media mapping.
-- One tiny AVI/CSV fixture covers successful conversion and one invalid case.
-- Short real checks cover multiple seeks and sustained playback.
-- One opt-in longer check covers drift/coverage; damaged returns unavailable.
-- Before/after inventories prove AVI/CSV sources unchanged.
+- Static asset routes, packaging, CSP, security headers, and no external assets.
+- Saved catalog load and no implicit rescan.
+- Folder construction, search, filter, sort, pagination, counts, collapse, and
+  empty results.
+- Readable/damaged and all aggregate analysis states with truthful tooltips.
+- Selection across filters/pages and bounded Prepare selected behavior.
+- Partial preparation response, unavailable recording, network failure,
+  duplicate click, and retry.
+- Current job, queue positions, elapsed tick/resync, estimate variants,
+  worker-offline state, failures, detail dialog, history pagination, manual
+  refresh, live toggle, hidden-page pause, and stale response rejection.
+- Numeric route navigation, refresh, back, and forward.
+- Front/top-down media load, range-compatible URLs, media error recovery, and
+  isolated consumer failure.
+- Six IMU options, labels, units, extrema, null gaps, duplicate-last lookup,
+  graph seeking, keyboard seeking, playback reanchor, and persistent cursor.
+- Global start/end, play, pause, explicit seek, 100-millisecond correction,
+  measured coverage, and outside-coverage behavior.
+- Safe text rendering for hostile folder, recording, diagnostic, and search
+  strings.
+- Keyboard focus, skip link, live regions, status independent of color, 200%
+  zoom, reduced motion, and narrow layout without document overflow.
+- A guard asserts served code contains no mock recording/job datasets or mock
+  state-advancing interval.
 
-### Implementation evidence — automated verification complete
+### Visual acceptance matrix
 
-- On 2026-07-22, the routine non-PostgreSQL, non-ROS, non-real-archive suite
-  passed with 177 tests and 13 environment-specific deselections.
-- The isolated generated ROS-message regression test passed in the sourced ROS
-  2 Humble environment.
-- All 11 PostgreSQL tests passed against a disposable PostgreSQL 16 database,
-  including the four-table migration and isolated front/top-down processing
-  identities. The browser JavaScript passed a Node.js syntax check.
-- Synthetic top-down coverage includes exact nanosecond CSV parsing, irregular
-  CSV-driven MP4 PTS, full encoded-packet PTS comparison, pre-decode dimension
-  limits, frame-count and ordering failures, source identity/inventory
-  preservation, cache and unavailable behavior, worker dispatch, contained
-  publication, range delivery, and the served two-pane/one-clock browser
-  contract. The browser contract also covers invalidating interrupted media
-  play attempts without stopping the shared clock.
-- [README.md](README.md) contains the step-by-step opt-in Building block 3
-  browser, longer-recording, performance, and before/after inventory procedure.
-- Manual browser and real-archive checks were not required for the user's
-  acceptance and remain optional future revalidation requiring separate opt-in
-  approval. The real archive was not accessed during implementation or
-  automated verification.
+Compare reference and served application at minimum:
 
-## 8. Building block 4 — Synchronized IMU graph
+- 1600×900;
+- 1366×768;
+- 1024×768;
+- both sides of the existing 901/900-pixel boundary;
+- 600×800;
+- 320×800;
+- 200%-zoom-equivalent layout; and
+- reduced-motion mode.
 
-**Status:** Completed and user-accepted on 2026-07-22
+Small text substitutions caused by real data are expected. Layout, hierarchy,
+density, spacing, colors, controls, and flow should remain recognizably the
+authored design.
 
-**Dependency:** Building block 3 reviewed and accepted
+### Real-data acceptance
+
+With explicit source opt-in and an inventory guard, exercise:
+
+- one short readable recording with all three outputs;
+- one longer readable recording, preferably reusing accepted artifacts;
+- the known damaged recording; and
+- a mixed multi-recording preparation selection.
+
+Confirm videos, graph, folders, statuses, Processing activity, reload/restart
+reuse, and unchanged source inventory. Generated output must remain under the
+derived root.
+
+### Completion evidence
+
+Provide before/reference and after/served screenshots, viewport results,
+keyboard/accessibility observations, network/API traces at contract level,
+tests, real-data outcomes, source inventory, removed mock behavior, limitations,
+and Git status. Leave changes uncommitted for user review.
+
+#### Recorded Building block 2 evidence — 2026-08-04
+
+- The served dependency-free frontend ports the unchanged `archive/` hierarchy,
+  styling, density, responsive behavior, dialogs, and analyzer layout into
+  `/`, `/processing`, and `/recordings/{id}`. Mock recordings, previews, jobs,
+  timers, and fabricated progress are absent from the served package.
+- Startup reads the saved catalog without scanning. Recordings, physical-folder
+  navigation, filtering, sorting, pagination, selection, one bounded Prepare
+  selected request, processing overview/history/retry, and identity-bound
+  Analyzer media and IMU are wired to the accepted API contracts.
+- One browser-owned recording clock retains measured coverage, six IMU axes,
+  per-series gaps, duplicate-last lookup, and the accepted 100-millisecond
+  camera correction. Independent unavailable media remain visibly unavailable.
+- The accumulated Python suite passed 260 tests with 25 environment-dependent
+  skips. Sixteen dependency-free browser/runtime tests passed, including stale
+  request handling, accessibility interactions, queue truth, and synchronized
+  Analyzer behavior. A 76,000-sample IMU payload parsed in 83.260 ms and its
+  render transforms completed in 32.981 ms in the measured Node runtime.
+- Reference and served screenshots covered 1,600, 1,366, 1,024, 901, 900, 600,
+  and exact 320-pixel widths plus a zoom-equivalent viewport. Exact 320-pixel
+  Recordings and Analyzer measurements had no document-level overflow. Empty,
+  error, collapsed-folder, queue, failure, history, dialog, offline, reduced-
+  motion, ready, and incomplete states were also inspected.
+- The approved real scan completed in 215 ms and found six recordings: five
+  readable and one known damaged. A mixed ready/damaged selection reused three
+  outputs and truthfully reported three unavailable outputs without creating
+  work. The real archive is flat, so nested folder navigation was exercised
+  with synthetic data.
+- One short readable recording completed all three jobs through the real UI:
+  front preview in 427,611 ms, top-down preview in 6,716 ms, and IMU series in
+  14,638 ms. A longer ready recording reused existing artifacts. Both showed
+  real synchronized cameras and six-axis IMU; the damaged recording remained
+  unavailable. Restart preserved the catalog, eight succeeded-history entries,
+  and ready reuse with no new jobs.
+- The source before/after inventories matched exactly at 30 entries and SHA-256
+  `cee38c757e4bd1cd833dac4d8127e1d1dc5a4bbcd70f5de530900f3a3bac6b8c`.
+  Derived storage added only the three validated artifact bundles, with no
+  removals or temporary/partial entries. No deployment or Building block 3 work
+  was performed.
+- The in-app browser bridge could not address this WSL workspace, so visual and
+  interaction acceptance used the already installed local Chrome in headless
+  CDP mode. No browser package, framework, or other runtime dependency was
+  installed.
+
+#### Approved smooth front-camera corrective slice — 2026-08-04
+
+- The accepted V0 read-only audit had already isolated reported front-preview
+  stalls to irregular ROS database record gaps of approximately 0.245–0.422
+  seconds while camera image-header cadence remained near 0.05 seconds. Source
+  and output frame counts matched, so this correction does not invent or
+  interpolate frames.
+- `front-preview-v2` retains the first and last retained record timestamps as
+  measured coverage and affinely maps strictly ordered image-header timestamps
+  between those endpoints. Invalid, unordered, degenerate, out-of-span, or
+  media-timescale-colliding header timing fails before publication.
+- The front timing policy participates in planner and cache identity. The
+  schema-version-2 front manifest records both spans, affine scale, maximum
+  presentation gap, provenance, and an exact media-PTS digest; validation checks
+  that digest before publication. No migration, artifact kind, dependency, or
+  top-down/IMU identity changed.
+- Browser correction retains the accepted 100-millisecond trigger but keeps one
+  seek in flight, retries only after a bounded 1.5-second timeout, suppresses
+  automatic correction while buffering, and performs one catch-up on readiness.
+- The full Python suite passed 264 tests with 25 environment-dependent skips;
+  the focused ROS image serialization test also passed in the sourced Humble
+  runtime. Frontend syntax plus 18 dependency-free runtime/IMU tests passed,
+  including slow-seek and buffering simulations. No real source archive,
+  deployment, or Building block 3 work was performed; real-output acceptance
+  remains a separate explicit opt-in.
+
+#### Approved moved-path catalog corrective slice — 2026-08-05
+
+- Read-only catalog diagnosis found six current physical recordings but 15
+  persisted rows: nine retained paths from earlier complete generations were
+  being returned as ordinary recordings and mapped from precise `missing` to
+  presentation `damaged`.
+- Complete-scan reconciliation still retains missing rows, components, targets,
+  jobs, artifacts, and numeric history safely. Ordinary V0/V1 catalog lists,
+  folder nodes, summaries, and persisted successful-scan health counts now use
+  only `source_present = true`; explicit internal history queries can still
+  retrieve the retained rows.
+- A focused PostgreSQL/API test moves one synthetic recording, proves the new
+  current path is the only catalog item and folder descendant, verifies
+  current-only counts, and confirms the old row and queued job remain intact.
+  Reappearance at the same path continues to regain its prior ID.
+- The routine Python suite passed 264 tests with 26 environment-dependent skips;
+  all 30 disposable PostgreSQL tests and all 20 dependency-free browser/runtime
+  tests passed. The 5,000-recording catalog measurement completed in 417 ms with
+  the unchanged 2,652,445-byte response bound.
+- This correction adds no migration, API schema, dependency, artifact
+  reassignment, deployment work, or Building block 3 work. Activating the
+  correction required restarting the previously running API process. A guarded
+  live rescan then advanced to generation 28 with six recordings, five readable,
+  one genuinely damaged, and zero missing; all 32 source inventory entries and
+  all processing counts remained unchanged.
+- This first correction did not reassign artifacts; the follow-on correction
+  below records the separately approved identity-contract decision.
+
+#### Approved move-aware artifact-reuse corrective slice — 2026-08-05
+
+- The scan transaction now separates current physical location from stable
+  private cache anchors. A path-independent metadata/component fingerprint is
+  used only to identify a one-to-one move; processor cache hashes, versions,
+  source-file identities, formats, and timing rules are unchanged.
+- A normal move updates the existing recording path in place. A guarded legacy
+  recovery reassigns database job/artifact ownership from exactly one
+  history-owning missing row to an otherwise history-free current row and copies
+  its cache anchors. Neither operation reads, copies, renames, or rewrites a
+  derived artifact.
+- Multiple identical incoming candidates, multiple history owners, and weak or
+  incomplete fingerprints are not merged automatically. Changed device/inode,
+  size, mtime, processor, topic, profile, or timing facts remain cache misses.
+- Additive migration `0006_move_reconciliation.sql` backfills stable anchors and
+  adds the bounded fingerprint lookup index without deleting or renumbering
+  existing domain rows.
+- The routine Python suite passed 265 tests with 29 environment-dependent skips;
+  all 33 disposable PostgreSQL tests, all 20 dependency-free browser/runtime
+  tests, both frontend syntax checks, and both sourced ROS tests passed. The
+  5,000-recording catalog remained bounded at 463 ms and 2,652,445 response
+  bytes; Processing queries completed in 31 ms.
+- Live migration and generation-29 rescan retained six current recordings (five
+  readable and one genuinely damaged), all 12 succeeded jobs, and all 12
+  artifact rows. Source inventories matched exactly at 32 entries and SHA-256
+  `c9f0ea58c7f01ae0aaddc74a1e39f38044d41d7db1d38d25bb5736aea66893f3`.
+- The existing split histories were reconciled from cache-anchor IDs 3, 4, and 6
+  to current recording IDs 12, 13, and 15. Figure 8 regained all three current
+  outputs. The other two regained current top-down and IMU output; their sole
+  front previews are correctly retained as non-current `front-preview-v1`
+  history after the separately approved `front-preview-v2` timing correction.
+- Eleven of 12 referenced artifact files remain present at their exact database
+  sizes. The sole absent file is the already-stale Figure 8
+  `front-preview-v1`; its current `front-preview-v2` replacement is intact.
+  Identity-bound one-byte range requests for Figure 8 front, top-down, and IMU
+  each returned HTTP 206. The API and worker restarted healthy with zero queued,
+  running, or failed work, and no processing was requested.
+
+### Stop conditions
+
+Stop if exact integration needs a new API capability, processor, artifact kind,
+timing rule, external runtime dependency, or material visual redesign not
+already approved in Building block 1 or the V1 documents.
+
+## 6. Building block 3 — TrueNAS VM deployment and trial commissioning
+
+**Status:** Invoked on 2026-08-16; repository readiness implemented, locally
+verified, and accepted as part of the 2026-08-23 pre-overhaul baseline; external
+Gate 0 and live phases pending and paused during Prompt 2A
+
+**Dependency:** Accepted backend and frontend, plus the administrator handoff in
+Gate 0 below
 
 ### Goal
 
-Add one configured IMU angular-velocity series whose graph cursor follows the
-same timeline as both cameras.
+Turn the accepted V1 application into a repeatable, secure, supportable service
+on one administrator-provisioned Ubuntu VM. A limited engineer group must be
+able to use it through the approved access boundary without a developer session,
+while the selected NAS source remains read-only and all application writes stay
+on separate derived and database storage.
+
+This is the final V1 delivery block. It includes repository deployment
+preparation, first installation, data/schema migration, operational proof, and
+trial handoff. It does not claim high availability or production service levels.
+
+### Approval and ownership boundary
+
+Invoking Prompt 3 authorizes the repository implementation in this block and,
+after Gate 0 is satisfied, a reviewed installation inside the exact approved VM.
+It does not authorize Codex or the application project to create or change
+TrueNAS datasets, zvols, snapshots, shares, ACLs, host networking, firewall
+rules, the VM definition, the TrueNAS version, or any unrelated service.
+
+The TrueNAS administrator owns those appliance changes and the base Ubuntu
+installation. Before any live VM mutation, the implementer must show the exact
+target, commands, files, services, expected interruption, backup, and rollback
+to the user. Missing live access does not block repository work: finish and test
+the deployment assets, then stop at the external handoff gate.
+
+No exact server address, export path, credential, certificate, private mount
+path, or backup destination belongs in Git.
+
+### Sanitized target facts that shape this block
+
+- The intended host was observed on a TrueNAS 26 beta release. Official TrueNAS
+  guidance classifies early releases as testing/feedback software, so the
+  administrator must either move the service to an approved general-use host
+  through their own change process or explicitly accept a non-critical,
+  reversible trial on the beta host.
+- The existing host bridge has globally routable IPv4 and IPv6. The word
+  internal is therefore not a security control. The administrator must prove
+  the actual VPN, firewall, allowlist, and IPv6 policy before an engineer-facing
+  listener is enabled.
+- Existing NFS exports include overlapping parent/child locations and the
+  candidate source area has broad filesystem permissions. The exact fixed
+  recording root must use a dedicated, explicitly server-side read-only export;
+  a client ro mount alone is insufficient.
+- The accepted application runtime remains Ubuntu 22.04 LTS, Python 3.10, and
+  ROS 2 Humble because Jammy is Humble's Tier 1 binary platform. Ubuntu 22.04
+  standard security maintenance and ROS 2 Humble support both end in May 2027.
+  A supported-platform migration is a separate future block, not an in-place
+  Humble-on-newer-Ubuntu experiment.
+- The operator, not this repository, chooses final VM storage placement,
+  derived capacity, addresses, certificates, identity/access method, backup
+  target, and maintenance windows.
+
+### Gate 0 — administrator-provisioned foundation
+
+Before a live install, obtain a sanitized, approved handoff that confirms:
+
+1. A fully patched Ubuntu Server 22.04 LTS amd64 VM exists with UEFI, Secure
+   Boot and virtual TPM policy decided by the administrator, UTC, time sync,
+   SSH-key administration, remote root login disabled, and no desktop.
+2. The deployment baseline is approximately one virtual socket, six cores, one
+   thread per core, host CPU passthrough, 16 GiB fixed RAM, and a 100 GiB OS
+   disk. Any variance is recorded rather than silently assumed.
+3. The VM has a unique approved address, uses the approved existing bridge or
+   equivalent, starts automatically with the NAS, and has an orderly shutdown
+   timeout compatible with a long serial worker stop.
+4. Installation media is detached, console/VNC is disabled after installation
+   or loopback-only through an approved administrative tunnel, and a clean-base
+   snapshot or equivalent rollback point exists.
+5. The exact fixed source folder is exported independently by NFS with the
+   server Read-Only control enabled, access restricted to the VM, remote root
+   mapped to an unprivileged identity, and parent/child export interactions
+   reviewed. Both IPv4 and IPv6 access paths are accounted for.
+6. A distinct derived-data virtual disk/filesystem is attached and sized with a
+   documented low-space threshold and growth policy. Temporary and final
+   artifact locations share that filesystem so atomic publication remains
+   possible.
+7. PostgreSQL data, deployment configuration, and backup destinations have
+   owners, capacity, retention, and restore expectations, and the protected
+   off-VM destination is approved and reachable. The first verified dump and
+   disposable restore occur after database initialization and before trial
+   admission.
+8. The engineer access boundary, TLS certificate source, authentication method,
+   named trial group, access grant/revocation owner, and firewall rules are
+   approved. Raw API, PostgreSQL, NFS, SSH, and console access are not granted
+   to ordinary trial users. Both upstream controls and a default-deny guest
+   firewall (or an explicitly approved equivalent) cover IPv4 and IPv6.
+9. The administrator records the TrueNAS beta risk decision, appliance
+   configuration backup/recovery path, maintenance owner, and escalation route.
+10. The project owner accepts a platform-lifecycle checkpoint no later than
+    2027-01-31 and no continued service beyond Humble support without an
+    approved migration to a supported Ubuntu/ROS pairing.
+
+The handoff may contain sensitive values outside Git. The repository records
+only placeholders, validation rules, and sanitized evidence.
 
 ### Included
 
-- Configure one `sensor_msgs/msg/Imu` topic and component, initially
-  `angular_velocity.z`.
-- Use `IMU angular_velocity.z (rad/s)` until rover coordinates justify yaw rate.
-- Extract values using ROS record timestamps and bag-relative integer nanoseconds.
-- Reject or clearly represent non-finite values.
-- Measure the browser payload and rendering; if reduction is needed, use a
-  bounded method preserving order, coverage bounds, and important extrema.
-- Store the derived series outside PostgreSQL and reuse the existing worker/cache.
-- Render one graph with label, units, provenance, coverage, and current value.
-- Drive its cursor from global play, pause, and seek.
-- Return unavailable without a job when topic/type/time prerequisites are absent.
+#### Deployment package and configuration
+
+- Build a versioned application release from a reviewed source identity with a
+  deployment-only verified dependency set, recorded OS/runtime versions, and
+  an immutable release directory. Do not deploy an unidentified dirty checkout
+  or infer permission to commit it.
+- Keep the existing ./dev workflow unchanged. Deployment uses dedicated,
+  non-login service identities and root-owned configuration outside the
+  repository checkout.
+- Provide example configuration with placeholders, strict validation, safe
+  file-mode checks, and no secret echo.
+- Add deployment preflight that verifies the exact NFS mount, filesystem type,
+  client read-only options, source containment/readability, separate writable
+  derived root, atomic-rename assumptions, executables, database/schema
+  compatibility, and free-space threshold without scanning or write-probing the
+  source.
+- Add separate liveness and readiness endpoints. Readiness is truthful and
+  sanitized; it performs no rescan, processing, job creation, or full source
+  read.
+- Reject new preparation safely when derived space is below the configured
+  threshold while continuing to serve valid ready artifacts.
+
+#### Service lifecycle
+
+- One loopback PostgreSQL instance, one loopback API, exactly one serial worker,
+  and one engineer-facing Nginx or approved identity-proxy path.
+- Version-controlled systemd templates for controlled migration, API, worker,
+  and an application target.
+- Ordering on network, database, and exact mounts; failure if a required mount
+  is missing or replaced by an ordinary local directory.
+- Enable the application target at boot only after live acceptance. Use bounded
+  restart behavior, practical systemd hardening, journald, a deliberate long
+  worker stop timeout, and documented drain/interruption recovery.
+- Never run migrations, rescans, or preparation implicitly at process or VM
+  startup.
+
+#### Network and access
+
+- Uvicorn and PostgreSQL listen only on loopback. Nginx listens only where the
+  approved firewall/VPN boundary and both IP families have been proven.
+- Configure a root-managed default-deny guest firewall for both IP families:
+  SSH only from the administration path and HTTPS only from approved VPN/trial
+  networks. Apply it through an exact reviewed rule set with a tested recovery
+  path so deployment cannot lock out the administrator.
+- Same-origin TLS delivery with per-engineer authentication through the
+  organization's identity layer, or trial-only individual proxy credentials
+  over TLS if no such layer exists.
+- Preserve application validation for all artifact and byte-range delivery;
+  Nginx never serves the derived directory directly.
+- Restrict unexpected hosts, methods, body sizes, cross-origin writes, and
+  interactive API documentation. Preserve GET, HEAD, Range, If-Range, ETag, and
+  206 behavior through the proxy.
+- No public DNS, public forwarding, or direct trial-user access to ports 8000 or
+  5432.
+
+#### Release, migration, backup, and rollback
+
+- Stage each release beside the active release, validate it, close the write
+  entrance, back up PostgreSQL, drain the worker, stop services, migrate exactly
+  once, atomically switch the active pointer, restart, and smoke-test before
+  admitting traffic.
+- Default a new NAS trial to a fresh database followed by explicit rescan.
+  Transfer development history only through a separately reviewed coherent
+  database-plus-derived-state plan whose source identities still match.
+- Refuse incompatible schema versions. Classify rollback per release as either
+  tested code-compatible rollback or database restore; never improvise a down
+  migration during an incident.
+- Verify each custom-format database dump and restore one into a disposable
+  database before trial acceptance.
+- Choose and test a coherent derived-artifact recovery policy: either restore a
+  quiesced volume snapshot with the database or deliberately invalidate and
+  regenerate files absent after a metadata-only restore.
+- Never back up, repair, reindex, snapshot through the application, or otherwise
+  mutate the source recordings.
+
+#### Operations and handoff
+
+- Write an operator runbook for install, configure, preflight, migrate, boot,
+  start/stop/status, logs, explicit rescan, queue recovery, capacity, backup,
+  restore, upgrade, rollback, access grant/revocation, certificate renewal,
+  patching, and sanitized support collection.
+- Write a concise engineer guide for the Recordings → Prepare selected →
+  Processing → Analyzer workflow and known trial limitations.
+- Record release identity, service state, schema version, safe job facts,
+  durations, output sizes, backup results, and operational errors without
+  secrets, source payloads, absolute source paths, or credentials.
+- Define daily/weekly/monthly ownership, patch cadence, capacity review,
+  certificate/credential expiry checks, incident contacts, and the January 2027
+  platform decision.
+- Provide a clean uninstall/retirement plan that stops the application and
+  preserves data for an operator-approved retention decision; it never deletes
+  source or derived data automatically.
+
+### Expected repository areas
+
+~~~text
+deploy/
+  README.md
+  environment.example
+  systemd/
+  nginx/
+  scripts/
+docs/
+  NAS_TRIAL_RUNBOOK.md
+  ENGINEER_TRIAL_GUIDE.md
+~~~
+
+Exact names can follow repository conventions. Deployment scripts must be
+non-interactive where practical, validate every target, fail closed, avoid shell
+injection and secret output, and be testable with temporary roots and
+disposable databases.
 
 ### Excluded
 
-- Arbitrary signals, expressions, multiple graphs, dashboards, custom messages,
-  click-to-seek, graph-owned time, embedded PlotJuggler, LiDAR, GPS, and maps.
-- New worker coordination or a general telemetry platform.
+- TrueNAS administration, base VM creation, storage/share/ACL/network changes,
+  appliance update, and production certificate or credential issuance.
+- Public service, high availability, containers, orchestration, Redis, brokers,
+  multiple workers, automatic retry, cancellation, priority, quotas, or
+  automatic source watching.
+- Application-managed user accounts or roles.
+- Frontend redesign, new telemetry, new processors, new artifact kinds, or
+  changes to accepted timing and source-safety contracts.
+- Automated artifact deletion or retention.
+- An Ubuntu or ROS distribution migration. That requires a separately approved
+  compatibility block and a new VM or equally reversible target.
+- Commit, push, release publication, or destructive live drills.
 
-### Visible acceptance
+### Implementation sequence
 
-- The short case shows a correctly labelled graph whose value/cursor follows
-  play and seek; reload reuses the series.
-- The longer case loads and scrubs responsively.
-- The damaged case reports unavailable without creating a job.
+1. Re-audit the accepted repository, dependency lock, current configuration,
+   migrations, API/worker lifecycle, tests, and uncommitted state.
+2. Convert Gate 0 into a sanitized operator handoff checklist and deployment
+   inventory template. Stop live work until every required owner/value is known.
+3. Freeze the release, filesystem, service, access, backup, lifecycle, and
+   rollback contracts and write their tests first.
+4. Implement configuration/preflight, readiness/liveness, and low-space
+   behavior without changing the accepted developer workflow.
+5. Implement release packaging, systemd, proxy, migration, backup/restore,
+   smoke-check, and support-bundle assets.
+6. Run static and automated tests plus a complete disposable deployment
+   lifecycle locally.
+7. Review the exact live change set, backup, interruption, and rollback with the
+   user. The administrator completes any remaining TrueNAS/base-VM work.
+8. Install the candidate into the approved clean VM without admitting users.
+9. Validate network, derived storage, database migration, and local smoke tests
+   with a disposable synthetic source. Keep application services disabled and
+   do not traverse the authoritative source.
+10. Approve the real-data annex, establish/inspect only the exact mount identity,
+    and capture the before manifest before full source preflight or application
+    access. Then run bounded live-matrix items 1–12 below.
+11. After the pre-boot checks pass, enable rosbag-analyser.target in the guest,
+    verify the administrator-provided TrueNAS VM-autostart setting, reboot the
+    guest VM, complete live-matrix item 13, and then capture the final inventory
+    and containment proof in item 14. Do not reboot the TrueNAS host; observe
+    host autostart at its next separately approved maintenance reboot.
+12. Record evidence, train the operator, and stop for user approval before
+    granting access to the engineer trial group.
 
-### Minimum tests
+### Minimum automated and disposable tests
 
-- Generated IMU messages cover selection, field, units, record-time mapping,
-  non-finite values, and missing prerequisites.
-- If reduction is implemented, tests preserve ordered time, bounds, a known
-  peak, and a trough.
-- Timeline tests prove the graph uses the global clock.
-- Short real values/timestamps are compared with independent ROS inspection.
-- One opt-in longer rendering check and source inventory complete acceptance.
+- Secret/private-path scan, shell syntax/lint where available, and static
+  validation of systemd and Nginx templates.
+- Configuration bounds, file modes, missing values, and redacted failures.
+- Source/derived missing, overlap, symlink, wrong mount type/options,
+  permissions, renamed mount, ordinary-directory fallback, atomic rename, and
+  low-space cases.
+- Liveness/readiness truth table proving no scan, job, artifact, or source
+  mutation.
+- API/worker boot, restart, graceful stop, forced interruption, advisory-lock,
+  and exactly-one-worker behavior.
+- Release staging and atomic switch, single migration, incompatible-schema
+  refusal, verified dump, disposable restore, and both rollback classifications.
+- Proxy TLS/access assumptions, host/method/body limits, trusted headers, and
+  application-mediated GET/HEAD/Range/If-Range/ETag behavior.
+- Guest-firewall rule validation and allowed/denied IPv4 and IPv6 reachability,
+  including a tested administrative recovery path.
+- Database/source/derived outage recovery using disposable targets only.
+- Persistence across service and VM-style restarts, including queued and
+  interrupted work.
+- The complete accepted Python, PostgreSQL, ROS-message, JavaScript/browser, and
+  local-launcher regressions.
 
-### Implementation evidence — 2026-07-22
+### Live acceptance and real-data boundary
 
-- The routine non-PostgreSQL, non-ROS, non-real-archive suite passed with 207
-  tests and 14 environment-specific deselections. Focused processor, artifact,
-  service, worker, and API suites cover topic/type prerequisites, immutable
-  source access, bounded row streaming, record-time mapping, non-finite gaps,
-  duplicates, cache reuse/replacement, contained atomic publication, sanitized
-  failures, one-worker dispatch, range delivery, and stale artifact URLs.
-- Two generated-message ROS tests passed in the sourced ROS 2 Humble
-  environment, including real `sensor_msgs/msg/Imu` CDR deserialization and
-  proof that record time rather than header time drives `angular_velocity.z`.
-- JavaScript syntax and seven dependency-free browser tests passed in Node.js:
-  four pure timeline/series contracts and three runtime tests that execute the
-  shipped browser script. The runtime coverage proves play, pause, animation
-  ticks, and slider seeks drive both camera players and the IMU from one clock;
-  narrow Canvas coordinates and isolated finite samples render correctly; and
-  a render-time failure leaves an attached diagnostic and retry action. A
-  reproducible 76,000-sample profile measured a 2.76 MB JSON payload, 50 ms
-  parse/validation, 40 ms trace transformation, and 5.1 ms for 10,000
-  binary-search cursor lookups. Headless Edge measured a 41 ms parse and 6 ms
-  native Canvas draw, so V0 records `reduction: none` and preserves all samples.
-- The PostgreSQL migration keeps exactly the accepted four tables and adds only
-  the isolated `imu_series` artifact/job kind. All 18 repository integration
-  tests passed against a disposable PostgreSQL 14 database, including the
-  four-table migration and separated front/top-down/IMU processing identities.
-- The shared artifact-store diagnostics now describe generic artifacts rather
-  than calling IMU output a preview, with focused regression coverage.
-- [README.md](README.md) documents configuration, exact signal identity and
-  policies, plus the separately opt-in short/long/damaged browser, independent
-  value comparison, performance, reuse, and source-inventory procedure. The
-  real archive was not accessed during implementation.
+After Gate 0 and the exact live change review, Prompt 3 authorizes read-only
+access only to the administrator-approved fixed recording root. Capture a
+lightweight before inventory of relative name, kind, size, and high-resolution
+modification time before the first application access and an identical after
+inventory after every live-data exercise.
 
-### Acceptance evidence — 2026-07-22
+The bounded live matrix must prove:
 
-- During the explicitly approved final handoff, the application used
-  `/mnt/d/Rosbags`, a separate derived root, and the configured
-  `/kuupkulgur_v1/sensors/imu0/raw_data` standard IMU topic with one API and
-  exactly one serial worker.
-- The opt-in catalog acceptance test and live rescan both found six recordings,
-  five readable bags, and the expected damaged bag. Scanning created no jobs or
-  artifacts, and PostgreSQL retained exactly the accepted four tables.
-- The complete archive contained 24 files totalling 114,464,854,725 bytes. Its
-  before/after names, kinds, sizes, and modification-time inventory digest was
-  unchanged at
-  `edfaf0db862d846684cfa7a8133bcbba6c1142ba9c74092ca2d45e99cfe2c5bf`.
-- The user reviewed and accepted Building block 4. The independent IMU-row
-  comparison and longer-case resource profile were not separately recorded and
-  remain optional future revalidation rather than completed evidence.
+1. A fresh install initializes an empty database and applies the accepted schema
+   through the documented release procedure, or an explicitly approved
+   coherent state-transfer annex proves every imported history/artifact
+   identity.
+2. Only the approved TLS endpoint is reachable by a trial user. Unauthorized
+   access fails; raw API, PostgreSQL, NFS, SSH, and console paths are not
+   reachable by that user over either IPv4 or IPv6.
+3. Server export configuration and client mount evidence both show read-only
+   source access. No write probe is used. Source identity remains stable across
+   remount and reboot; an incompatible identity change is a stop condition.
+4. Service start and service restart load saved state without scanning,
+   preparing, or creating jobs. The final guest-reboot check follows after the
+   application target is enabled.
+5. One explicit bounded rescan of the fixed root completes, creates zero jobs,
+   respects traversal limits, and leaves the source inventory identical.
+6. One selected short healthy recording produces and serves all three artifact
+   kinds. One representative long healthy recording is processed only after
+   recording expected time/capacity and confirming the approved window. If the
+   fixed root contains an already-known approved malformed recording, it
+   remains honestly unavailable without source repair; otherwise synthetic
+   malformed evidence is retained and the live case is recorded not applicable.
+7. Two engineer sessions can browse, prepare a bounded mixed selection, observe
+   exactly one running job and FIFO queue order, and review synchronized output
+   while work continues.
+8. Front/top media range semantics, IMU choices, global clock, correction, seeks,
+   coverage, stale identities, and saved artifacts work through the proxy.
+9. A service restart with queued work preserves the queue. A controlled worker
+   interruption marks only the running job interrupted, removes only its proven
+   temporary workspace, preserves ready output, and succeeds only after explicit
+   retry.
+10. PostgreSQL loss, mount loss, and full-disk behavior are drilled against
+    disposable substitutes: readiness fails safely, existing valid state is not
+    fabricated or deleted, and recovery creates no duplicate jobs.
+11. A verified pre-deploy dump restores into a disposable database and the
+    recorded rollback path works.
+12. API responsiveness, CPU, memory, database load, NAS throughput, processing
+    time, and derived growth are measured as observations, not advertised SLAs.
+13. After rosbag-analyser.target is enabled, a guest VM reboot, optionally with
+    queued work, preserves mount identity, services, proxy, saved state, queue,
+    and zero-implicit-work behavior. TrueNAS VM autostart configuration is
+    verified separately without rebooting the host.
+14. After every check, the final source inventory is exactly unchanged and every
+    application-created file is proven below the approved derived, database,
+    log, backup, or release roots.
 
-## 9. Building block 5 — V0 integration and mentor readiness
+### Repository Phase 1 evidence — 2026-08-16
 
-**Status:** Completed and user-accepted on 2026-07-22
+The invoked repository phase added strict deployment configuration and mount/
+capacity admission, capability-aware health, release/preflight/source-manifest/
+safe-log support, deployment-only dependency and release contracts, systemd/
+Nginx/nftables templates, lifecycle scripts, and the operator/engineer guides.
 
-**Dependency:** Building blocks 1–4 reviewed and accepted
+Local evidence completed:
 
-### Goal
+- 328 default Python tests passed; 32 opt-in deployment, PostgreSQL, ROS, and
+  real-archive cases were skipped by the default run;
+- 55 focused deployment/API tests passed; the environment-gated real Nginx and
+  real-nft checks were skipped in that run. The Nginx check passed separately;
+  the nft check could not obtain netlink administration capability;
+- 34 PostgreSQL 14 tests passed against an explicitly disposable database; the
+  largest synthetic catalog measured 402 ms catalog work, 25 ms processing
+  projection, and a 2,652,445-byte response;
+- a PostgreSQL custom dump passed `pg_restore --list`, restored into a separate
+  disposable database, and passed the exact six-table read-only validator;
+- two ROS 2 Humble message tests and 20 dependency-free browser tests passed;
+- a real disposable Ubuntu Nginx 1.18 TLS proxy test passed authentication,
+  trusted-header stripping, HEAD/Range/If-Range/ETag/206, stale identity,
+  cross-origin POST denial, and docs denial;
+- the CPython 3.10 Ubuntu 22.04 wheelhouse downloaded all exact runtime/build
+  versions, captured licences/source metadata, and passed every checksum;
+- the application wheel built, exposed all five console scripts, and passed
+  `pip check`; shell syntax, Python compilation, template contract checks,
+  release-archive safety, source-manifest, support-bundle, and dirty-release
+  refusal also passed.
 
-Prove the accepted slices work together in a clean mentor demonstration without
-adding another infrastructure subsystem.
+No live VM, NAS, TrueNAS setting, authoritative source, real-data manifest,
+firewall, certificate, service enablement, reboot, or trial-user path was
+accessed. The current worktree is dirty by design, so no immutable release was
+created; that awaits separate commit/clean-source approval. Static systemd and
+firewall contracts passed, but actual guest `systemd-analyze`, `nft --check`,
+network vantage-point, shutdown-budget, and reboot evidence belong after Gate 0.
 
-### Included
+### Completion gate
 
-- Catalog and inspect all six recordings.
-- Run the complete synchronized flow on the selected short healthy case.
-- Run the opt-in longer scale smoke across preview completion, sustained sync,
-  representative seeks, and graph responsiveness.
-- Verify damaged diagnostics and unavailable ROS-dependent actions.
-- Verify completed-artifact reuse after reload, restart, and rescan.
-- Verify repeated actions do not duplicate active jobs or ready artifacts.
-- Verify ordinary catalog/detail traffic remains responsive during processing.
-- Polish only V0's loading, empty, processing, unavailable, ready, and failed UI.
-- Complete setup, configuration, worker, acceptance, limitations, performance,
-  and troubleshooting notes.
-- Perform one final lightweight inventory of the complete archive.
+Building block 3 is complete only when:
 
-### Excluded
+- repository assets and the disposable lifecycle pass review;
+- Gate 0 is signed off by the named administrator and project owner;
+- the live VM, mount, service, proxy, migration, backup/restore, reboot, and
+  bounded real-data evidence are recorded;
+- the administrator provides evidence that TrueNAS VM autostart is configured,
+  rosbag-analyser.target is enabled, and a guest VM reboot proves application
+  startup; NAS-host reboot observation is assigned to the next separately
+  approved host maintenance rather than triggered by this project;
+- an operator other than the developer can use the runbook to inspect health,
+  logs, backups, capacity, queue, and access;
+- remaining beta-host, lifecycle, backup, security, and capacity risks have
+  named owners and dates; and
+- the user explicitly accepts the trial handoff before engineers are admitted.
 
-- Processing every artifact for all five readable recordings.
-- Leases, heartbeats, auto retry, priorities, cancellation, multiple workers,
-  stale/scan audit history, retention, cleanup, chaos/load tests, and deployment.
-- Active-job crash survival beyond clear interrupted failure and explicit retry.
-- Any deferred product feature.
+Repository readiness alone may be handed off as complete local implementation,
+but it is not live deployment acceptance.
 
-### Visible acceptance
+### Stop conditions
 
-- A documented clean setup runs the acceptance matrix without code changes.
-- All six catalog rows, the short full flow, the longer smoke, and damaged
-  behavior pass.
-- The UI remains responsive and statuses remain truthful during processing.
-- The final archive inventory matches the initial inventory.
+Stop and request direction for any of the following:
 
-### Minimum tests
+- Gate 0 is incomplete, the exact target is ambiguous, or the live change would
+  exceed the reviewed command/target list.
+- The source is not independently exported server-side read-only to the exact
+  VM, the export is effectively open to all hosts, parent/child behavior is
+  unclear, or safe root mapping cannot be established.
+- The required source mount is absent, writable, the wrong filesystem/export,
+  or can silently fall back to an ordinary local directory.
+- Derived storage overlaps source, lacks space/atomic semantics, or would
+  require automatic deletion.
+- The access boundary cannot prevent public/raw service exposure on both IPv4
+  and IPv6, or the only console option is publicly reachable VNC.
+- The administrator does not accept or remediate the TrueNAS beta risk for this
+  non-critical trial.
+- A backup cannot be created and restored, a migration is destructive or
+  rollback-unsafe, or a destructive target is uncertain.
+- The accepted Ubuntu 22.04/ROS Humble runtime cannot be provided, or work
+  requires a platform migration, containerization, multiple workers, new
+  processing behavior, source mutation, or another major dependency.
+- Real source data changes during any check.
 
-- Run the accumulated focused unit and PostgreSQL/API suite from clean setup.
-- One integration check proves ordinary API reads work during a worker job.
-- Execute the acceptance matrix once and record browser checks for play, seek,
-  coverage, reuse, drift, graph cursor, and damaged behavior.
-- Record limitations instead of expanding V0 to solve deferred operations work.
+Do not stop merely because the VM has not yet been delivered. Complete the
+repository-side implementation and report the external gate precisely.
 
-### Implementation evidence — 2026-07-22
+## 7. V1 final gate
 
-- A fresh virtual environment installed the locked requirements and editable
-  package successfully; `pip check` reported no broken requirements, and all
-  three application entry points were executable.
-- The accumulated routine suite passed with 207 tests and 15 opt-in tests
-  deselected. The PostgreSQL suite passed with 12 tests, and the ROS-message
-  suite passed with 2 tests.
-- The browser suite passed all 12 tests on Node.js 22.22.1, including explicit
-  loading, empty, processing, unavailable, failed, ready, retry, provenance,
-  coverage, shared-clock, and partial-consumer-failure behavior.
-- A PostgreSQL/ASGI integration test ran the real serial worker against an
-  event-controlled processor and proved catalog and detail reads complete while
-  its job remains active.
-- The 76,000-sample browser performance fixture parsed and transformed in about
-  88 ms total on this development host; 10,000 timeline lookups took about
-  5.5 ms. These are development observations, not deployment guarantees.
-- `README.md` documents clean setup, worker operation, the all-six/short/reuse/
-  damaged/long acceptance matrix, truthful UI checks, troubleshooting, and V0
-  limitations.
-- No real archive was accessed during implementation or automated verification.
-  It was accessed only after the user's explicit opt-in for the separately
-  recorded acceptance evidence below.
+V1 is ready for engineer feedback only when:
 
-### Acceptance evidence — 2026-07-22
+- all three building blocks are reviewed and accepted;
+- the served interface retains the authored reference design and contains no
+  mock operational data;
+- physical folders, health, preparation, queue, failure, history, elapsed, and
+  estimate behavior are truthful;
+- front, top-down, and six-channel IMU review retains accepted timing and
+  coverage behavior;
+- the API, worker, database, proxy, mounts, backup, restore, and rollback have
+  passed the trial acceptance matrix;
+- no original source changed and every output remains confined to derived
+  storage;
+- the service is private to the limited group; and
+- known limitations and feedback channels are visible.
 
-- The explicitly approved acceptance used `/mnt/d/Rosbags`, a new empty derived
-  root, a new dedicated PostgreSQL 14 database, one API, and exactly one serial
-  worker. The configured front and IMU topics remained
-  `/kuupkulgur_v1/sensors/front_camera/image_raw` and
-  `/kuupkulgur_v1/sensors/imu0/raw_data`; a second worker exited on the advisory
-  lock as required.
-- The opt-in catalog test and repeated live rescans found six stable recording
-  IDs, five readable bags, and the expected damaged
-  `2025_11_04_plain_figure8_spotlight_0.db3`. Scanning left 24 source-component
-  rows, no jobs or artifacts, and exactly the accepted four PostgreSQL tables.
-- On the short `2025_11_04_figure8` recording, front processing completed in
-  330.647 seconds at 84,118,694 bytes, top-down in 6.948 seconds at 13,443,307
-  bytes, and IMU in 16.441 seconds at 15,184 samples and 544,610 bytes. The
-  videos validated as H.264 with 3,051 and 555 frames; start/middle/end range
-  requests returned correct `206` responses.
-- Immutable read-only SQLite inspection independently matched the short IMU
-  artifact's first, middle, and last ROS record timestamps and
-  `angular_velocity.z` values. The API and live UI reported measured coverage,
-  correct ROS/CSV provenance, units, warnings, and `reduction: none`.
-- Headless Edge exercised the shipped short page with the real artifacts.
-  Global start, individual coverage entry, all-consumer coverage, slider seek,
-  end coverage, sustained playback, seek while playing, and pause all passed.
-  Both cameras mapped to the global clock, the IMU cursor/value followed it,
-  out-of-coverage consumers hid or cleared independently, and observed mapped
-  video drift stayed below 0.5 seconds.
-- The damaged recording kept its AVI/CSV facts visible while front, synchronized
-  top-down, and IMU requests returned distinct `unavailable` diagnostics. The
-  repeated requests created no job or artifact.
-- On the 758.739-second `2025_11_04_PE_1_4_plain_slow` scale case, front
-  processing completed in 2,224.468 seconds at 482,413,143 bytes, top-down in
-  33.707 seconds at 68,078,248 bytes, and IMU in 15.177 seconds at 75,729
-  samples and 2,767,114 bytes. The profiled worker used 162,144 kB peak RSS and
-  no swap over 34:42 wall time.
-- The long videos validated as H.264 with 15,171 and 2,868 frames. The IMU JSON
-  parsed in 33 ms on the development host; live Edge loaded and drew all 75,729
-  samples, and midpoint/end/playing seeks, coverage, playback, graph cursor, and
-  pause checks passed. Catalog/detail responses remained near 12 ms during the
-  long render, with state and completed-media checks between 38 and 52 ms.
-- Repeated requests, rescans, API restarts, and a worker restart reused artifact
-  IDs 1–6. PostgreSQL finished with exactly six succeeded jobs, six artifacts,
-  no active job, and an empty temporary work directory.
-- The complete archive retained 31 inventory entries and 24 files totalling
-  114,464,854,725 bytes. Exact before/after relative names, kinds, sizes, and
-  modification times matched at digest
-  `edfaf0db862d846684cfa7a8133bcbba6c1142ba9c74092ca2d45e99cfe2c5bf`.
-  No source was modified and every generated file remained outside the archive.
-
-## 10. Final V0 gate
-
-**Status:** Passed and user-approved on 2026-07-22
-
-V0 is complete only when:
-
-- The acceptance matrix passes for all six, the short, the final opt-in long,
-  and the damaged cases.
-- The scanner remains bounded, read-only, independent, and separate from
-  artifact processing.
-- PostgreSQL contains only small V0 catalog, artifact, and job metadata.
-- Matching completed artifacts are reusable and partial work is never ready.
-- Unavailable prerequisites and failed processing remain distinct.
-- ROS record time aligns the front camera and IMU; CSV time aligns top-down
-  frames; every stream maps to the same bag-relative timeline.
-- Focused tests pass, real checks remain opt-in, and originals are unchanged.
-- Setup, evidence, limitations, and governing documents are truthful.
-- The user reviews and approves the complete result.
-
-## 11. Deferred backlog
-
-### Catalog and formats
-
-- Multiple roots, NAS/watchers, uploads, scan/audit history, tombstones, rename
-  reconciliation, ROS 1, MCAP, compression, split bags, and repair tools.
-
-### Jobs and artifacts
-
-- Leases, heartbeats, auto retry, priorities, quotas, cancellation, multiple
-  workers, Redis, brokers, active-job recovery, retention, cleanup, object
-  storage, and production migration.
-
-### Processing and visualization
-
-- Additional cameras/topics/encodings, quality controls, adaptive streaming,
-  clips, thumbnails, exports, adjustable synchronization, multiple/custom
-  telemetry, dashboards, LiDAR, GPS, and maps.
-
-### Product and operations
-
-- Authentication, users, annotations, comments, saved/shared views, deployment,
-  monitoring, alerts, backups, disaster recovery, and public exposure.
+Feedback after this gate determines the next roadmap. It does not automatically
+authorize deferred production or analysis features.

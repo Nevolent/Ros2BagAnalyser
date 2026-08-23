@@ -1,0 +1,88 @@
+# Render only into root-owned /etc/nginx configuration after Gate 0 review.
+map $http_origin $rosbag_origin_allowed {
+    default 0;
+    "https://trial.example.invalid" 1;
+}
+
+map "$request_method:$rosbag_origin_allowed" $rosbag_write_origin_denied {
+    default 0;
+    "POST:0" 1;
+}
+
+limit_req_zone $binary_remote_addr zone=rosbag_state:10m rate=2r/s;
+limit_req_zone $binary_remote_addr zone=rosbag_rescan:10m rate=1r/m;
+
+upstream rosbag_analyser_loopback {
+    server 127.0.0.1:8000;
+    keepalive 16;
+}
+
+server {
+    listen 192.0.2.10:443 ssl http2 default_server;
+    listen [2001:db8::10]:443 ssl http2 default_server ipv6only=on;
+    server_name trial.example.invalid;
+
+    if ($host != "trial.example.invalid") { return 444; }
+    if ($request_method !~ ^(GET|HEAD|POST)$) { return 405; }
+    if ($rosbag_write_origin_denied) { return 403; }
+
+    ssl_certificate /etc/rosbag-analyser/tls/fullchain.pem;
+    ssl_certificate_key /etc/rosbag-analyser/tls/private.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_tickets off;
+
+    auth_basic "ROS Bag Analyser trial";
+    auth_basic_user_file /etc/rosbag-analyser/access/engineers.htpasswd;
+    autoindex off;
+    client_max_body_size 64k;
+    client_body_timeout 15s;
+    keepalive_timeout 30s;
+    send_timeout 60s;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    location = /docs { return 404; }
+    location = /redoc { return 404; }
+    location = /openapi.json { return 404; }
+
+    location = /api/catalog/rescan {
+        auth_basic "ROS Bag Analyser operator";
+        auth_basic_user_file /etc/rosbag-analyser/access/operators.htpasswd;
+        limit_req zone=rosbag_rescan burst=1 nodelay;
+        proxy_pass http://rosbag_analyser_loopback;
+        include /etc/nginx/rosbag-analyser-proxy-headers.conf;
+    }
+
+    location = /api/v1/catalog/rescan {
+        auth_basic "ROS Bag Analyser operator";
+        auth_basic_user_file /etc/rosbag-analyser/access/operators.htpasswd;
+        limit_req zone=rosbag_rescan burst=1 nodelay;
+        proxy_pass http://rosbag_analyser_loopback;
+        include /etc/nginx/rosbag-analyser-proxy-headers.conf;
+    }
+
+    # Retained V0 state routes remain GET/HEAD-compatible but are not an
+    # engineer-facing mutation surface in the trial.
+    location ~ ^/api/recordings/[0-9]+/(front-preview|topdown-preview|imu-series)$ {
+        limit_except GET HEAD { deny all; }
+        proxy_pass http://rosbag_analyser_loopback;
+        include /etc/nginx/rosbag-analyser-proxy-headers.conf;
+    }
+
+    location = /api/v1/recordings/prepare {
+        limit_req zone=rosbag_state burst=4 nodelay;
+        proxy_pass http://rosbag_analyser_loopback;
+        include /etc/nginx/rosbag-analyser-proxy-headers.conf;
+    }
+
+    location ~ ^/api/v1/processing/jobs/[0-9]+/retry$ {
+        limit_req zone=rosbag_state burst=4 nodelay;
+        proxy_pass http://rosbag_analyser_loopback;
+        include /etc/nginx/rosbag-analyser-proxy-headers.conf;
+    }
+
+    location / {
+        proxy_pass http://rosbag_analyser_loopback;
+        include /etc/nginx/rosbag-analyser-proxy-headers.conf;
+    }
+}

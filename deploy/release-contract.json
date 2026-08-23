@@ -1,0 +1,22 @@
+{
+  "artifact_contracts": {
+    "front_preview_manifest": 1,
+    "imu_series_schema": 2,
+    "topdown_preview_manifest": 1
+  },
+  "database_schema": "six-domain-tables-migrations-0001-through-0006",
+  "platform": {
+    "architecture": "amd64",
+    "operating_system": "Ubuntu 22.04 LTS",
+    "python": "3.10",
+    "ros": "Humble",
+    "support_boundary": "2027-05"
+  },
+  "processors": {
+    "front_preview": "front-preview-v2",
+    "front_timing_policy": "capture_header_affine_to_record_span_v2",
+    "imu_series": "imu-series-v2",
+    "topdown_preview": "topdown-preview-v2"
+  },
+  "schema_version": 1
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import subprocess
 import weakref
@@ -9,6 +10,7 @@ import weakref
 import pytest
 
 from conftest import inventory
+from rosbag_analyser.artifact_store import ArtifactStore
 from rosbag_analyser.catalog.metadata import TopicFact
 from rosbag_analyser.catalog.paths import source_file_identity
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
@@ -87,6 +89,7 @@ def _decoder(serialized: bytes) -> DecodedImage:
         encoding="bgr8",
         step=14,
         data=bytes([value, 0, 255] * 4 + [0, 0]) * 2,
+        header_timestamp_ns=2_000_000_000 + value * 100_000_000,
     )
 
 
@@ -111,7 +114,7 @@ def _probe_frames(path: Path) -> list[dict[str, str]]:
     return json.loads(completed.stdout)["frames"]
 
 
-def test_irregular_record_times_encode_incrementally_and_leave_source_unchanged(
+def test_irregular_record_times_use_smooth_header_cadence_and_leave_source_unchanged(
     tmp_path: Path,
 ) -> None:
     archive = tmp_path / "archive"
@@ -134,11 +137,32 @@ def test_irregular_record_times_encode_incrementally_and_leave_source_unchanged(
     assert result.measured_span_ns == 300_000_000
     assert result.input_frame_count == 3
     assert result.encoded_frame_count == 3
+    assert result.header_span_ns == 200_000_000
+    assert result.maximum_presentation_gap_ns == 150_000_000
+    assert len(result.media_pts_sha256) == 64
     assert (derived / "preview.mp4").stat().st_size > 0
     frames = _probe_frames(derived / "preview.mp4")
     assert [float(frame["best_effort_timestamp_time"]) for frame in frames] == pytest.approx(
-        [0.0, 0.04, 0.3], abs=0.000_001
+        [0.0, 0.15, 0.3], abs=0.000_001
     )
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    assert ffmpeg is not None
+    assert ffprobe is not None
+    validation = ArtifactStore(
+        derived,
+        Path(ffmpeg),
+        Path(ffprobe),
+    ).validate_preview(
+        derived / "preview.mp4",
+        V0_PREVIEW_PROFILE,
+        expected_width=result.output_width,
+        expected_height=result.output_height,
+        expected_frame_count=result.encoded_frame_count,
+        measured_span_ns=result.measured_span_ns,
+        expected_media_pts_sha256=result.media_pts_sha256,
+    )
+    assert validation.frame_count == 3
     assert inventory(archive) == before
     assert not (archive / "recording.db3-journal").exists()
     assert not (archive / "recording.db3-wal").exists()
@@ -148,7 +172,10 @@ def test_irregular_record_times_encode_incrementally_and_leave_source_unchanged(
 def test_duplicate_record_time_keeps_one_encoded_frame(tmp_path: Path) -> None:
     database = tmp_path / "recording.db3"
     bag_start = 1_700_000_000_000_000_000
-    _create_image_database(database, [bag_start + 10, bag_start + 10, bag_start + 20])
+    _create_image_database(
+        database,
+        [bag_start + 100_000_000, bag_start + 100_000_000, bag_start + 200_000_000],
+    )
 
     result = FrontPreviewProcessor(V0_PREVIEW_PROFILE, _decoder).process(
         _descriptor(database, bag_start, 3),
@@ -184,7 +211,7 @@ def test_preview_forces_seek_keyframes_at_the_profile_interval(
         for frame in _probe_frames(output)
         if frame["pict_type"] == "I"
     ]
-    assert keyframe_times == pytest.approx([0.0, 2.1], abs=0.000_001)
+    assert keyframe_times == pytest.approx([0.0, 2.2], abs=0.000_001)
 
 
 def test_dimension_change_fails_before_publication(tmp_path: Path) -> None:
@@ -199,6 +226,7 @@ def test_dimension_change_fails_before_publication(tmp_path: Path) -> None:
             encoding="bgr8",
             step=width * 3,
             data=b"x" * width * 3 * 2,
+            header_timestamp_ns=1_000_000_000 + serialized[0] * 100_000_000,
         )
 
     with pytest.raises(FrontPreviewProcessingError) as captured:
@@ -234,6 +262,80 @@ def test_decoded_frames_are_streamed_instead_of_accumulated(tmp_path: Path) -> N
 
     assert result.encoded_frame_count == len(timestamps)
     assert maximum_live <= 2
+
+
+def test_non_monotonic_header_timestamps_fail_instead_of_publishing(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "recording.db3"
+    _create_image_database(
+        database,
+        [100_000_000, 200_000_000, 300_000_000, 400_000_000],
+    )
+    headers = {
+        1: 1_000_000_000,
+        2: 1_300_000_000,
+        3: 1_200_000_000,
+        4: 1_400_000_000,
+    }
+
+    def decoder(serialized: bytes) -> DecodedImage:
+        image = _decoder(serialized)
+        return DecodedImage(
+            **{**image.__dict__, "header_timestamp_ns": headers[serialized[0]]}
+        )
+
+    with pytest.raises(FrontPreviewProcessingError) as captured:
+        FrontPreviewProcessor(V0_PREVIEW_PROFILE, decoder).process(
+            _descriptor(database, 0, 4), tmp_path / "preview.mp4"
+        )
+
+    assert captured.value.code == "front_header_timestamps_invalid"
+
+
+def test_missing_header_timestamp_fails_before_publication(tmp_path: Path) -> None:
+    database = tmp_path / "recording.db3"
+    _create_image_database(database, [100, 200])
+
+    def decoder(serialized: bytes) -> DecodedImage:
+        image = _decoder(serialized)
+        return DecodedImage(**{**image.__dict__, "header_timestamp_ns": None})
+
+    with pytest.raises(FrontPreviewProcessingError) as captured:
+        FrontPreviewProcessor(V0_PREVIEW_PROFILE, decoder).process(
+            _descriptor(database, 0, 2), tmp_path / "preview.mp4"
+        )
+
+    assert captured.value.code == "front_header_timestamp_invalid"
+
+
+def test_media_timescale_collision_fails_instead_of_reordering_frames(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "recording.db3"
+    _create_image_database(database, [1_000_000_000, 1_000_000_500, 1_000_001_000])
+
+    with pytest.raises(FrontPreviewProcessingError) as captured:
+        FrontPreviewProcessor(V0_PREVIEW_PROFILE, _decoder).process(
+            _descriptor(database, 0, 3), tmp_path / "preview.mp4"
+        )
+
+    assert captured.value.code == "front_presentation_timestamps_invalid"
+
+
+def test_single_frame_header_timing_maps_to_zero(tmp_path: Path) -> None:
+    database = tmp_path / "recording.db3"
+    _create_image_database(database, [1_100_000_000])
+
+    result = FrontPreviewProcessor(V0_PREVIEW_PROFILE, _decoder).process(
+        _descriptor(database, 1_000_000_000, 1), tmp_path / "preview.mp4"
+    )
+
+    assert result.coverage_start_ns == 100_000_000
+    assert result.coverage_end_ns == 100_000_000
+    assert result.measured_span_ns == 0
+    assert result.header_span_ns == 0
+    assert result.maximum_presentation_gap_ns == 0
 
 
 def test_oversized_serialized_frame_is_rejected_before_deserialization(

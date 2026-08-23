@@ -178,6 +178,15 @@ def test_cache_identity_reuses_matching_inputs(
     assert repeated.descriptor is not None
     assert repeated.descriptor.cache_identity == first.descriptor.cache_identity
 
+    alternate_default = _resolver(
+        archive, repository, component="linear_acceleration.x"
+    ).resolve(11)
+    assert alternate_default.descriptor is not None
+    assert (
+        alternate_default.descriptor.cache_identity
+        != first.descriptor.cache_identity
+    )
+
 
 def test_missing_or_unsupported_prerequisites_are_unavailable_without_job(
     tmp_path: Path,
@@ -236,7 +245,7 @@ def test_unsupported_component_is_unavailable_without_a_job(tmp_path: Path) -> N
     metadata, database = _write_source(archive)
     repository = FakeRepository(_source(metadata, database))
     service = ImuSeriesService(
-        _resolver(archive, repository, component="angular_velocity.x"),
+        _resolver(archive, repository, component="orientation.x"),
         repository,  # type: ignore[arg-type]
         FakeArtifactStore(),  # type: ignore[arg-type]
     )

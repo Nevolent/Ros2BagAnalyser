@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 4 ]] || {
+  echo "Usage: validate-proxy RENDERED_CONFIG APPROVED_HOSTNAME APPROVED_IPV4 APPROVED_IPV6" >&2
+  exit 2
+}
+readonly config="$1"
+readonly hostname="$2"
+readonly ipv4="$3"
+readonly ipv6="$4"
+[[ -f "$config" && ! -L "$config" ]] || {
+  echo "The rendered proxy configuration is unavailable." >&2
+  exit 1
+}
+[[ "$hostname" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}[A-Za-z0-9]$ ]] || {
+  echo "The approved proxy hostname is invalid." >&2
+  exit 1
+}
+python3.10 -c '
+import ipaddress, sys
+for raw, version in ((sys.argv[1], 4), (sys.argv[2], 6)):
+    address = ipaddress.ip_address(raw)
+    if address.version != version or address.is_unspecified or address.is_loopback or address.is_multicast:
+        raise SystemExit(1)
+' "$ipv4" "$ipv6" || {
+  echo "An approved proxy listener address is invalid." >&2
+  exit 1
+}
+grep -Eq 'example\.invalid|192\.0\.2\.|2001:db8:|REPLACE_WITH' "$config" && {
+  echo "Documentation-only proxy values remain unresolved." >&2
+  exit 1
+}
+for required in \
+  "server_name $hostname;" \
+  "\"https://$hostname\" 1;" \
+  "listen $ipv4:443 ssl" \
+  "listen [$ipv6]:443 ssl" \
+  'server 127.0.0.1:8000;' \
+  'client_max_body_size 64k;' \
+  'autoindex off;'
+do
+  grep -Fq "$required" "$config" || {
+    echo "A required proxy boundary control is missing." >&2
+    exit 1
+  }
+done
+grep -Eq '(^|[[:space:]])(alias|root)[[:space:]]+/var/lib/rosbag-analyser/derived' \
+  "$config" && {
+  echo "The proxy must not serve derived storage directly." >&2
+  exit 1
+}
+echo "Rendered proxy boundary values are valid; run nginx -t before activation."

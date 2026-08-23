@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 1 ]] || {
+  echo "Usage: collect-support-bundle OUTPUT_DIRECTORY" >&2
+  exit 2
+}
+readonly release_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+  pwd -P
+)"
+[[ -x "$release_root/venv/bin/python" ]] || {
+  echo "The installed release virtual environment is unavailable." >&2
+  exit 1
+}
+exec "$release_root/venv/bin/python" \
+  "$release_root/deploy/scripts/support_bundle.py" "$1"

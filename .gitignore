@@ -13,3 +13,9 @@ htmlcov/
 *.mp4
 *.webm
 *.csv
+
+# The authored archive page is a design reference. Its generated/mock payloads
+# and macOS packaging metadata are not source assets and must not enter Git.
+archive/__MACOSX/
+archive/assets/previews/
+archive/figure8-imu-bundle.json

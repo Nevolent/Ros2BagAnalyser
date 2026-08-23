@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: build-release RELEASE_ID BUILD_OPERATOR WHEELHOUSE OUTPUT_DIRECTORY" >&2
+  exit 2
+}
+
+[[ $# -eq 4 ]] || usage
+readonly release_id="$1"
+readonly build_operator="$2"
+readonly wheelhouse="$3"
+readonly output_directory="$4"
+readonly project_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+  pwd -P
+)"
+readonly python_command="${ROS_BAG_ANALYSER_BUILD_PYTHON:-python3.10}"
+
+[[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "The release identity is invalid." >&2
+  exit 1
+}
+[[ "$build_operator" =~ ^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$ ]] || {
+  echo "The build operator identity is invalid." >&2
+  exit 1
+}
+[[ "$wheelhouse" == /* \
+  && "$(realpath -e -- "$wheelhouse")" == "$wheelhouse" ]] || {
+  echo "The wheelhouse must use a canonical absolute path." >&2
+  exit 1
+}
+readonly output_parent="$(dirname -- "$output_directory")"
+[[ "$output_directory" == /* \
+  && -d "$output_parent" \
+  && ! -L "$output_parent" \
+  && "$(realpath -e -- "$output_parent")" == "$output_parent" ]] || {
+  echo "The release output must have an existing canonical absolute parent." >&2
+  exit 1
+}
+[[ -d "$wheelhouse" && ! -L "$wheelhouse" && -f "$wheelhouse/SHA256SUMS" ]] || {
+  echo "The checksummed wheelhouse is unavailable." >&2
+  exit 1
+}
+[[ ! -e "$output_directory" ]] || {
+  echo "The release output target already exists; it was not replaced." >&2
+  exit 1
+}
+[[ -z "$(git -C "$project_root" status --porcelain)" ]] || {
+  echo "A release cannot be built from an uncommitted or untracked worktree." >&2
+  exit 1
+}
+
+(
+  cd -- "$wheelhouse"
+  sha256sum --check --strict SHA256SUMS
+)
+"$python_command" "$project_root/deploy/scripts/validate_wheelhouse.py" \
+  "$wheelhouse"
+
+readonly source_revision="$(git -C "$project_root" rev-parse --verify HEAD)"
+readonly source_epoch="$(git -C "$project_root" show -s --format=%ct HEAD)"
+readonly build_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+readonly application_version="$(
+  awk -F '"' '/^version = "/ {print $2; exit}' "$project_root/pyproject.toml"
+)"
+readonly staging_root="$(mktemp -d)"
+trap 'rm -rf -- "$staging_root"' EXIT
+
+mkdir -m 0700 -- "$output_directory"
+mkdir -p -- "$staging_root/source" "$staging_root/release/wheels"
+git -C "$project_root" archive --format=tar HEAD > "$staging_root/source.tar"
+readonly source_archive_sha256="$(sha256sum "$staging_root/source.tar" | awk '{print $1}')"
+tar -xf "$staging_root/source.tar" -C "$staging_root/source"
+
+"$python_command" -m venv "$staging_root/build-venv"
+"$staging_root/build-venv/bin/python" -m pip install \
+  --no-index \
+  --find-links "$wheelhouse" \
+  --requirement "$project_root/deploy/build-requirements.in"
+SOURCE_DATE_EPOCH="$source_epoch" "$staging_root/build-venv/bin/python" -m pip wheel \
+  --no-deps \
+  --no-build-isolation \
+  --wheel-dir "$staging_root/release/wheels" \
+  "$staging_root/source"
+cp -a -- "$wheelhouse" "$staging_root/release/wheelhouse"
+cp -- "$project_root/deploy/runtime-requirements.in" \
+  "$staging_root/release/runtime-requirements.in"
+cp -a -- "$staging_root/source/deploy" "$staging_root/release/deploy"
+cp -a -- "$staging_root/source/docs" "$staging_root/release/docs"
+readonly dependency_manifest_sha256="$(
+  sha256sum "$wheelhouse/SHA256SUMS" | awk '{print $1}'
+)"
+readonly release_contract_sha256="$(
+  sha256sum "$project_root/deploy/release-contract.json" | awk '{print $1}'
+)"
+
+ROS_BAG_RELEASE_ID="$release_id" \
+ROS_BAG_RELEASE_VERSION="$application_version" \
+ROS_BAG_SOURCE_REVISION="$source_revision" \
+ROS_BAG_SOURCE_ARCHIVE_SHA256="$source_archive_sha256" \
+ROS_BAG_DEPENDENCY_MANIFEST_SHA256="$dependency_manifest_sha256" \
+ROS_BAG_RELEASE_CONTRACT_SHA256="$release_contract_sha256" \
+ROS_BAG_BUILD_OPERATOR="$build_operator" \
+ROS_BAG_BUILD_TIMESTAMP="$build_timestamp" \
+ROS_BAG_RELEASE_MANIFEST="$staging_root/release/release-manifest.json" \
+  "$python_command" -c '
+import json, os, pathlib
+document = {
+    "schema_version": 1,
+    "release_id": os.environ["ROS_BAG_RELEASE_ID"],
+    "application_version": os.environ["ROS_BAG_RELEASE_VERSION"],
+    "source_revision": os.environ["ROS_BAG_SOURCE_REVISION"],
+    "source_archive_sha256": os.environ["ROS_BAG_SOURCE_ARCHIVE_SHA256"],
+    "dependency_manifest_sha256": os.environ["ROS_BAG_DEPENDENCY_MANIFEST_SHA256"],
+    "release_contract_sha256": os.environ["ROS_BAG_RELEASE_CONTRACT_SHA256"],
+    "worktree_clean": True,
+    "built_at": os.environ["ROS_BAG_BUILD_TIMESTAMP"],
+    "build_operator": os.environ["ROS_BAG_BUILD_OPERATOR"],
+}
+pathlib.Path(os.environ["ROS_BAG_RELEASE_MANIFEST"]).write_text(
+    json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+' \
+  </dev/null
+
+(
+  cd -- "$staging_root/release"
+  find . -type f ! -name RELEASE-CONTENTS.sha256 -printf '%P\n' \
+    | LC_ALL=C sort | xargs -r sha256sum -- \
+    > RELEASE-CONTENTS.sha256
+)
+readonly archive="$output_directory/$release_id.tar.gz"
+tar \
+  --sort=name \
+  --mtime="@$source_epoch" \
+  --owner=0 \
+  --group=0 \
+  --numeric-owner \
+  -C "$staging_root" \
+  -cf - release \
+  | gzip -n > "$archive"
+(
+  cd -- "$output_directory"
+  sha256sum -- "$(basename -- "$archive")" > "$release_id.tar.gz.sha256"
+)
+cp -- "$project_root/deploy/scripts/install-release" \
+  "$project_root/deploy/scripts/validate_release_archive.py" \
+  "$output_directory/"
+(
+  cd -- "$output_directory"
+  sha256sum -- install-release validate_release_archive.py \
+    > INSTALLER-SHA256SUMS
+  sha256sum --check --strict INSTALLER-SHA256SUMS
+)
+chmod 0600 \
+  "$archive" "$archive.sha256" "$output_directory/INSTALLER-SHA256SUMS"
+chmod 0700 \
+  "$output_directory/install-release" \
+  "$output_directory/validate_release_archive.py"
+echo "Immutable release archive created from clean source revision $source_revision."

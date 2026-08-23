@@ -4,13 +4,17 @@ from dataclasses import dataclass
 import os
 from pathlib import Path, PurePosixPath
 import stat
+import unicodedata
 
 from .types import RootScanError
 
 
-MAX_ARCHIVE_ENTRIES = 2_000
-MAX_RECORDING_DIRECTORIES = 1_000
-MAX_RECORDING_ENTRIES = 256
+DEFAULT_MAX_CATALOG_DEPTH = 8
+DEFAULT_MAX_CATALOG_ENTRIES = 100_000
+DEFAULT_MAX_CATALOG_DIRECTORIES = 10_000
+DEFAULT_MAX_RECORDING_DIRECTORIES = 5_000
+DEFAULT_MAX_DIRECTORY_ENTRIES = 2_000
+DEFAULT_MAX_RECORDING_ENTRIES = 256
 
 
 class UnsafeSourcePath(ValueError):
@@ -40,42 +44,170 @@ class DirectEntry:
     identity: SourceFileIdentity | None
 
 
-def discover_recording_directories(archive_root: Path) -> tuple[Path, ...]:
-    directories: list[Path] = []
-    try:
-        with os.scandir(archive_root) as iterator:
-            for entry_number, entry in enumerate(iterator, start=1):
-                if entry_number > MAX_ARCHIVE_ENTRIES:
-                    raise RootScanError(
-                        "archive_entry_limit_exceeded",
-                        "The archive contains more direct entries than the V0 "
-                        "scan limit.",
-                    )
-                if entry.is_dir(follow_symlinks=False):
-                    directories.append(Path(entry.path))
-                    if len(directories) > MAX_RECORDING_DIRECTORIES:
+@dataclass(frozen=True)
+class CatalogScanLimits:
+    max_depth: int = DEFAULT_MAX_CATALOG_DEPTH
+    max_entries: int = DEFAULT_MAX_CATALOG_ENTRIES
+    max_directories: int = DEFAULT_MAX_CATALOG_DIRECTORIES
+    max_recordings: int = DEFAULT_MAX_RECORDING_DIRECTORIES
+    max_directory_entries: int = DEFAULT_MAX_DIRECTORY_ENTRIES
+    max_recording_entries: int = DEFAULT_MAX_RECORDING_ENTRIES
+
+    def __post_init__(self) -> None:
+        if any(
+            value <= 0
+            for value in (
+                self.max_depth,
+                self.max_entries,
+                self.max_directories,
+                self.max_recordings,
+                self.max_directory_entries,
+                self.max_recording_entries,
+            )
+        ):
+            raise ValueError("Catalog scan limits must be positive.")
+
+
+@dataclass(frozen=True)
+class DiscoveredRecordingDirectory:
+    path: Path
+    entries: tuple[DirectEntry, ...] | None
+    diagnostic_code: str | None = None
+    diagnostic_message: str | None = None
+
+
+def discover_recording_directories(
+    archive_root: Path,
+    limits: CatalogScanLimits | None = None,
+) -> tuple[DiscoveredRecordingDirectory, ...]:
+    """Find physical recording roots without following source symlinks.
+
+    Traversal failures are root failures because they may hide an unknown
+    recording. Once a directory is identified as a recording candidate, its
+    direct-entry problems are returned with that candidate and can be isolated.
+    """
+
+    selected_limits = limits or CatalogScanLimits()
+    discovered: list[DiscoveredRecordingDirectory] = []
+    pending: list[tuple[Path, int]] = [(archive_root, 0)]
+    visited_entries = 0
+    visited_directories = 0
+
+    while pending:
+        directory, depth = pending.pop()
+        visited_directories += 1
+        if visited_directories > selected_limits.max_directories:
+            raise RootScanError(
+                "archive_directory_limit_exceeded",
+                "The archive contains more directories than the configured scan limit.",
+            )
+
+        raw_entries: list[os.DirEntry[str]] = []
+        try:
+            with os.scandir(directory) as iterator:
+                for entry in iterator:
+                    visited_entries += 1
+                    if visited_entries > selected_limits.max_entries:
                         raise RootScanError(
-                            "archive_directory_limit_exceeded",
-                            "The archive contains more recording directories than "
-                            "the V0 scan limit.",
+                            "archive_entry_limit_exceeded",
+                            "The archive contains more entries than the configured scan limit.",
                         )
-    except OSError as error:
-        raise RootScanError(
-            "archive_enumeration_failed", "The archive root could not be enumerated."
-        ) from error
-    return tuple(sorted(directories, key=lambda path: path.name))
+                    _safe_path_segment(entry.name)
+                    raw_entries.append(entry)
+        except RootScanError:
+            raise
+        except UnsafeSourcePath as error:
+            raise RootScanError(error.code, error.safe_message) from error
+        except OSError as error:
+            raise RootScanError(
+                "archive_enumeration_failed",
+                "An archive directory could not be enumerated completely.",
+            ) from error
+
+        metadata_candidate = any(entry.name == "metadata.yaml" for entry in raw_entries)
+        child_directories: list[Path] = []
+        if not metadata_candidate:
+            try:
+                child_directories = [
+                    Path(entry.path)
+                    for entry in raw_entries
+                    if entry.is_dir(follow_symlinks=False)
+                ]
+            except OSError as error:
+                raise RootScanError(
+                    "archive_entry_uninspectable",
+                    "An archive entry could not be inspected completely.",
+                ) from error
+
+        recognized_companion = any(
+            Path(entry.name).suffix.casefold() in {".db3", ".avi", ".csv"}
+            for entry in raw_entries
+        )
+        is_leaf_candidate = not child_directories and recognized_companion
+        if metadata_candidate or is_leaf_candidate:
+            if len(discovered) >= selected_limits.max_recordings:
+                raise RootScanError(
+                    "archive_recording_limit_exceeded",
+                    "The archive contains more recording candidates than the configured scan limit.",
+                )
+            if len(raw_entries) > selected_limits.max_recording_entries:
+                discovered.append(
+                    DiscoveredRecordingDirectory(
+                        path=directory,
+                        entries=None,
+                        diagnostic_code="recording_entry_limit_exceeded",
+                        diagnostic_message=(
+                            "The recording contains more direct entries than the configured scan limit."
+                        ),
+                    )
+                )
+                continue
+            discovered.append(
+                DiscoveredRecordingDirectory(
+                    path=directory,
+                    entries=_direct_entries(raw_entries),
+                )
+            )
+            continue
+
+        if len(raw_entries) > selected_limits.max_directory_entries:
+            raise RootScanError(
+                "archive_directory_entry_limit_exceeded",
+                "An archive folder contains more direct entries than the configured scan limit.",
+            )
+        if child_directories and depth >= selected_limits.max_depth:
+            raise RootScanError(
+                "archive_depth_limit_exceeded",
+                "The archive hierarchy exceeds the configured scan depth.",
+            )
+        for child in sorted(
+            child_directories,
+            key=lambda path: safe_filesystem_text(path.name),
+            reverse=True,
+        ):
+            pending.append((child, depth + 1))
+
+    return tuple(
+        sorted(
+            discovered,
+            key=lambda item: archive_relative_path(archive_root, item.path),
+        )
+    )
 
 
-def inventory_direct_entries(recording_root: Path) -> tuple[DirectEntry, ...]:
+def inventory_direct_entries(
+    recording_root: Path,
+    *,
+    max_entries: int = DEFAULT_MAX_RECORDING_ENTRIES,
+) -> tuple[DirectEntry, ...]:
     raw_entries: list[os.DirEntry[str]] = []
     try:
         with os.scandir(recording_root) as iterator:
             for entry in iterator:
-                if len(raw_entries) >= MAX_RECORDING_ENTRIES:
+                if len(raw_entries) >= max_entries:
                     raise UnsafeSourcePath(
                         "recording_entry_limit_exceeded",
-                        "The recording contains more direct entries than the V0 "
-                        "scan limit.",
+                        "The recording contains more direct entries than the configured scan limit.",
                     )
                 raw_entries.append(entry)
     except OSError as error:
@@ -84,8 +216,12 @@ def inventory_direct_entries(recording_root: Path) -> tuple[DirectEntry, ...]:
             "The recording directory could not be enumerated.",
         ) from error
 
+    return _direct_entries(raw_entries)
+
+
+def _direct_entries(raw_entries: list[os.DirEntry[str]]) -> tuple[DirectEntry, ...]:
     results: list[DirectEntry] = []
-    for entry in sorted(raw_entries, key=lambda item: item.name):
+    for entry in sorted(raw_entries, key=lambda item: safe_filesystem_text(item.name)):
         try:
             details = entry.stat(follow_symlinks=False)
         except OSError:
@@ -170,7 +306,29 @@ def archive_relative_path(archive_root: Path, path: Path) -> str:
         raise UnsafeSourcePath(
             "source_path_escape", "A source path escapes the configured archive root."
         ) from error
-    return safe_filesystem_text(relative.as_posix())
+    if not relative.parts:
+        raise UnsafeSourcePath(
+            "unsafe_source_path", "A recording path cannot be the archive root."
+        )
+    return "/".join(_safe_path_segment(part) for part in relative.parts)
+
+
+def _safe_path_segment(value: str) -> str:
+    if value in {"", ".", ".."} or "/" in value or "\\" in value:
+        raise UnsafeSourcePath(
+            "unsafe_source_name",
+            "An archive entry name cannot be represented safely.",
+        )
+    for character in value:
+        codepoint = ord(character)
+        if 0xD800 <= codepoint <= 0xDFFF:
+            continue
+        if unicodedata.category(character) in {"Cc", "Cf"}:
+            raise UnsafeSourcePath(
+                "unsafe_source_name",
+                "An archive entry name contains unsafe control text.",
+            )
+    return safe_filesystem_text(value)
 
 
 def safe_filesystem_text(value: str) -> str:

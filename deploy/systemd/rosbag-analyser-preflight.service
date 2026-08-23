@@ -1,0 +1,24 @@
+[Unit]
+Description=Validate ROS Bag Analyser release, schema, mounts, and capabilities
+Documentation=file:/opt/rosbag-analyser/current/docs/NAS_TRIAL_RUNBOOK.md
+Requires=postgresql.service srv-rosbag\x2danalyser-source.mount var-lib-rosbag\x2danalyser-derived.mount
+After=network-online.target postgresql.service srv-rosbag\x2danalyser-source.mount var-lib-rosbag\x2danalyser-derived.mount
+Before=rosbag-analyser.target rosbag-analyser-api.service rosbag-analyser-worker.service
+
+[Service]
+Type=oneshot
+User=rosbag-analyser
+Group=rosbag-analyser
+UMask=0027
+WorkingDirectory=/opt/rosbag-analyser/current
+EnvironmentFile=/etc/rosbag-analyser/application.env
+LoadCredential=database-pass:/etc/rosbag-analyser/runtime.pgpass
+ExecStart=/opt/rosbag-analyser/current/deploy/scripts/run-service preflight --activation
+RemainAfterExit=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/srv/rosbag-analyser/source
+ReadWritePaths=/var/lib/rosbag-analyser/derived
+RestrictSUIDSGID=yes

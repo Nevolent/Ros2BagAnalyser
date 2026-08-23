@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly project_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+  pwd -P
+)"
+readonly shortcut_installer="$project_root/support/windows/Install-RosbagAnalyserShortcut.ps1"
+readonly legacy_enablement="$HOME/.config/systemd/user/default.target.wants/rosbag-analyser.target"
+
+"$project_root/dev" check
+
+if [[ -L "$legacy_enablement" ]]; then
+  unlink "$legacy_enablement"
+  echo "Removed obsolete user-service auto-start enablement."
+fi
+
+readonly powershell="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+if [[ -x "$powershell" ]]; then
+  "$powershell" -NoProfile -ExecutionPolicy Bypass \
+    -File "$(wslpath -w "$shortcut_installer")"
+else
+  echo "Windows PowerShell was not found; the desktop shortcut was not installed." >&2
+fi
+
+echo "The desktop shortcut is installed."
+echo "Run ./dev open now, or double-click ROS 2 Bag Analyser on the desktop."

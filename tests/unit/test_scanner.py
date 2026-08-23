@@ -8,10 +8,17 @@ import pytest
 import yaml
 
 from conftest import create_recording, inventory, metadata_document
+from rosbag_analyser.catalog import paths as catalog_paths
 from rosbag_analyser.catalog import scanner as catalog_scanner
 from rosbag_analyser.catalog.limits import POSTGRES_BIGINT_MAX
+from rosbag_analyser.catalog.paths import CatalogScanLimits
 from rosbag_analyser.catalog.scanner import CatalogScanner
-from rosbag_analyser.catalog.types import RosHealth, SourceCondition, SourceRole
+from rosbag_analyser.catalog.types import (
+    RootScanError,
+    RosHealth,
+    SourceCondition,
+    SourceRole,
+)
 
 
 def test_scans_complete_recording_and_is_idempotent(tmp_path: Path) -> None:
@@ -252,11 +259,11 @@ def test_out_of_range_filesystem_fact_is_isolated_from_healthy_sibling(
     archive.mkdir()
     create_recording(archive, "healthy")
     create_recording(archive, "future-mtime")
-    original_inventory = catalog_scanner.inventory_direct_entries
+    original_inventory = catalog_paths._direct_entries
 
-    def inventory_with_future_mtime(recording_root: Path):
-        entries = original_inventory(recording_root)
-        if recording_root.name != "future-mtime":
+    def inventory_with_future_mtime(raw_entries):
+        entries = original_inventory(raw_entries)
+        if not entries or Path(entries[0].path).parent.name != "future-mtime":
             return entries
         return tuple(
             replace(entry, mtime_ns=POSTGRES_BIGINT_MAX + 1)
@@ -266,7 +273,7 @@ def test_out_of_range_filesystem_fact_is_isolated_from_healthy_sibling(
         )
 
     monkeypatch.setattr(
-        catalog_scanner, "inventory_direct_entries", inventory_with_future_mtime
+        catalog_paths, "_direct_entries", inventory_with_future_mtime
     )
 
     snapshot = CatalogScanner(archive).scan()
@@ -287,6 +294,9 @@ def test_non_utf8_recording_name_is_catalogued_without_identity_collision(
     archive.mkdir()
     os.mkdir(os.fsencode(archive) + b"/bad_\xff")
     (archive / "bad_%FF").mkdir()
+    with open(os.fsencode(archive) + b"/bad_\xff/source.db3", "wb") as source:
+        source.write(b"not sqlite")
+    (archive / "bad_%FF" / "source.db3").write_bytes(b"not sqlite")
 
     snapshot = CatalogScanner(archive).scan()
 
@@ -316,3 +326,168 @@ def test_ambiguous_companion_names_change_source_revision(tmp_path: Path) -> Non
     )
     assert video.condition is SourceCondition.AMBIGUOUS
     assert video.revision_facts
+
+
+def test_recursive_discovery_returns_physical_paths_and_stops_at_recording_root(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    recording = archive / "year" / "month"
+    recording.mkdir(parents=True)
+    create_recording(recording, "run")
+    nested_fake = recording / "run" / "nested"
+    nested_fake.mkdir()
+    (nested_fake / "metadata.yaml").write_text("invalid: true", encoding="utf-8")
+
+    snapshot = CatalogScanner(archive).scan()
+
+    assert [item.archive_relative_path for item in snapshot.recordings] == [
+        "year/month/run"
+    ]
+    assert snapshot.recordings[0].display_name == "run"
+
+
+def test_leaf_with_recognized_companion_and_no_metadata_is_damaged_candidate(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive"
+    leaf = archive / "folder" / "missing-metadata"
+    leaf.mkdir(parents=True)
+    (leaf / "recording.db3").write_bytes(b"not sqlite")
+
+    result = CatalogScanner(archive).scan().recordings[0]
+
+    assert result.archive_relative_path == "folder/missing-metadata"
+    assert result.ros_health is RosHealth.MISSING
+    metadata = next(
+        item for item in result.components if item.role is SourceRole.METADATA
+    )
+    assert metadata.condition is SourceCondition.MISSING
+
+
+def test_incomplete_depth_or_global_entry_scan_raises_without_snapshot(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive"
+    deep = archive / "one" / "two" / "three"
+    deep.mkdir(parents=True)
+    create_recording(deep, "run")
+
+    with pytest.raises(RootScanError) as depth_error:
+        CatalogScanner(
+            archive,
+            limits=CatalogScanLimits(max_depth=2),
+        ).scan()
+    assert depth_error.value.diagnostic.code == "archive_depth_limit_exceeded"
+
+    with pytest.raises(RootScanError) as entry_error:
+        CatalogScanner(
+            archive,
+            limits=CatalogScanLimits(max_entries=2),
+        ).scan()
+    assert entry_error.value.diagnostic.code == "archive_entry_limit_exceeded"
+
+
+def test_directory_recording_and_direct_entry_bounds_are_distinct(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    create_recording(archive, "one")
+    create_recording(archive, "two")
+
+    with pytest.raises(RootScanError) as recording_error:
+        CatalogScanner(
+            archive,
+            limits=CatalogScanLimits(max_recordings=1),
+        ).scan()
+    assert recording_error.value.diagnostic.code == "archive_recording_limit_exceeded"
+
+    navigation = tmp_path / "navigation"
+    (navigation / "first" / "second").mkdir(parents=True)
+    with pytest.raises(RootScanError) as directory_error:
+        CatalogScanner(
+            navigation,
+            limits=CatalogScanLimits(max_directories=2),
+        ).scan()
+    assert directory_error.value.diagnostic.code == "archive_directory_limit_exceeded"
+
+    crowded = tmp_path / "crowded"
+    crowded.mkdir()
+    (crowded / "one.txt").write_text("one", encoding="utf-8")
+    (crowded / "two.txt").write_text("two", encoding="utf-8")
+    with pytest.raises(RootScanError) as direct_error:
+        CatalogScanner(
+            crowded,
+            limits=CatalogScanLimits(max_directory_entries=1),
+        ).scan()
+    assert (
+        direct_error.value.diagnostic.code
+        == "archive_directory_entry_limit_exceeded"
+    )
+
+
+def test_recording_direct_entry_bound_is_isolated_to_identified_recording(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    create_recording(archive, "crowded")
+
+    snapshot = CatalogScanner(
+        archive,
+        limits=CatalogScanLimits(max_recording_entries=2),
+    ).scan()
+
+    assert len(snapshot.recordings) == 1
+    recording = snapshot.recordings[0]
+    assert recording.ros_health is RosHealth.UNINSPECTABLE
+    assert recording.diagnostic is not None
+    assert recording.diagnostic.code == "recording_entry_limit_exceeded"
+
+
+def test_inaccessible_navigation_branch_makes_snapshot_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = tmp_path / "archive"
+    blocked = archive / "blocked"
+    blocked.mkdir(parents=True)
+    original_scandir = catalog_paths.os.scandir
+
+    def selective_scandir(path):
+        if Path(path) == blocked:
+            raise PermissionError("synthetic inaccessible branch")
+        return original_scandir(path)
+
+    monkeypatch.setattr(catalog_paths.os, "scandir", selective_scandir)
+
+    with pytest.raises(RootScanError) as captured:
+        CatalogScanner(archive).scan()
+
+    assert captured.value.diagnostic.code == "archive_enumeration_failed"
+
+
+def test_symlinked_directory_is_never_followed(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    outside = tmp_path / "outside"
+    archive.mkdir()
+    outside.mkdir()
+    create_recording(outside, "run")
+    (archive / "linked").symlink_to(outside / "run", target_is_directory=True)
+
+    snapshot = CatalogScanner(archive).scan()
+
+    assert snapshot.recordings == ()
+
+
+def test_unsafe_navigation_name_makes_root_snapshot_incomplete(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    (archive / "unsafe\\name").mkdir()
+
+    with pytest.raises(RootScanError) as captured:
+        CatalogScanner(archive).scan()
+
+    assert captured.value.diagnostic.code == "unsafe_source_name"

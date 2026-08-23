@@ -7,7 +7,11 @@ import shutil
 
 import pytest
 
-from rosbag_analyser.artifact_store import ArtifactStore, ArtifactStoreError
+from rosbag_analyser.artifact_store import (
+    ArtifactStore,
+    ArtifactStoreError,
+    SeriesColumnExpectation,
+)
 
 
 def _store(derived: Path) -> ArtifactStore:
@@ -39,6 +43,24 @@ def _manifest(path: Path, identity: str) -> dict[str, object]:
     }
 
 
+def _columns(
+    finite_count: int,
+    non_finite_count: int,
+    minimum_value: float | None,
+    maximum_value: float | None,
+) -> tuple[SeriesColumnExpectation, ...]:
+    return tuple(
+        SeriesColumnExpectation(
+            id=f"series_{index}",
+            finite_count=finite_count,
+            non_finite_count=non_finite_count,
+            minimum_value=minimum_value,
+            maximum_value=maximum_value,
+        )
+        for index in range(6)
+    )
+
+
 def test_series_is_validated_then_atomically_published_and_reopened(
     tmp_path: Path,
 ) -> None:
@@ -50,8 +72,12 @@ def test_series_is_validated_then_atomically_published_and_reopened(
     series.write_text(
         json.dumps(
             {
-                "schema_version": 1,
-                "samples": [["-10", 2.5], ["20", None], ["20", -1.0]],
+                "schema_version": 2,
+                "samples": [
+                    ["-10", 2.5, 2.5, 2.5, 2.5, 2.5, 2.5],
+                    ["20", None, None, None, None, None, None],
+                    ["20", -1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
+                ],
             },
             separators=(",", ":"),
         )
@@ -59,14 +85,11 @@ def test_series_is_validated_then_atomically_published_and_reopened(
 
     validation = store.validate_series(
         series,
-        expected_schema_version=1,
+        expected_schema_version=2,
         expected_sample_count=3,
-        expected_finite_count=2,
-        expected_non_finite_count=1,
+        expected_columns=_columns(2, 1, -1.0, 2.5),
         expected_coverage_start_ns=-10,
         expected_coverage_end_ns=20,
-        expected_minimum_value=-1.0,
-        expected_maximum_value=2.5,
     )
     identity = "3" * 64
     manifest = _manifest(series, identity)
@@ -91,7 +114,7 @@ def test_series_is_validated_then_atomically_published_and_reopened(
     )
     try:
         assert os.read(opened.descriptor, opened.stat_result.st_size).startswith(
-            b'{"schema_version":1'
+            b'{"schema_version":2'
         )
     finally:
         os.close(opened.descriptor)
@@ -100,9 +123,13 @@ def test_series_is_validated_then_atomically_published_and_reopened(
 @pytest.mark.parametrize(
     ("payload", "expected_code"),
     [
-        ('{"schema_version":1,"samples":[["0",NaN]]}', "imu_series_validation_failed"),
         (
-            '{"schema_version":1,"samples":[["10",1.0],["0",2.0]]}',
+            '{"schema_version":2,"samples":[["0",NaN,1,1,1,1,1]]}',
+            "imu_series_validation_failed",
+        ),
+        (
+            '{"schema_version":2,"samples":['
+            '["10",1,1,1,1,1,1],["0",2,2,2,2,2,2]]}',
             "imu_series_validation_mismatch",
         ),
     ],
@@ -120,14 +147,15 @@ def test_invalid_json_constant_and_unordered_time_are_rejected(
     with pytest.raises(ArtifactStoreError) as captured:
         store.validate_series(
             series,
-            expected_schema_version=1,
+            expected_schema_version=2,
             expected_sample_count=1 if "NaN" in payload else 2,
-            expected_finite_count=0 if "NaN" in payload else 2,
-            expected_non_finite_count=1 if "NaN" in payload else 0,
+            expected_columns=(
+                _columns(0, 1, None, None)
+                if "NaN" in payload
+                else _columns(2, 0, 1.0, 2.0)
+            ),
             expected_coverage_start_ns=0,
             expected_coverage_end_ns=0 if "NaN" in payload else 10,
-            expected_minimum_value=0.0 if "NaN" in payload else 1.0,
-            expected_maximum_value=0.0 if "NaN" in payload else 2.0,
         )
 
     assert captured.value.code == expected_code
@@ -139,12 +167,16 @@ def test_published_series_tampering_is_not_served(tmp_path: Path) -> None:
     store = _store(derived)
     workspace = store.create_workspace(33)
     series = workspace / "series.json"
-    series.write_text('{"schema_version":1,"samples":[["0",1.0]]}')
+    series.write_text(
+        '{"schema_version":2,"samples":[["0",1,1,1,1,1,1]]}'
+    )
     identity = "4" * 64
     manifest = _manifest(series, identity)
     published = store.publish_series(workspace, 33, identity, manifest)
     published_path = derived / published.output_relative_path
-    published_path.write_text('{"schema_version":1,"samples":[["0",2.0]]}')
+    published_path.write_text(
+        '{"schema_version":2,"samples":[["0",2,2,2,2,2,2]]}'
+    )
 
     with pytest.raises(ArtifactStoreError) as captured:
         store.validate_series_artifact(
@@ -165,7 +197,9 @@ def test_invalid_imu_manifest_uses_artifact_neutral_failure_text(
     store = _store(derived)
     workspace = store.create_workspace(34)
     series = workspace / "series.json"
-    series.write_text('{"schema_version":1,"samples":[["0",1.0]]}')
+    series.write_text(
+        '{"schema_version":2,"samples":[["0",1,1,1,1,1,1]]}'
+    )
     identity = "5" * 64
     manifest = _manifest(series, identity)
     published = store.publish_series(workspace, 34, identity, manifest)

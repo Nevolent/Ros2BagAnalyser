@@ -30,8 +30,8 @@ from rosbag_analyser.persistence.processing_repository import (
 )
 
 
-PROCESSOR_VERSION = "imu-series-v1"
-SERIES_SCHEMA_VERSION = 1
+PROCESSOR_VERSION = "imu-series-v2"
+SERIES_SCHEMA_VERSION = 2
 IMU_MESSAGE_TYPE = "sensor_msgs/msg/Imu"
 CDR_SERIALIZATION = "cdr"
 IMU_COMPONENT = "angular_velocity.z"
@@ -39,6 +39,73 @@ IMU_DISPLAY_LABEL = "IMU angular_velocity.z (rad/s)"
 IMU_UNITS = "rad/s"
 NON_FINITE_POLICY = "json-null"
 DUPLICATE_TIMESTAMP_POLICY = "preserve-database-order"
+
+
+@dataclass(frozen=True)
+class ImuSeriesDefinition:
+    id: str
+    component: str
+    display_label: str
+    units: str
+    column_index: int
+
+    def identity_values(self) -> dict[str, int | str]:
+        return {
+            "id": self.id,
+            "component": self.component,
+            "display_label": self.display_label,
+            "units": self.units,
+            "column_index": self.column_index,
+        }
+
+
+IMU_SERIES_DEFINITIONS = (
+    ImuSeriesDefinition(
+        "angular_velocity_x",
+        "angular_velocity.x",
+        "IMU angular_velocity.x (rad/s)",
+        "rad/s",
+        1,
+    ),
+    ImuSeriesDefinition(
+        "angular_velocity_y",
+        "angular_velocity.y",
+        "IMU angular_velocity.y (rad/s)",
+        "rad/s",
+        2,
+    ),
+    ImuSeriesDefinition(
+        "angular_velocity_z",
+        "angular_velocity.z",
+        IMU_DISPLAY_LABEL,
+        IMU_UNITS,
+        3,
+    ),
+    ImuSeriesDefinition(
+        "linear_acceleration_x",
+        "linear_acceleration.x",
+        "IMU linear_acceleration.x (m/s²)",
+        "m/s²",
+        4,
+    ),
+    ImuSeriesDefinition(
+        "linear_acceleration_y",
+        "linear_acceleration.y",
+        "IMU linear_acceleration.y (m/s²)",
+        "m/s²",
+        5,
+    ),
+    ImuSeriesDefinition(
+        "linear_acceleration_z",
+        "linear_acceleration.z",
+        "IMU linear_acceleration.z (m/s²)",
+        "m/s²",
+        6,
+    ),
+)
+IMU_SERIES_BY_COMPONENT = {
+    definition.component: definition for definition in IMU_SERIES_DEFINITIONS
+}
 
 
 @dataclass(frozen=True)
@@ -90,7 +157,7 @@ class ImuSourceResolver:
         record = self.repository.get_source(recording_id)
         if record is None:
             return ImuSourceResolution(recording_exists=False)
-        if self.component != IMU_COMPONENT:
+        if self.component not in IMU_SERIES_BY_COMPONENT:
             return self._unavailable(
                 record,
                 "imu_component_unsupported",
@@ -391,8 +458,8 @@ def _cache_identity(
         "processor_version": PROCESSOR_VERSION,
         "series_schema_version": SERIES_SCHEMA_VERSION,
         "recording": {
-            "id": record.id,
-            "archive_relative_path": record.archive_relative_path,
+            "id": record.identity_recording_id,
+            "archive_relative_path": record.identity_relative_path,
             "bag_start_ns": record.start_time_ns,
             "bag_duration_ns": record.duration_ns,
         },
@@ -405,7 +472,10 @@ def _cache_identity(
             "serialization_format": topic.serialization_format,
             "message_count": topic.message_count,
         },
-        "component": component,
+        "default_component": component,
+        "series": [
+            definition.identity_values() for definition in IMU_SERIES_DEFINITIONS
+        ],
         "non_finite_policy": NON_FINITE_POLICY,
         "duplicate_timestamp_policy": DUPLICATE_TIMESTAMP_POLICY,
         "reduction": "none",

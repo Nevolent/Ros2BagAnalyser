@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 2 ]] || {
+  echo "Usage: backup-database BACKUP_DIRECTORY RELEASE_ID" >&2
+  exit 2
+}
+readonly backup_directory="$1"
+readonly release_id="$2"
+[[ "${ROS_BAG_ANALYSER_DATABASE_URL:-}" == \
+  "postgresql://rosbag_analyser_backup@/rosbag_analyser?host=/run/postgresql" ]] || {
+  echo "The local backup database target is invalid." >&2
+  exit 1
+}
+[[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "The release identity is invalid." >&2
+  exit 1
+}
+[[ -d "$backup_directory" && ! -L "$backup_directory" ]] || {
+  echo "The approved backup staging directory is unavailable." >&2
+  exit 1
+}
+[[ "$backup_directory" == /* \
+  && "$(realpath -e -- "$backup_directory")" == "$backup_directory" ]] || {
+  echo "The backup staging directory must use a canonical absolute path." >&2
+  exit 1
+}
+[[ "$(stat -c '%a' "$backup_directory")" =~ ^(700|750)$ ]] || {
+  echo "The backup staging directory has an unsafe mode." >&2
+  exit 1
+}
+readonly timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+readonly final="$backup_directory/rosbag-analyser-$release_id-$timestamp.dump"
+readonly temporary="$final.partial"
+[[ ! -e "$final" && ! -e "$temporary" ]] || {
+  echo "The selected backup output already exists." >&2
+  exit 1
+}
+trap 'rm -f -- "$temporary"' EXIT
+pg_dump --format=custom --file="$temporary" "$ROS_BAG_ANALYSER_DATABASE_URL"
+pg_restore --list "$temporary" >/dev/null
+chmod 0600 "$temporary"
+mv -- "$temporary" "$final"
+trap - EXIT
+echo "Verified custom-format database dump created at the approved staging target."

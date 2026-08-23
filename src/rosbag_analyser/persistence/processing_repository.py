@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import json
-from typing import Any
+from typing import Any, Mapping, Protocol
+
+from rosbag_analyser.estimation import (
+    EstimateSample,
+    MAX_ESTIMATE_SAMPLES,
+    estimate_total_ms,
+)
 
 from .database import open_connection
 
@@ -11,6 +17,13 @@ from .database import open_connection
 FRONT_PREVIEW_KIND = "front_preview"
 TOPDOWN_PREVIEW_KIND = "topdown_preview"
 IMU_SERIES_KIND = "imu_series"
+PROCESSING_KINDS = (FRONT_PREVIEW_KIND, TOPDOWN_PREVIEW_KIND, IMU_SERIES_KIND)
+WORKER_LOCK_NAME = "rosbag_analyser_serial_worker"
+
+
+class AdmissionDiagnostic(Protocol):
+    code: str
+    message: str
 
 
 @dataclass(frozen=True)
@@ -32,6 +45,24 @@ class ProcessingSourceRecord:
     database: ProcessingComponent | None
     topdown_video: ProcessingComponent | None = None
     topdown_timestamps: ProcessingComponent | None = None
+    cache_identity_recording_id: int | None = None
+    cache_identity_relative_path: str | None = None
+
+    @property
+    def identity_recording_id(self) -> int:
+        return (
+            self.id
+            if self.cache_identity_recording_id is None
+            else self.cache_identity_recording_id
+        )
+
+    @property
+    def identity_relative_path(self) -> str:
+        return (
+            self.archive_relative_path
+            if self.cache_identity_relative_path is None
+            else self.cache_identity_relative_path
+        )
 
 
 @dataclass(frozen=True)
@@ -61,6 +92,11 @@ class JobRecord:
     finished_at: datetime | None
     error_code: str | None
     error_message: str | None
+    work_units: int | None = None
+    estimate_key: str | None = None
+    estimated_total_ms: int | None = None
+    estimate_method: str | None = None
+    estimate_sample_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +125,72 @@ class ProcessingState:
     latest_failed_job: JobRecord | None = None
 
 
+@dataclass(frozen=True)
+class PreparationTargetRecord:
+    recording_id: int
+    kind: str
+    scan_generation: int
+    planner_identity: str
+    target_state: str
+    cache_identity: str | None
+    diagnostic_code: str | None
+    diagnostic_message: str | None
+    work_units: int | None
+
+
+@dataclass(frozen=True)
+class CurrentOutputRecord:
+    target: PreparationTargetRecord
+    artifact: ArtifactRecord | None = None
+    active_job: JobRecord | None = None
+    latest_failed_job: JobRecord | None = None
+
+
+@dataclass(frozen=True)
+class ScheduledOutput:
+    kind: str
+    outcome: str
+    state: str
+    target: PreparationTargetRecord | None = None
+    artifact: ArtifactRecord | None = None
+    job: JobRecord | None = None
+    diagnostic_code: str | None = None
+    diagnostic_message: str | None = None
+
+
+@dataclass(frozen=True)
+class PreparationSchedule:
+    recording_id: int
+    recording_found: bool
+    outputs: tuple[ScheduledOutput, ...]
+
+
+@dataclass(frozen=True)
+class RetrySchedule:
+    job_found: bool
+    job_failed: bool
+    output: ScheduledOutput | None = None
+
+
+@dataclass(frozen=True)
+class ProcessingJobViewRecord:
+    job: JobRecord
+    recording_name: str
+    output_size_bytes: int | None = None
+    queue_position: int | None = None
+
+
+@dataclass(frozen=True)
+class ProcessingOverviewData:
+    server_time: datetime
+    running_count: int
+    queued_count: int
+    failed_count: int
+    succeeded_count: int
+    running: ProcessingJobViewRecord | None
+    queue: tuple[ProcessingJobViewRecord, ...]
+
+
 class ProcessingRepository:
     def __init__(self, database_url: str) -> None:
         self.database_url = database_url
@@ -98,9 +200,10 @@ class ProcessingRepository:
             recording = connection.execute(
                 """
                 SELECT id, archive_relative_path, start_time_ns, duration_ns,
-                       ros_health
+                       ros_health, cache_identity_recording_id,
+                       cache_identity_relative_path
                 FROM recordings
-                WHERE id = %s
+                WHERE id = %s AND source_present = TRUE
                 """,
                 (recording_id,),
             ).fetchone()
@@ -132,6 +235,12 @@ class ProcessingRepository:
             database=components.get("ros_database"),
             topdown_video=components.get("topdown_video"),
             topdown_timestamps=components.get("topdown_timestamps"),
+            cache_identity_recording_id=int(
+                recording["cache_identity_recording_id"]
+            ),
+            cache_identity_relative_path=str(
+                recording["cache_identity_relative_path"]
+            ),
         )
 
     def get_artifact(
@@ -208,6 +317,8 @@ class ProcessingRepository:
         cache_identity: str,
         *,
         invalid_artifact_id: int | None = None,
+        work_units: int | None = None,
+        estimate_key: str | None = None,
     ) -> RequestOutcome:
         with open_connection(self.database_url) as connection:
             _lock_cache_identity(connection, kind, cache_identity)
@@ -238,16 +349,21 @@ class ProcessingRepository:
 
             inserted = connection.execute(
                 """
-                INSERT INTO jobs (recording_id, kind, cache_identity, state)
-                VALUES (%s, %s, %s, 'queued')
+                INSERT INTO jobs (
+                    recording_id, kind, cache_identity, state,
+                    work_units, estimate_key
+                )
+                VALUES (%s, %s, %s, 'queued', %s, %s)
                 ON CONFLICT (kind, cache_identity)
                     WHERE state IN ('queued', 'running')
                 DO NOTHING
                 RETURNING id, recording_id, kind, cache_identity, state,
                           queued_at, started_at, finished_at,
-                          error_code, error_message
+                          error_code, error_message, work_units, estimate_key,
+                          estimated_total_ms, estimate_method,
+                          estimate_sample_count
                 """,
-                (recording_id, kind, cache_identity),
+                (recording_id, kind, cache_identity, work_units, estimate_key),
             ).fetchone()
             if inserted is not None:
                 return RequestOutcome(job=_job_from_row(inserted))
@@ -261,25 +377,682 @@ class ProcessingRepository:
 
     def claim_next_job(self) -> JobRecord | None:
         with open_connection(self.database_url) as connection:
-            row = connection.execute(
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                ("rosbag_analyser_serial_job_claim",),
+            )
+            queued = connection.execute(
                 """
-                WITH next_job AS (
-                    SELECT id
-                    FROM jobs
-                    WHERE state = 'queued'
-                    ORDER BY queued_at, id
-                    FOR UPDATE SKIP LOCKED
-                    LIMIT 1
-                )
-                UPDATE jobs
-                SET state = 'running', started_at = CURRENT_TIMESTAMP
-                WHERE id = (SELECT id FROM next_job)
-                RETURNING id, recording_id, kind, cache_identity, state,
-                          queued_at, started_at, finished_at,
-                          error_code, error_message
+                SELECT id, recording_id, kind, cache_identity, state,
+                       queued_at, started_at, finished_at, error_code,
+                       error_message, work_units, estimate_key,
+                       estimated_total_ms, estimate_method,
+                       estimate_sample_count
+                FROM jobs
+                WHERE state = 'queued'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM jobs AS running WHERE running.state = 'running'
+                  )
+                ORDER BY queued_at, id
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
                 """
             ).fetchone()
+            if queued is None:
+                return None
+            estimate_values: dict[str, object] = {
+                "estimated_total_ms": None,
+                "estimate_method": None,
+                "estimate_sample_count": None,
+            }
+            work_units = _optional_int(queued["work_units"])
+            estimate_key = _optional_str(queued["estimate_key"])
+            if work_units is not None and estimate_key is not None:
+                frozen = _freeze_estimate(
+                    connection,
+                    estimate_key,
+                    work_units,
+                )
+                estimate_values = {
+                    "estimated_total_ms": frozen.estimated_total_ms,
+                    "estimate_method": frozen.method,
+                    "estimate_sample_count": frozen.sample_count,
+                }
+            row = connection.execute(
+                """
+                UPDATE jobs
+                SET state = 'running', started_at = CURRENT_TIMESTAMP,
+                    estimated_total_ms = %(estimated_total_ms)s,
+                    estimate_method = %(estimate_method)s,
+                    estimate_sample_count = %(estimate_sample_count)s
+                WHERE id = %(job_id)s
+                RETURNING id, recording_id, kind, cache_identity, state,
+                          queued_at, started_at, finished_at,
+                          error_code, error_message, work_units, estimate_key,
+                          estimated_total_ms, estimate_method,
+                          estimate_sample_count
+                """,
+                {"job_id": queued["id"], **estimate_values},
+            ).fetchone()
         return None if row is None else _job_from_row(row)
+
+    def get_current_outputs(
+        self,
+        recording_ids: tuple[int, ...] | None = None,
+    ) -> tuple[CurrentOutputRecord, ...]:
+        selected_ids = None if recording_ids is None else list(recording_ids)
+        with open_connection(self.database_url) as connection:
+            connection.execute(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+            )
+            target_rows = connection.execute(
+                """
+                SELECT target.recording_id, target.kind, target.scan_generation,
+                       target.planner_identity, target.target_state,
+                       target.cache_identity, target.diagnostic_code,
+                       target.diagnostic_message, target.work_units
+                FROM preparation_targets AS target
+                WHERE (%s::bigint[] IS NULL OR target.recording_id = ANY (%s))
+                ORDER BY target.recording_id,
+                         CASE target.kind
+                             WHEN 'front_preview' THEN 1
+                             WHEN 'topdown_preview' THEN 2
+                             WHEN 'imu_series' THEN 3
+                         END
+                """,
+                (selected_ids, selected_ids),
+            ).fetchall()
+            if not target_rows:
+                return ()
+            artifact_rows = connection.execute(
+                """
+                SELECT artifact.id, artifact.recording_id, artifact.kind,
+                       artifact.cache_identity, artifact.output_relative_path,
+                       artifact.mime_type, artifact.size_bytes,
+                       artifact.coverage_start_ns, artifact.coverage_end_ns,
+                       artifact.manifest, artifact.created_at
+                FROM artifacts AS artifact
+                JOIN preparation_targets AS target
+                  ON target.recording_id = artifact.recording_id
+                 AND target.kind = artifact.kind
+                 AND target.cache_identity = artifact.cache_identity
+                WHERE (%s::bigint[] IS NULL OR artifact.recording_id = ANY (%s))
+                """,
+                (selected_ids, selected_ids),
+            ).fetchall()
+            active_rows = connection.execute(
+                """
+                SELECT job.id, job.recording_id, job.kind, job.cache_identity,
+                       job.state, job.queued_at, job.started_at, job.finished_at,
+                       job.error_code, job.error_message, job.work_units,
+                       job.estimate_key, job.estimated_total_ms,
+                       job.estimate_method, job.estimate_sample_count
+                FROM jobs AS job
+                JOIN preparation_targets AS target
+                  ON target.recording_id = job.recording_id
+                 AND target.kind = job.kind
+                 AND target.cache_identity = job.cache_identity
+                WHERE job.state IN ('queued', 'running')
+                  AND (%s::bigint[] IS NULL OR job.recording_id = ANY (%s))
+                """,
+                (selected_ids, selected_ids),
+            ).fetchall()
+            failed_rows = connection.execute(
+                """
+                SELECT DISTINCT ON (job.recording_id, job.kind)
+                       job.id, job.recording_id, job.kind, job.cache_identity,
+                       job.state, job.queued_at, job.started_at, job.finished_at,
+                       job.error_code, job.error_message, job.work_units,
+                       job.estimate_key, job.estimated_total_ms,
+                       job.estimate_method, job.estimate_sample_count
+                FROM jobs AS job
+                JOIN preparation_targets AS target
+                  ON target.recording_id = job.recording_id
+                 AND target.kind = job.kind
+                 AND target.cache_identity = job.cache_identity
+                WHERE job.state = 'failed'
+                  AND (%s::bigint[] IS NULL OR job.recording_id = ANY (%s))
+                ORDER BY job.recording_id, job.kind, job.finished_at DESC, job.id DESC
+                """,
+                (selected_ids, selected_ids),
+            ).fetchall()
+        artifacts = {
+            (int(row["recording_id"]), str(row["kind"])): _artifact_from_row(row)
+            for row in artifact_rows
+        }
+        active = {
+            (int(row["recording_id"]), str(row["kind"])): _job_from_row(row)
+            for row in active_rows
+        }
+        failed = {
+            (int(row["recording_id"]), str(row["kind"])): _job_from_row(row)
+            for row in failed_rows
+        }
+        return tuple(
+            CurrentOutputRecord(
+                target=_target_from_row(row),
+                artifact=artifacts.get((int(row["recording_id"]), str(row["kind"]))),
+                active_job=active.get((int(row["recording_id"]), str(row["kind"]))),
+                latest_failed_job=failed.get(
+                    (int(row["recording_id"]), str(row["kind"]))
+                ),
+            )
+            for row in target_rows
+        )
+
+    def prepare_recording(
+        self,
+        recording_id: int,
+        planner_identities: Mapping[str, str],
+        *,
+        invalid_artifact_ids: Mapping[str, int] | None = None,
+        admission_diagnostic: AdmissionDiagnostic | None = None,
+    ) -> PreparationSchedule:
+        invalid_ids = {} if invalid_artifact_ids is None else invalid_artifact_ids
+        with open_connection(self.database_url) as connection:
+            recording = connection.execute(
+                """
+                SELECT recording.id, recording.source_present,
+                       recording.last_seen_generation,
+                       state.successful_generation
+                FROM recordings AS recording
+                CROSS JOIN catalog_state AS state
+                WHERE recording.id = %s AND state.singleton = TRUE
+                FOR UPDATE OF recording
+                """,
+                (recording_id,),
+            ).fetchone()
+            if recording is None:
+                return PreparationSchedule(recording_id, False, ())
+            rows = connection.execute(
+                """
+                SELECT recording_id, kind, scan_generation, planner_identity,
+                       target_state, cache_identity, diagnostic_code,
+                       diagnostic_message, work_units
+                FROM preparation_targets
+                WHERE recording_id = %s
+                ORDER BY CASE kind
+                    WHEN 'front_preview' THEN 1
+                    WHEN 'topdown_preview' THEN 2
+                    WHEN 'imu_series' THEN 3
+                END
+                FOR UPDATE
+                """,
+                (recording_id,),
+            ).fetchall()
+            targets = {str(row["kind"]): _target_from_row(row) for row in rows}
+            unavailable = (
+                not bool(recording["source_present"])
+                or int(recording["last_seen_generation"])
+                != int(recording["successful_generation"])
+                or set(targets) != set(PROCESSING_KINDS)
+                or any(
+                    target.target_state != "available"
+                    or target.scan_generation != int(recording["successful_generation"])
+                    or target.planner_identity != planner_identities.get(kind)
+                    for kind, target in targets.items()
+                )
+            )
+            if unavailable:
+                return PreparationSchedule(
+                    recording_id,
+                    True,
+                    tuple(
+                        ScheduledOutput(
+                            kind=kind,
+                            outcome="unavailable",
+                            state="unavailable",
+                            target=targets.get(kind),
+                        )
+                        for kind in PROCESSING_KINDS
+                    ),
+                )
+
+            for kind in sorted(PROCESSING_KINDS):
+                target = targets[kind]
+                assert target.cache_identity is not None
+                _lock_cache_identity(connection, kind, target.cache_identity)
+
+            outputs: list[ScheduledOutput] = []
+            for kind in PROCESSING_KINDS:
+                target = targets[kind]
+                assert target.cache_identity is not None
+                artifact_row = _select_artifact(
+                    connection, recording_id, kind, target.cache_identity, for_update=True
+                )
+                if artifact_row is not None:
+                    artifact = _artifact_from_row(artifact_row)
+                    if invalid_ids.get(kind) != artifact.id:
+                        outputs.append(
+                            ScheduledOutput(
+                                kind, "ready_reused", "ready", target, artifact=artifact
+                            )
+                        )
+                        continue
+                    connection.execute("DELETE FROM artifacts WHERE id = %s", (artifact.id,))
+
+                active_row = _select_active_job(
+                    connection, recording_id, kind, target.cache_identity
+                )
+                if active_row is not None:
+                    job = _job_from_row(active_row)
+                    outputs.append(
+                        ScheduledOutput(
+                            kind,
+                            "active_reused",
+                            "queued" if job.state == "queued" else "processing",
+                            target,
+                            job=job,
+                        )
+                    )
+                    continue
+                failed_before = _select_latest_failed_job(
+                    connection, recording_id, kind, target.cache_identity
+                )
+                if admission_diagnostic is not None:
+                    outputs.append(
+                        ScheduledOutput(
+                            kind,
+                            "unavailable",
+                            "unavailable",
+                            target,
+                            diagnostic_code=admission_diagnostic.code,
+                            diagnostic_message=admission_diagnostic.message,
+                        )
+                    )
+                    continue
+                job = _insert_v1_job(connection, target)
+                outputs.append(
+                    ScheduledOutput(
+                        kind,
+                        "retry_queued" if failed_before is not None else "queued",
+                        "queued",
+                        target,
+                        job=job,
+                    )
+                )
+        return PreparationSchedule(recording_id, True, tuple(outputs))
+
+    def retry_failed_job(
+        self,
+        failed_job_id: int,
+        planner_identities: Mapping[str, str],
+        *,
+        invalid_artifact_id: int | None = None,
+        admission_diagnostic: AdmissionDiagnostic | None = None,
+    ) -> RetrySchedule:
+        with open_connection(self.database_url) as connection:
+            failed = connection.execute(
+                """
+                SELECT id, recording_id, kind, cache_identity, state
+                FROM jobs
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (failed_job_id,),
+            ).fetchone()
+            if failed is None:
+                return RetrySchedule(False, False)
+            if str(failed["state"]) != "failed":
+                return RetrySchedule(True, False)
+            recording_id = int(failed["recording_id"])
+            kind = str(failed["kind"])
+            target_row = connection.execute(
+                """
+                SELECT target.recording_id, target.kind, target.scan_generation,
+                       target.planner_identity, target.target_state,
+                       target.cache_identity, target.diagnostic_code,
+                       target.diagnostic_message, target.work_units,
+                       recording.source_present, recording.last_seen_generation,
+                       state.successful_generation
+                FROM preparation_targets AS target
+                JOIN recordings AS recording ON recording.id = target.recording_id
+                CROSS JOIN catalog_state AS state
+                WHERE target.recording_id = %s
+                  AND target.kind = %s
+                  AND state.singleton = TRUE
+                FOR UPDATE OF target, recording
+                """,
+                (recording_id, kind),
+            ).fetchone()
+            if target_row is None:
+                return RetrySchedule(
+                    True,
+                    True,
+                    ScheduledOutput(kind, "unavailable", "unavailable"),
+                )
+            target = _target_from_row(target_row)
+            if (
+                not bool(target_row["source_present"])
+                or int(target_row["last_seen_generation"])
+                != int(target_row["successful_generation"])
+                or target.scan_generation != int(target_row["successful_generation"])
+                or target.target_state != "available"
+                or target.cache_identity is None
+                or target.planner_identity != planner_identities.get(kind)
+            ):
+                return RetrySchedule(
+                    True,
+                    True,
+                    ScheduledOutput(kind, "unavailable", "unavailable", target),
+                )
+            _lock_cache_identity(connection, kind, target.cache_identity)
+            artifact_row = _select_artifact(
+                connection,
+                recording_id,
+                kind,
+                target.cache_identity,
+                for_update=True,
+            )
+            if artifact_row is not None:
+                artifact = _artifact_from_row(artifact_row)
+                if artifact.id != invalid_artifact_id:
+                    return RetrySchedule(
+                        True,
+                        True,
+                        ScheduledOutput(
+                            kind,
+                            "ready_reused",
+                            "ready",
+                            target,
+                            artifact=artifact,
+                        ),
+                    )
+                connection.execute("DELETE FROM artifacts WHERE id = %s", (artifact.id,))
+            active = _select_active_job(
+                connection,
+                recording_id,
+                kind,
+                target.cache_identity,
+            )
+            if active is not None:
+                job = _job_from_row(active)
+                return RetrySchedule(
+                    True,
+                    True,
+                    ScheduledOutput(
+                        kind,
+                        "active_reused",
+                        "queued" if job.state == "queued" else "processing",
+                        target,
+                        job=job,
+                    ),
+                )
+            if admission_diagnostic is not None:
+                return RetrySchedule(
+                    True,
+                    True,
+                    ScheduledOutput(
+                        kind,
+                        "unavailable",
+                        "unavailable",
+                        target,
+                        diagnostic_code=admission_diagnostic.code,
+                        diagnostic_message=admission_diagnostic.message,
+                    ),
+                )
+            job = _insert_v1_job(connection, target)
+            return RetrySchedule(
+                True,
+                True,
+                ScheduledOutput(
+                    kind,
+                    "retry_queued",
+                    "queued",
+                    target,
+                    job=job,
+                ),
+            )
+
+    def processing_overview(self, *, queue_limit: int) -> ProcessingOverviewData:
+        if queue_limit <= 0:
+            raise ValueError("The queue overview limit must be positive.")
+        with open_connection(self.database_url) as connection:
+            connection.execute(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+            )
+            count_row = connection.execute(
+                """
+                WITH latest_failures AS (
+                    SELECT DISTINCT ON (job.recording_id, job.kind)
+                           job.id, job.recording_id, job.kind, job.cache_identity
+                    FROM jobs AS job
+                    JOIN preparation_targets AS target
+                      ON target.recording_id = job.recording_id
+                     AND target.kind = job.kind
+                     AND target.cache_identity = job.cache_identity
+                    WHERE job.state = 'failed'
+                    ORDER BY job.recording_id, job.kind,
+                             job.finished_at DESC, job.id DESC
+                ), actionable_failures AS (
+                    SELECT failure.id
+                    FROM latest_failures AS failure
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM jobs AS active
+                        WHERE active.recording_id = failure.recording_id
+                          AND active.kind = failure.kind
+                          AND active.cache_identity = failure.cache_identity
+                          AND active.state IN ('queued', 'running')
+                    )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM artifacts AS artifact
+                        WHERE artifact.recording_id = failure.recording_id
+                          AND artifact.kind = failure.kind
+                          AND artifact.cache_identity = failure.cache_identity
+                    )
+                )
+                SELECT CURRENT_TIMESTAMP AS server_time,
+                       (SELECT count(*) FROM jobs WHERE state = 'running') AS running_count,
+                       (SELECT count(*) FROM jobs WHERE state = 'queued') AS queued_count,
+                       (SELECT count(*) FROM actionable_failures) AS failed_count,
+                       (SELECT count(*) FROM jobs WHERE state = 'succeeded') AS succeeded_count
+                """
+            ).fetchone()
+            assert count_row is not None
+            running_row = connection.execute(
+                """
+                SELECT job.id, job.recording_id, job.kind, job.cache_identity,
+                       job.state, job.queued_at, job.started_at, job.finished_at,
+                       job.error_code, job.error_message, job.work_units,
+                       job.estimate_key, job.estimated_total_ms,
+                       job.estimate_method, job.estimate_sample_count,
+                       recording.display_name
+                FROM jobs AS job
+                JOIN recordings AS recording ON recording.id = job.recording_id
+                WHERE job.state = 'running'
+                ORDER BY job.started_at, job.id
+                LIMIT 1
+                """
+            ).fetchone()
+            queue_rows = connection.execute(
+                """
+                SELECT job.id, job.recording_id, job.kind, job.cache_identity,
+                       job.state, job.queued_at, job.started_at, job.finished_at,
+                       job.error_code, job.error_message, job.work_units,
+                       job.estimate_key, job.estimated_total_ms,
+                       job.estimate_method, job.estimate_sample_count,
+                       recording.display_name,
+                       row_number() OVER (ORDER BY job.queued_at, job.id) AS queue_position
+                FROM jobs AS job
+                JOIN recordings AS recording ON recording.id = job.recording_id
+                WHERE job.state = 'queued'
+                ORDER BY job.queued_at, job.id
+                LIMIT %s
+                """,
+                (queue_limit,),
+            ).fetchall()
+        return ProcessingOverviewData(
+            server_time=count_row["server_time"],  # type: ignore[arg-type]
+            running_count=int(count_row["running_count"]),
+            queued_count=int(count_row["queued_count"]),
+            failed_count=int(count_row["failed_count"]),
+            succeeded_count=int(count_row["succeeded_count"]),
+            running=None if running_row is None else _job_view_from_row(running_row),
+            queue=tuple(_job_view_from_row(row) for row in queue_rows),
+        )
+
+    def list_processing_jobs(
+        self,
+        view: str,
+        *,
+        limit: int,
+        cursor: tuple[datetime, int] | None = None,
+        search: str = "",
+    ) -> tuple[ProcessingJobViewRecord, ...]:
+        if view not in {"queued", "failed", "history"}:
+            raise ValueError("The processing view is invalid.")
+        if limit <= 0:
+            raise ValueError("The processing limit must be positive.")
+        pattern = f"%{_escape_like(search)}%"
+        cursor_time = None if cursor is None else cursor[0]
+        cursor_id = None if cursor is None else cursor[1]
+        with open_connection(self.database_url) as connection:
+            connection.execute(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+            )
+            if view == "queued":
+                rows = connection.execute(
+                    """
+                    WITH positioned AS (
+                        SELECT job.id, job.recording_id, job.kind,
+                               job.cache_identity, job.state, job.queued_at,
+                               job.started_at, job.finished_at, job.error_code,
+                               job.error_message, job.work_units, job.estimate_key,
+                               job.estimated_total_ms, job.estimate_method,
+                               job.estimate_sample_count, recording.display_name,
+                               row_number() OVER (
+                                   ORDER BY job.queued_at, job.id
+                               ) AS queue_position
+                        FROM jobs AS job
+                        JOIN recordings AS recording
+                          ON recording.id = job.recording_id
+                        WHERE job.state = 'queued'
+                    )
+                    SELECT * FROM positioned
+                    WHERE (%s = '' OR display_name ILIKE %s ESCAPE '\\')
+                      AND (
+                          %s::timestamptz IS NULL
+                          OR (queued_at, id) > (%s::timestamptz, %s::bigint)
+                      )
+                    ORDER BY queued_at, id
+                    LIMIT %s
+                    """,
+                    (
+                        search,
+                        pattern,
+                        cursor_time,
+                        cursor_time,
+                        cursor_id,
+                        limit,
+                    ),
+                ).fetchall()
+            elif view == "failed":
+                rows = connection.execute(
+                    """
+                    WITH latest AS (
+                        SELECT DISTINCT ON (job.recording_id, job.kind)
+                               job.id, job.recording_id, job.kind,
+                               job.cache_identity, job.state, job.queued_at,
+                               job.started_at, job.finished_at, job.error_code,
+                               job.error_message, job.work_units, job.estimate_key,
+                               job.estimated_total_ms, job.estimate_method,
+                               job.estimate_sample_count, recording.display_name
+                        FROM jobs AS job
+                        JOIN recordings AS recording
+                          ON recording.id = job.recording_id
+                        JOIN preparation_targets AS target
+                          ON target.recording_id = job.recording_id
+                         AND target.kind = job.kind
+                         AND target.cache_identity = job.cache_identity
+                        WHERE job.state = 'failed'
+                        ORDER BY job.recording_id, job.kind,
+                                 job.finished_at DESC, job.id DESC
+                    )
+                    SELECT latest.*
+                    FROM latest
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM jobs AS active
+                        WHERE active.recording_id = latest.recording_id
+                          AND active.kind = latest.kind
+                          AND active.cache_identity = latest.cache_identity
+                          AND active.state IN ('queued', 'running')
+                    )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM artifacts AS artifact
+                        WHERE artifact.recording_id = latest.recording_id
+                          AND artifact.kind = latest.kind
+                          AND artifact.cache_identity = latest.cache_identity
+                    )
+                      AND (%s = '' OR latest.display_name ILIKE %s ESCAPE '\\')
+                      AND (
+                          %s::timestamptz IS NULL
+                          OR (latest.finished_at, latest.id)
+                             < (%s::timestamptz, %s::bigint)
+                      )
+                    ORDER BY latest.finished_at DESC, latest.id DESC
+                    LIMIT %s
+                    """,
+                    (
+                        search,
+                        pattern,
+                        cursor_time,
+                        cursor_time,
+                        cursor_id,
+                        limit,
+                    ),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT job.id, job.recording_id, job.kind,
+                           job.cache_identity, job.state, job.queued_at,
+                           job.started_at, job.finished_at, job.error_code,
+                           job.error_message, job.work_units, job.estimate_key,
+                           job.estimated_total_ms, job.estimate_method,
+                           job.estimate_sample_count, recording.display_name,
+                           artifact.size_bytes AS output_size_bytes
+                    FROM jobs AS job
+                    JOIN recordings AS recording ON recording.id = job.recording_id
+                    LEFT JOIN artifacts AS artifact
+                      ON artifact.recording_id = job.recording_id
+                     AND artifact.kind = job.kind
+                     AND artifact.cache_identity = job.cache_identity
+                    WHERE job.state = 'succeeded'
+                      AND (%s = '' OR recording.display_name ILIKE %s ESCAPE '\\')
+                      AND (
+                          %s::timestamptz IS NULL
+                          OR (job.finished_at, job.id)
+                             < (%s::timestamptz, %s::bigint)
+                      )
+                    ORDER BY job.finished_at DESC, job.id DESC
+                    LIMIT %s
+                    """,
+                    (
+                        search,
+                        pattern,
+                        cursor_time,
+                        cursor_time,
+                        cursor_id,
+                        limit,
+                    ),
+                ).fetchall()
+        return tuple(_job_view_from_row(row) for row in rows)
+
+    def worker_online(self, lock_name: str) -> bool:
+        with open_connection(self.database_url) as connection:
+            acquired = bool(
+                connection.execute(
+                    "SELECT pg_try_advisory_lock(hashtext(%s)) AS acquired",
+                    (lock_name,),
+                ).fetchone()["acquired"]
+            )
+            if acquired:
+                connection.execute(
+                    "SELECT pg_advisory_unlock(hashtext(%s))",
+                    (lock_name,),
+                )
+                return False
+            return True
 
     def complete_job(self, job_id: int, artifact: ArtifactWrite) -> ArtifactRecord:
         with open_connection(self.database_url) as connection:
@@ -387,7 +1160,9 @@ def _select_active_job(
     return connection.execute(
         """
         SELECT id, recording_id, kind, cache_identity, state, queued_at,
-               started_at, finished_at, error_code, error_message
+               started_at, finished_at, error_code, error_message,
+               work_units, estimate_key, estimated_total_ms,
+               estimate_method, estimate_sample_count
         FROM jobs
         WHERE recording_id = %s AND kind = %s AND cache_identity = %s
           AND state IN ('queued', 'running')
@@ -404,7 +1179,9 @@ def _select_latest_failed_job(
     return connection.execute(
         """
         SELECT id, recording_id, kind, cache_identity, state, queued_at,
-               started_at, finished_at, error_code, error_message
+               started_at, finished_at, error_code, error_message,
+               work_units, estimate_key, estimated_total_ms,
+               estimate_method, estimate_sample_count
         FROM jobs
         WHERE recording_id = %s AND kind = %s AND cache_identity = %s
           AND state = 'failed'
@@ -420,6 +1197,102 @@ def _lock_cache_identity(connection: Any, kind: str, cache_identity: str) -> Non
         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
         (f"{kind}:{cache_identity}",),
     )
+
+
+def _select_artifact(
+    connection: Any,
+    recording_id: int,
+    kind: str,
+    cache_identity: str,
+    *,
+    for_update: bool = False,
+) -> dict[str, object] | None:
+    lock_clause = "FOR UPDATE" if for_update else ""
+    return connection.execute(
+        f"""
+        SELECT id, recording_id, kind, cache_identity,
+               output_relative_path, mime_type, size_bytes,
+               coverage_start_ns, coverage_end_ns, manifest, created_at
+        FROM artifacts
+        WHERE recording_id = %s AND kind = %s AND cache_identity = %s
+        {lock_clause}
+        """,
+        (recording_id, kind, cache_identity),
+    ).fetchone()
+
+
+def _insert_v1_job(
+    connection: Any,
+    target: PreparationTargetRecord,
+) -> JobRecord:
+    if target.cache_identity is None or target.work_units is None:
+        raise RuntimeError("Only an available preparation target can be queued.")
+    row = connection.execute(
+        """
+        INSERT INTO jobs (
+            recording_id, kind, cache_identity, state, work_units, estimate_key
+        ) VALUES (%s, %s, %s, 'queued', %s, %s)
+        ON CONFLICT (kind, cache_identity)
+            WHERE state IN ('queued', 'running')
+        DO NOTHING
+        RETURNING id, recording_id, kind, cache_identity, state, queued_at,
+                  started_at, finished_at, error_code, error_message,
+                  work_units, estimate_key, estimated_total_ms,
+                  estimate_method, estimate_sample_count
+        """,
+        (
+            target.recording_id,
+            target.kind,
+            target.cache_identity,
+            target.work_units,
+            target.planner_identity,
+        ),
+    ).fetchone()
+    if row is None:
+        row = _select_active_job(
+            connection,
+            target.recording_id,
+            target.kind,
+            target.cache_identity,
+        )
+    if row is None:
+        raise RuntimeError("The preparation request could not be serialized.")
+    return _job_from_row(row)
+
+
+def _freeze_estimate(
+    connection: Any,
+    estimate_key: str,
+    work_units: int,
+):
+    rows = connection.execute(
+        """
+        SELECT job.work_units, job.started_at, job.finished_at
+        FROM jobs AS job
+        JOIN artifacts AS artifact
+          ON artifact.recording_id = job.recording_id
+         AND artifact.kind = job.kind
+         AND artifact.cache_identity = job.cache_identity
+        WHERE job.state = 'succeeded'
+          AND job.estimate_key = %s
+          AND job.work_units > 0
+          AND job.started_at IS NOT NULL
+          AND job.finished_at > job.started_at
+          AND artifact.manifest ->> 'cache_identity' = job.cache_identity
+        ORDER BY job.finished_at DESC, job.id DESC
+        LIMIT %s
+        """,
+        (estimate_key, MAX_ESTIMATE_SAMPLES),
+    ).fetchall()
+    samples: list[EstimateSample] = []
+    for row in rows:
+        started_at = row["started_at"]
+        finished_at = row["finished_at"]
+        if not isinstance(started_at, datetime) or not isinstance(finished_at, datetime):
+            continue
+        runtime_ms = int((finished_at - started_at).total_seconds() * 1_000)
+        samples.append(EstimateSample(runtime_ms, int(row["work_units"])))
+    return estimate_total_ms(work_units, tuple(samples))
 
 
 def _component_from_row(row: dict[str, object]) -> ProcessingComponent:
@@ -464,7 +1337,39 @@ def _job_from_row(row: dict[str, object]) -> JobRecord:
         finished_at=row["finished_at"],  # type: ignore[arg-type]
         error_code=_optional_str(row["error_code"]),
         error_message=_optional_str(row["error_message"]),
+        work_units=_optional_int(row.get("work_units")),
+        estimate_key=_optional_str(row.get("estimate_key")),
+        estimated_total_ms=_optional_int(row.get("estimated_total_ms")),
+        estimate_method=_optional_str(row.get("estimate_method")),
+        estimate_sample_count=_optional_int(row.get("estimate_sample_count")),
     )
+
+
+def _target_from_row(row: dict[str, object]) -> PreparationTargetRecord:
+    return PreparationTargetRecord(
+        recording_id=int(row["recording_id"]),
+        kind=str(row["kind"]),
+        scan_generation=int(row["scan_generation"]),
+        planner_identity=str(row["planner_identity"]),
+        target_state=str(row["target_state"]),
+        cache_identity=_optional_str(row["cache_identity"]),
+        diagnostic_code=_optional_str(row["diagnostic_code"]),
+        diagnostic_message=_optional_str(row["diagnostic_message"]),
+        work_units=_optional_int(row["work_units"]),
+    )
+
+
+def _job_view_from_row(row: dict[str, object]) -> ProcessingJobViewRecord:
+    return ProcessingJobViewRecord(
+        job=_job_from_row(row),
+        recording_name=str(row["display_name"]),
+        output_size_bytes=_optional_int(row.get("output_size_bytes")),
+        queue_position=_optional_int(row.get("queue_position")),
+    )
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _optional_int(value: object) -> int | None:

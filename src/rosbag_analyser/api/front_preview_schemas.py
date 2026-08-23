@@ -35,7 +35,7 @@ def front_preview_response(
             size_bytes=str(display.artifact.size_bytes),
             coverage_start_ns=str(display.artifact.coverage_start_ns),
             coverage_end_ns=str(display.artifact.coverage_end_ns),
-            timestamp_provenance="ros_record_timestamp",
+            timestamp_provenance=_timestamp_provenance(display.artifact.manifest),
             bounds="measured",
             media_url=(
                 f"/api/recordings/{recording_id}/front-preview/media/"
@@ -55,3 +55,12 @@ def front_preview_response(
         artifact=artifact,
         poll_after_ms=1_000 if display.state in {"queued", "processing"} else None,
     )
+
+
+def _timestamp_provenance(manifest: dict[str, object]) -> str:
+    timing = manifest.get("timing")
+    if isinstance(timing, dict):
+        value = timing.get("timestamp_provenance")
+        if isinstance(value, str) and 0 < len(value) <= 100:
+            return value
+    return "ros_record_timestamp"

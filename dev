@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly project_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+  pwd -P
+)"
+readonly settings_file="${ROS_BAG_ANALYSER_SETTINGS_FILE:-$HOME/.config/rosbag-analyser/environment}"
+readonly database_secret_file="${ROS_BAG_ANALYSER_DATABASE_SECRET_FILE:-$HOME/.config/rosbag-analyser/database.env}"
+readonly state_root="$HOME/.local/state/rosbag-analyser"
+readonly api_pid_file="$state_root/api.pid"
+readonly worker_pid_file="$state_root/worker.pid"
+readonly api_log_file="$state_root/api.log"
+readonly worker_log_file="$state_root/worker.log"
+readonly lifecycle_lock="$state_root/lifecycle.lock"
+readonly health_url="${ROS_BAG_ANALYSER_DEV_URL:-http://127.0.0.1:8000}"
+
+usage() {
+  cat <<'EOF'
+Usage: ./dev COMMAND
+
+Commands:
+  start     Validate, migrate, and start the API and serial worker
+  open      Start the application and open it in the Windows browser
+  status    Show API, worker, and HTTP health
+  logs      Follow API and worker logs
+  restart   Migrate and restart the API and worker
+  stop      Stop the worker and API
+  migrate   Apply pending database migrations
+  rescan    Explicitly scan the configured archive read-only
+  install   Install or repair the Windows desktop shortcut
+  check     Validate the local configuration without starting anything
+  help      Show this help
+EOF
+}
+
+fail() {
+  echo "dev: $*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"
+}
+
+require_private_file() {
+  local path="$1"
+  local mode
+  [[ -r "$path" ]] || fail "required configuration file is unreadable: $path"
+  mode="$(stat -c '%a' "$path")"
+  [[ "$mode" == "600" || "$mode" == "400" ]] \
+    || fail "$path must have mode 600 or 400; found $mode"
+}
+
+load_public_settings() {
+  set -a
+  # This file is private, user-owned local configuration and is never committed.
+  source "$settings_file"
+  set +a
+}
+
+check_configuration() {
+  local archive_root
+  local derived_root
+
+  require_command curl
+  require_command flock
+  require_command nohup
+  require_command realpath
+  require_command setsid
+  require_command stat
+  require_private_file "$settings_file"
+  require_private_file "$database_secret_file"
+  load_public_settings
+
+  : "${ROS_BAG_ANALYSER_ARCHIVE_ROOT:?missing archive root in $settings_file}"
+  : "${ROS_BAG_ANALYSER_DERIVED_ROOT:?missing derived root in $settings_file}"
+  : "${ROS_BAG_ANALYSER_FRONT_TOPIC:?missing front topic in $settings_file}"
+  : "${ROS_BAG_ANALYSER_IMU_TOPIC:?missing IMU topic in $settings_file}"
+
+  [[ -d "$ROS_BAG_ANALYSER_ARCHIVE_ROOT" ]] \
+    || fail "archive root is not mounted: $ROS_BAG_ANALYSER_ARCHIVE_ROOT"
+  [[ -d "$ROS_BAG_ANALYSER_DERIVED_ROOT" ]] \
+    || fail "derived root does not exist: $ROS_BAG_ANALYSER_DERIVED_ROOT"
+
+  archive_root="$(realpath -e "$ROS_BAG_ANALYSER_ARCHIVE_ROOT")"
+  derived_root="$(realpath -e "$ROS_BAG_ANALYSER_DERIVED_ROOT")"
+  if [[
+    "$archive_root" == "$derived_root"
+    || "$archive_root" == "$derived_root/"*
+    || "$derived_root" == "$archive_root/"*
+  ]]; then
+    fail "archive and derived roots must not overlap"
+  fi
+
+  [[ -x "$project_root/.venv/bin/rosbag-analyser" ]] \
+    || fail "project virtual environment is missing; follow README.md setup"
+  [[ -x "$project_root/scripts/rosbag-analyser-service" ]] \
+    || fail "service launcher is not executable"
+
+  echo "Configuration is valid."
+  echo "  archive: $archive_root"
+  echo "  derived: $derived_root"
+}
+
+prepare_state_root() {
+  mkdir -p "$state_root"
+  chmod 0700 "$state_root"
+}
+
+acquire_lifecycle_lock() {
+  prepare_state_root
+  exec 9>"$lifecycle_lock"
+  chmod 0600 "$lifecycle_lock"
+  flock --exclusive 9
+}
+
+process_is_running() {
+  local pid_file="$1"
+  local expected_command="$2"
+  local pid
+  local process_state
+  local argument
+  local expected_path="$project_root/.venv/bin/$expected_command"
+  local command_matches=false
+
+  [[ -r "$pid_file" ]] || return 1
+  read -r pid < "$pid_file" || return 1
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  [[ -r "/proc/$pid/status" && -r "/proc/$pid/cmdline" ]] || return 1
+
+  process_state="$(
+    awk '$1 == "State:" { print $2; exit }' "/proc/$pid/status" 2>/dev/null
+  )" || return 1
+  [[ "$process_state" != "Z" ]] || return 1
+
+  while IFS= read -r -d '' argument; do
+    if [[ "$argument" == "$expected_path" ]]; then
+      command_matches=true
+      break
+    fi
+  done < "/proc/$pid/cmdline"
+
+  [[ "$command_matches" == true ]]
+}
+
+start_process() {
+  local mode="$1"
+  local pid_file="$2"
+  local log_file="$3"
+  local expected_command="$4"
+  local pid
+  local attempt
+
+  if process_is_running "$pid_file" "$expected_command"; then
+    return
+  fi
+
+  rm -f -- "$pid_file"
+  touch "$log_file"
+  chmod 0600 "$log_file"
+  nohup setsid "$project_root/scripts/rosbag-analyser-service" "$mode" \
+    9>&- >>"$log_file" 2>&1 </dev/null &
+  pid=$!
+  printf '%s\n' "$pid" > "$pid_file"
+  chmod 0600 "$pid_file"
+
+  for attempt in $(seq 1 20); do
+    if process_is_running "$pid_file" "$expected_command"; then
+      return
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+
+  echo "The $mode process did not stay running. Recent log output:" >&2
+  tail --lines=30 "$log_file" >&2 || true
+  return 1
+}
+
+stop_process() {
+  local label="$1"
+  local pid_file="$2"
+  local expected_command="$3"
+  local pid
+  local attempt
+
+  if ! process_is_running "$pid_file" "$expected_command"; then
+    rm -f -- "$pid_file"
+    return
+  fi
+
+  read -r pid < "$pid_file"
+  kill -TERM "$pid"
+  for attempt in $(seq 1 80); do
+    if ! process_is_running "$pid_file" "$expected_command"; then
+      rm -f -- "$pid_file"
+      return
+    fi
+    sleep 0.25
+  done
+
+  fail "$label process $pid did not stop after 20 seconds; it was not force-killed"
+}
+
+application_is_healthy() {
+  process_is_running "$api_pid_file" "rosbag-analyser" \
+    && process_is_running "$worker_pid_file" "rosbag-analyser-worker" \
+    && curl --fail --silent --show-error \
+      "$health_url/api/recordings" >/dev/null 2>&1
+}
+
+frontend_assets_changed() {
+  local asset
+
+  [[ -r "$api_pid_file" ]] || return 1
+  for asset in \
+    "$project_root/src/rosbag_analyser/web/index.html" \
+    "$project_root/src/rosbag_analyser/web/app.js" \
+    "$project_root/src/rosbag_analyser/web/imu_graph.js" \
+    "$project_root/src/rosbag_analyser/web/styles.css" \
+    "$project_root/src/rosbag_analyser/web/assets/tech-trace-icon.svg"
+  do
+    if [[ "$asset" -nt "$api_pid_file" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+wait_for_application() {
+  local attempt
+  for attempt in $(seq 1 80); do
+    if application_is_healthy; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "The API did not become healthy at $health_url." >&2
+  tail --lines=30 "$api_log_file" "$worker_log_file" >&2 || true
+  return 1
+}
+
+run_migrations() {
+  "$project_root/scripts/rosbag-analyser-service" migrate
+}
+
+start_application() {
+  check_configuration
+  if application_is_healthy; then
+    if frontend_assets_changed; then
+      echo "Frontend files changed; reloading the API process."
+      stop_process "API" "$api_pid_file" "rosbag-analyser"
+      start_process api "$api_pid_file" "$api_log_file" "rosbag-analyser"
+      wait_for_application
+      echo "ROS 2 Bag Analyser reloaded at $health_url"
+      return
+    fi
+    echo "ROS 2 Bag Analyser is already running at $health_url"
+    return
+  fi
+
+  if curl --fail --silent "$health_url/api/recordings" >/dev/null 2>&1; then
+    fail "an unmanaged application is already responding at $health_url; stop it before using ./dev"
+  fi
+
+  run_migrations
+  start_process api "$api_pid_file" "$api_log_file" "rosbag-analyser"
+  start_process worker "$worker_pid_file" "$worker_log_file" \
+    "rosbag-analyser-worker"
+  wait_for_application
+  echo "ROS 2 Bag Analyser is ready at $health_url"
+}
+
+open_browser() {
+  local windows_command="/mnt/c/Windows/System32/cmd.exe"
+  [[ -x "$windows_command" ]] || fail "Windows command launcher is unavailable"
+  "$windows_command" /c start "" "$health_url" >/dev/null 2>&1
+  echo "Opened $health_url"
+}
+
+show_status() {
+  if process_is_running "$api_pid_file" "rosbag-analyser"; then
+    echo "API process                          running (PID $(<"$api_pid_file"))"
+  else
+    echo "API process                          stopped"
+  fi
+  if process_is_running "$worker_pid_file" "rosbag-analyser-worker"; then
+    echo "Serial worker                        running (PID $(<"$worker_pid_file"))"
+  else
+    echo "Serial worker                        stopped"
+  fi
+  if curl --fail --silent "$health_url/api/recordings" >/dev/null 2>&1; then
+    echo "HTTP API                             healthy ($health_url)"
+  else
+    echo "HTTP API                             unavailable ($health_url)"
+  fi
+}
+
+restart_application() {
+  check_configuration
+  stop_process "worker" "$worker_pid_file" "rosbag-analyser-worker"
+  stop_process "API" "$api_pid_file" "rosbag-analyser"
+  run_migrations
+  start_process api "$api_pid_file" "$api_log_file" "rosbag-analyser"
+  start_process worker "$worker_pid_file" "$worker_log_file" \
+    "rosbag-analyser-worker"
+  wait_for_application
+  echo "ROS 2 Bag Analyser restarted at $health_url"
+}
+
+stop_application() {
+  stop_process "worker" "$worker_pid_file" "rosbag-analyser-worker"
+  stop_process "API" "$api_pid_file" "rosbag-analyser"
+  echo "ROS 2 Bag Analyser stopped."
+}
+
+rescan_archive() {
+  start_application
+  echo "Scanning the configured archive read-only…"
+  curl --fail --silent --show-error \
+    --request POST "$health_url/api/catalog/rescan" \
+    | "$project_root/.venv/bin/python" -m json.tool
+}
+
+command_name="${1:-help}"
+case "$command_name" in
+  start)
+    acquire_lifecycle_lock
+    start_application
+    ;;
+  open)
+    acquire_lifecycle_lock
+    start_application
+    open_browser
+    ;;
+  status)
+    show_status
+    ;;
+  logs)
+    [[ -e "$api_log_file" || -e "$worker_log_file" ]] \
+      || fail "no local logs exist yet; run ./dev start first"
+    exec tail --lines=80 --follow=name \
+      "$api_log_file" "$worker_log_file"
+    ;;
+  restart)
+    acquire_lifecycle_lock
+    restart_application
+    ;;
+  stop)
+    acquire_lifecycle_lock
+    stop_application
+    ;;
+  migrate)
+    acquire_lifecycle_lock
+    check_configuration
+    run_migrations
+    echo "Database migrations are current."
+    ;;
+  rescan)
+    acquire_lifecycle_lock
+    rescan_archive
+    ;;
+  install)
+    exec "$project_root/scripts/install-local-dev"
+    ;;
+  check)
+    check_configuration
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    fail "unknown command: $command_name"
+    ;;
+esac

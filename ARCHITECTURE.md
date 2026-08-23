@@ -1,508 +1,929 @@
-# ROS 2 Bag Analyser — Architecture
+# ROS 2 Bag Analyser — V1 Architecture
 
-> **Status:** Accepted V0 architecture
+> **Status:** Approved pre-overhaul V1 build contract; Building blocks 1 and 2
+> and their corrective slices accepted; Building block 3 repository readiness
+> implemented, verified, and accepted as the working baseline on 2026-08-23;
+> Prompt 2A big UI overhaul invoked; live commissioning pending
 >
-> **Implementation status:** Building blocks 1–5 complete and user-accepted; V0 complete
+> **Target:** Internal limited-group NAS trial
 >
-> **Last updated:** 2026-07-22
+> **Last updated:** 2026-08-23
 
-This document defines the smallest architecture needed for the mentor-facing
-V0. It is a build contract, not a description of existing software and not a
-plan for a production platform.
+## 1. Objective and baseline
 
-## 1. V0 objective
+V1 makes the completed V0 processing and synchronized review capabilities
+usable as one coherent product workflow against a larger, physically organized
+NAS archive.
 
-The application must prove that one developer can build a safe web workflow
-which:
+V1 extends the existing modular monolith rather than replacing its processors,
+artifact store, worker, or synchronization model. The separately approved
+smooth front-camera correction versions only that processor's timing policy and
+browser correction behavior. The separately approved moved-path corrections
+keep retained source-missing history internal to ordinary current catalog
+projections and preserve compatible processed output across unambiguous folder
+moves. The primary additions are:
 
-1. scans the six known recording folders;
-2. shows useful metadata and identifies the damaged ROS database;
-3. generates and reuses a front-camera preview;
-4. adds the timestamped top-down camera and synchronizes both videos; and
-5. shows one IMU signal on the same timeline.
+- bounded recursive discovery and a physical folder-tree contract;
+- one aggregate preparation state per recording;
+- one bounded bulk preparation operation;
+- persistent queue, failure, history, elapsed-time, and estimate APIs;
+- the frontend under `archive/` wired to real data; and
+- a repeatable internal VM deployment.
 
-## 2. V0 decisions
+The V0 documents in [docs/v0](docs/v0/INDEX.md) remain the evidence for source
+facts, processor correctness, artifact identity, timing, and real-data safety.
 
-| Area | Decision |
+### 1.1 Approved Prompt 2A architecture delta
+
+The architecture sections below remain the accepted implementation baseline.
+Prompt 2A, approved and invoked on 2026-08-23, is the next block and owns these
+not-yet-implemented changes:
+
+- the current Recordings, Processing, and Analyzer reference replaces the
+  served presentation while Experiments/Files and all mock payloads are
+  excluded;
+- preparation accepts a validated non-empty subset of the same three artifact
+  kinds and preserves independently reusable output identity;
+- job lifecycle remains durable, while a separate control state supports
+  pause/resume and cancellation without confusing a paused attempt with a
+  terminal result;
+- queue reorder is serialized with worker claim order, and bulk controls are
+  bounded, transactional where required, and concurrency-safe;
+- processors may publish exact completed/total phase units only at validated
+  safe checkpoints; otherwise progress stays indeterminate;
+- historical likely duration and cumulative queue estimates remain explicitly
+  approximate and disappear when required inputs are unknown or stale; and
+- Analyzer graph-window interactions remain presentation over the one factual
+  full-recording clock and do not alter media timing, coverage, or artifact
+  contracts.
+
+Prompt 2A in `BUILDING_BLOCK_PROMPTS.md` owns the detailed state machine,
+migration/API contracts, checkpoint semantics, failure rules, and visual test
+matrix. The existing decisions below describe current behavior until that block
+is implemented and accepted; conflicts are deliberate, dated overhaul deltas,
+not evidence that the new behavior already exists.
+
+## 2. V1 decisions
+
+| Area | V1 decision |
 |---|---|
+| Product surface | Preserve the `archive/` mockup as the visual contract |
 | Shape | Modular monolith in one repository |
-| Backend | Python in the ROS 2 Humble environment |
-| HTTP | FastAPI |
-| Frontend | Browser UI consuming explicit HTTP responses |
-| Persistent state | PostgreSQL with four small tables |
-| Expensive work | One serial worker process |
-| Source storage | External, configured, strictly read-only |
-| Derived storage | Configured filesystem root outside the archive |
-| Large outputs | Filesystem only, never PostgreSQL |
-| ROS timeline | Record timestamp relative to bag start |
-| Top-down timeline | CSV Unix timestamp relative to bag start |
-| Telemetry | Configured standard IMU angular-velocity component |
-| Authentication | Deferred; V0 is local or trusted-network only |
-| Redis and brokers | Deferred |
-
-PostgreSQL is retained because the API and worker need a small shared durable
-state boundary. It is not permission to build a general job platform or a
-future-proof catalog schema.
-
-Framework, ORM, encoder, chart-library, bitrate, and styling choices are made
-only in the roadmap block that first needs them.
+| Backend | Python in a ROS 2 Humble-compatible Ubuntu 22.04 environment |
+| HTTP | FastAPI with versioned V1 JSON contracts |
+| Frontend | Dependency-free HTML, CSS, and JavaScript |
+| Metadata | PostgreSQL |
+| Source archive | One configured, physically nested, strictly read-only root |
+| Derived data | Separate configured writable filesystem root |
+| Expensive work | Exactly one serial worker |
+| Preparation | One bulk user action, three independent artifact jobs |
+| Artifact kinds | `front_preview`, `topdown_preview`, `imu_series` |
+| Queue order | FIFO by `queued_at`, then job ID |
+| Job progress | Indeterminate; V1 does not claim percentage complete |
+| Estimate | Historical, kind-specific, source-size-normalized, explicitly approximate |
+| ROS time | Database record time relative to bag start |
+| Front media cadence | Image-header capture cadence affinely mapped between measured ROS record endpoints |
+| Top-down time | CSV Unix time relative to bag start |
+| Trial deployment | One internal Ubuntu VM with a trusted access boundary |
+| Public exposure | Prohibited |
 
 ## 3. Non-negotiable invariants
 
-### 3.1 Original recordings are read-only
+### 3.1 Original recordings are immutable
 
-Sources are never modified, repaired, reindexed, renamed, moved, deleted, or
-used as output locations. Source SQLite access is explicitly read-only and must
-not create journals, WAL files, locks, indexes, or sidecars. Browser requests
-refer to catalog IDs rather than arbitrary source paths. A read-only archive
-mount is useful defence in depth but does not replace application checks.
+The application never modifies, repairs, reindexes, truncates, renames, moves,
+deletes, or writes beside a source recording. It does not create source-side
+journals, WAL files, locks, indexes, caches, or sidecars.
+
+SQLite sources are opened with explicit read-only URI mode and immutable mode
+when compatible. A NAS read-only mount and read-only service-account permission
+provide defence in depth but do not replace application enforcement.
 
 ### 3.2 Derived output has one owner
 
-All generated output is constrained to a derived root that does not overlap the
-archive. Discovered names cannot become unchecked paths. Work remains temporary
-until validated and published; cleanup and replacement may affect only proven
-derived-owned paths and must preserve valid earlier output on failure.
+All generated files live below the configured derived root. Temporary work is
+job-owned, contained, validated, and atomically published where practical. A
+failed replacement cannot destroy an earlier valid artifact.
 
-### 3.3 Heavy work is outside HTTP requests
+### 3.3 Heavy work stays outside HTTP routes
 
-A bounded metadata scan may run through an application service during an HTTP
-request. Image decoding, transcoding, complete telemetry extraction, full
-integrity checks, and other expensive work run in the serial worker.
+Catalog traversal remains bounded. Full ROS reads, image decoding, video
+transcoding, sidecar validation, telemetry extraction, and artifact validation
+for publication remain worker operations. The Processing APIs query PostgreSQL
+and contained derived metadata; they never inspect source streams.
 
-### 3.4 Processing is independent of delivery
+### 3.4 Processing remains independent of presentation
 
-Scanning, ROS reading, image decoding, media generation, timestamp mapping, and
-telemetry extraction do not import FastAPI or frontend code. They accept plain
-validated inputs and return plain results.
+Catalog, preparation, estimation, processors, artifact publication, and worker
+logic accept plain application inputs and do not import browser code. The V1
+frontend consumes explicit API contracts and never reads PostgreSQL rows or
+filesystem paths directly.
 
-### 3.5 Time has one meaning
+### 3.5 Time retains one meaning
 
-Every synchronized stream uses elapsed time relative to the ROS bag start.
-Backend calculations preserve integer nanoseconds. Header timestamps may be
-retained for diagnostics but never silently replace the V0 record clock.
+All review consumers use elapsed time from the ROS bag start. Front-camera
+coverage and global placement retain the first and last retained ROS database
+record timestamps. Within that interval, strictly ordered image-header capture
+timestamps are affinely mapped to determine frame presentation cadence. This is
+an explicit, versioned policy; header timestamps do not silently redefine
+coverage. The nominal source AVI rate never replaces CSV capture timestamps.
 
-### 3.6 States describe one concern
+### 3.6 States remain truthful and separate
 
-Source condition, processing execution, and ready output are different facts.
+Source health, job execution, artifact readiness, worker availability, request
+failure, and timeline coverage are different concerns. A presentation may
+summarize them, but persistence and API responses do not conflate them.
 
-- `unavailable` means prerequisites are missing, damaged, or unsupported.
-- `failed` means an actual processing attempt failed.
-- a ready artifact means validated output was published.
+### 3.7 The visual reference is preserved
 
-The UI may combine those facts into one display label. PostgreSQL does not store
-the same lifecycle independently in several tables. Being outside a ready
-stream's time coverage is a separate player condition, not a processing failure.
+The files under `archive/` are design source material and remain untouched
+during ordinary implementation. V1 ports or adapts that design into the served
+frontend. Functional wiring may add hidden hooks, safe placeholders, and
+accessibility state, but it must not casually redesign the interface.
 
 ## 4. System shape
 
 ```mermaid
 flowchart LR
-    UI["Browser UI"] --> API["FastAPI application"]
+    USER["Engineer browser"] --> PROXY["Internal TLS/access proxy"]
+    PROXY --> API["FastAPI application"]
     API --> PG[("PostgreSQL")]
-    API -->|"bounded scan"| SCAN["Catalog scanner"]
-    SCAN -. "read only" .-> SRC["Recording archive"]
-
-    API -->|"request or reuse work"| PG
-    WORKER["One serial worker"] -->|"claim and finish jobs"| PG
-    WORKER -. "read only" .-> SRC
-    WORKER --> STORE["Derived artifact store"]
-    API -->|"serve ready output"| STORE
+    API -->|"explicit bounded rescan"| SCAN["Recursive catalog scanner"]
+    SCAN -. "read only" .-> NAS["NAS recording archive"]
+    API -->|"prepare selected"| PG
+    WORKER["One serial ROS worker"] -->|"claim and complete FIFO jobs"| PG
+    WORKER -. "read only" .-> NAS
+    WORKER --> DERIVED["Derived artifact root"]
+    API -->|"identity-bound output"| DERIVED
 ```
 
-The API and worker are separate entry points from one backend package. The API
-runs bounded catalog use cases and serves state/output; the scanner only
-describes sources; and the worker runs one processor at a time. PostgreSQL holds
-small metadata, the derived filesystem holds payloads, and the browser receives
-neither ROS files nor absolute paths.
+The API binds to a private interface, preferably loopback behind the reverse
+proxy. PostgreSQL and the worker are not reachable from engineer browsers.
 
-Scanner logic is independent of where it is dispatched. V0 may run its bounded
-scan in the API process. If measurement later shows that scanning is too slow,
-the same scanner can be called by the worker without changing its core logic or
-result contract.
-
-## 5. Small module boundaries
-
-Create modules only when their roadmap block needs them.
+## 5. Module boundaries
 
 | Boundary | Responsibility |
 |---|---|
-| `config` | Validate roots, database, topics, encoder, and server settings |
-| `catalog` | Discover, parse metadata, inspect sources, and calculate revisions |
-| `persistence` | Four PostgreSQL models and the direct queries V0 needs |
-| `processors` | Front, top-down, and IMU processing from source descriptor to result |
-| `artifact_store` | Cache keys, contained paths, temporary work, and publication |
-| `timeline` | Integer time conversion, coverage, and global/media mapping |
-| `api` / `worker` | Thin entry points which compose the other boundaries |
+| `config` | Roots, bounds, topics, profile, database, server, and trial settings |
+| `catalog` | Recursive discovery, source description, folder identities, health, and scan snapshot |
+| `catalog service` | Complete-snapshot apply, generations, missing reconciliation, and catalog view |
+| `preparation planner` | Scan-time per-kind identities, prerequisites, and planner compatibility |
+| `preparation` | Aggregate state and bounded bulk prepare orchestration |
+| `processing view` | Queue queries, rollups, worker availability, runtimes, and estimates |
+| `persistence` | Direct PostgreSQL operations required by those use cases |
+| `processors` | Existing front, top-down, and fixed six-axis IMU processing |
+| `artifact_store` | Existing contained temporary work, validation, publication, and delivery |
+| `timeline` | Existing integer time conversion, coverage, and browser mappings |
+| `api` | Thin versioned request/response composition |
+| `worker` | One advisory-lock-protected FIFO dispatcher |
+| `web` | Served implementation of the `archive/` visual contract |
 
-V0 does not need a repository framework, a generic domain package, or a job
-framework. Image validation can remain inside the front processor until it is
-genuinely shared. The frontend consumes API contracts, not database rows.
+V1 does not introduce a generic repository framework, event bus, job framework,
+or frontend framework.
 
-## 6. Configuration and paths
+## 6. Configuration
 
-Building block 1 configures an existing readable `archive_root` and a separate
-`derived_root`, validating that neither contains the other. Artifact-specific
-directories and encoder checks wait until processing is introduced.
+V1 validates configuration before serving or processing:
 
-Add other settings only when used: PostgreSQL URL, front topic and supported
-encoding, IMU topic and component, companion pairing rule, output profile, bind
-address, and log level.
+- `archive_root`: existing readable source root;
+- `derived_root`: existing writable root that does not overlap the archive;
+- PostgreSQL URL;
+- front topic, IMU topic/default component, and preview profile;
+- FFmpeg and ffprobe executable identities;
+- maximum catalog depth, visited entries, recordings, and entries per recording;
+- maximum recording IDs in one preparation request;
+- API bind address and port;
+- log level; and
+- deployment-specific trusted proxy settings.
 
-Paths and topics observed in the development archive are defaults or examples,
-not constants embedded in core logic.
+Bounds have conservative defaults and may be raised deliberately for the trial.
+Validation rejects roots that are equal, contain one another, resolve through an
+unsafe symlink relationship, or have the wrong access mode.
 
-Validation rejects unusable roots, invalid settings, and required-service
-failures at the point the setting or service is introduced.
+Machine-specific mount paths, credentials, hostnames, and certificates remain
+outside Git.
 
-## 7. Catalog scanning
+## 7. Physical folder catalog
 
-### 7.1 Scanner contract
+### 7.1 Discovery
 
-The scanner accepts validated configuration and returns plain recording and
-component results. It performs no database writes.
+The V1 scanner walks ordinary directories below the configured archive root to
+a configured maximum depth. It counts every visited directory entry against a
+global bound and never follows symlinks.
 
-A scan discovers recording directories, parses `metadata.yaml`, inventories
-known components, performs bounded read-only health checks, and isolates errors
-to one recording. It does not read complete streams or videos, parse entire
-sidecars for display, hash the full archive, or generate/enqueue artifacts.
+A directory becomes a recording candidate when it contains the supported
+`metadata.yaml` entry. Once treated as a recording root, its known source
+components are inventoried using the existing bounded direct-entry contract;
+the scanner does not recursively treat arbitrary children as additional source
+components.
 
-Header/file-size inconsistency and safe read failures detect the known truncated
-database. The recording remains catalogued and its AVI/CSV remain visible.
+Directories without recording metadata are folder-navigation nodes only. They
+are not stored as separate domain rows.
 
-### 7.2 Applying a scan
+### 7.2 Complete versus incomplete scans
 
-The catalog application service:
+A malformed recording is isolated and returned as damaged or uninspectable, so
+other candidates remain cataloguable.
 
-1. invokes the scanner;
-2. applies the complete snapshot in a short PostgreSQL transaction;
-3. upserts returned recordings by unique archive-relative path and component
-   role.
+A traversal failure that could hide unknown recordings—permission denial,
+entry-limit exhaustion, depth-limit ambiguity, root disappearance, or unsafe
+filesystem behavior—makes the root snapshot incomplete. An incomplete snapshot
+is not applied and cannot mark saved recordings missing. The last complete
+catalog remains available.
 
-There is no scan history. Removal and rename reconciliation are deferred; a
-failed root scan does not erase the last complete catalog. Repeating an
-unchanged scan preserves identities and matching artifacts and creates no jobs.
+### 7.3 Folder paths and stable cache anchors
 
-### 7.3 Source revision
+`archive_relative_path` is the recording's current physical location, not its
+long-term cache identity. Each recording also retains private cache anchors: the
+numeric recording ID and normalized path first used to construct its processor
+identities. These anchors are never source-resolution paths or browser data.
+They remain stable when an explicit scan proves one unambiguous move, allowing
+the existing processor identity documents to reproduce their exact earlier
+hashes without changing processor versions or artifact manifests.
 
-A lightweight source revision uses relative names, sizes, high-resolution
-mtimes, relevant metadata, and small SQLite header properties.
+The API exposes the current normalized parent as `folder_path`, using `/`
+between segments and an empty string for the archive root.
 
-It is a practical cache key for the read-only development archive, not a claim
-of cryptographic identity. Each processor narrows the revision to its own
-inputs, so an unrelated CSV change does not invalidate a front preview.
+Folder nodes are derived deterministically from current recording paths. Each
+node contains:
+
+- its safe relative path;
+- parent path;
+- display segment;
+- direct recording count; and
+- descendant recording count.
+
+Absolute source paths, mount names, device IDs, and inodes are not browser data.
+
+### 7.4 Successful-scan reconciliation
+
+V1 adds a durable catalog generation. Applying a complete snapshot:
+
+1. takes the existing catalog advisory lock;
+2. assigns the next generation;
+3. reconciles unambiguous moves and upserts every discovered recording and
+   component;
+4. replaces that recording's three scan-derived preparation targets;
+5. marks every discovered recording present in that generation;
+6. marks previously present but unseen recordings as source-missing with a safe
+   diagnostic, without deleting their row, jobs, artifacts, or history; and
+7. commits the generation, completion time, duration, and counts atomically.
+
+A recording that reappears at the same path regains its existing ID. Move
+matching uses a path-independent digest of persisted recording metadata and
+component-local names, sizes, nanosecond modification times, conditions, and
+diagnostics. Exactly one incoming recording and one previously current match
+updates the existing row's physical path while retaining its private cache
+anchors, jobs, artifacts, and history. Copies, duplicate fingerprints, or any
+other ambiguous match remain separate.
+
+For rows already split by scans predating this contract, a guarded recovery may
+transfer job/artifact ownership to the current-path row only when exactly one
+missing row owns history and the current row owns none. It copies the missing
+row's private cache anchors and never rewrites a source or derived file.
+Ordinary catalog lists, physical folder nodes, and current scan/health counts
+still select only `source_present = true`.
+
+Starting the application never initiates this process. Rescan remains explicit.
 
 ## 8. PostgreSQL model
 
-PostgreSQL contains exactly four V0 tables. Large media, bag content, extracted
-frames, and telemetry payloads remain on the filesystem.
+### 8.1 Existing tables
 
-### 8.1 `recordings`
+V1 retains the four existing domain tables:
 
-One row represents one recording directory. It stores an internal ID, unique
-relative path, display metadata needed by the table/detail view, source revision,
-and aggregate ROS health/diagnostic.
+- `recordings`;
+- `source_components`;
+- `artifacts`; and
+- `jobs`.
 
-The API uses the internal ID. Absolute source paths are never public data.
+Large output remains on the derived filesystem.
 
-### 8.2 `source_components`
+### 8.2 Catalog state migration
 
-One row describes a current metadata, ROS database, AVI, or CSV role. It stores
-recording and role, relative path, size, mtime, condition, and a safe diagnostic.
+V1 adds one small singleton `catalog_state` table containing:
 
-A uniqueness constraint on recording and role is sufficient for the known V0
-layout. General split-bag and arbitrary companion modeling are deferred.
+- current successful generation;
+- completed timestamp;
+- scan duration;
+- discovered and health counts for recordings present in that generation; and
+- schema-owned timestamps.
 
-### 8.3 `artifacts`
+The `recordings` table has `last_seen_generation` and `source_present`, the
+minimum fields required to reconcile a complete snapshot without destructive
+deletion.
 
-An artifact row exists only for validated output. It stores recording, kind,
-unique cache identity, contained relative output path, MIME type, size, relevant
-stream bounds, minimal manifest JSON, and creation time.
+Migration `0006_move_reconciliation.sql` adds the private
+`cache_identity_recording_id`, `cache_identity_relative_path`, and nullable
+path-independent `move_fingerprint` fields plus a focused lookup index. It
+backfills the cache anchors from every existing row without changing any
+recording, job, artifact, component, or derived file ID.
 
-There is no artifact lifecycle state machine. A row matching the current cache
-identity means ready. An older nonmatching row is not selected for current
-playback. The ready file and manifest are revalidated before display or
-delivery. If either is missing or inconsistent, the API reports failure; an
-explicit retry transaction removes only that exact invalid row and queues a
-replacement. Retention and stale-history UI are deferred.
+The migration backfills existing recordings as present in generation zero and
+does not alter their IDs, source revisions, jobs, or artifacts.
 
-### 8.4 `jobs`
+### 8.3 `preparation_targets`
 
-A job row stores one processing attempt: ID, recording, artifact kind, cache
-identity, `queued`/`running`/`succeeded`/`failed` state, timestamps, and safe
-failure information.
+V1 adds one small projection table with exactly one current row per recording
+and supported artifact kind. A row contains:
 
-The database prevents more than one active job for the same cache identity.
-Request and completion transactions also take the same cache-identity advisory
-lock, so completion cannot race a request into creating a redundant job.
-V0 has no leases, heartbeat, attempt counter, automatic retry, cancellation,
-priority, phase model, or percentage-progress contract.
+- recording ID and artifact kind;
+- successful scan generation;
+- planner identity covering the output-affecting configuration, processor,
+  schema, profile, and executable identity;
+- current cache identity when prerequisites are available;
+- available/unavailable state and a safe diagnostic;
+- relevant catalogued input byte measure for estimation; and
+- schema-owned timestamps.
 
-### 8.5 Display-state resolution
+The target is calculated while an explicit scan already holds validated
+metadata and file identities. Topic detail does not need to become a general
+browser-facing catalog model. Ordinary catalog and Processing queries join
+jobs/artifacts to this target and therefore perform no metadata parse or source
+stat per row.
 
-The API derives the current UI state in this order:
+The table is not a combined preparation job, batch history, or second artifact
+lifecycle. The worker still reloads the source, recomputes and verifies the
+identity, and fails safely if the source changed after the scan.
 
-1. missing, damaged, or unsupported prerequisites: `unavailable` with a reason;
-2. matching ready artifact: `ready`;
-3. matching active job: `queued` or `processing`;
-4. most recent matching failed job: `failed`; or
-5. otherwise: `not requested`.
+If the running application's current planner identity differs from the stored
+target, the API reports the output unavailable with a “rescan required after
+configuration change” diagnostic. It never silently treats an old target as
+current and never rereads the archive during ordinary browsing.
 
-`unavailable` never creates a failed job. A failed attempt never makes its
-partial output an artifact.
+### 8.4 Processing query indexes
 
-## 9. Expensive work
+Building block 1 added the measured focused indexes:
 
-### 9.1 Request flow
+- `jobs_one_running_globally` for database-level single-running defence;
+- `preparation_targets_current_identity` for current projection rollups;
+- `jobs_actionable_failure` for current failed attempts;
+- `jobs_succeeded_history` for newest-first history; and
+- `jobs_estimation_samples` for compatible bounded history samples.
 
-The API calculates the cache identity and checks prerequisites.
+The inherited `jobs_one_active_identity` and `jobs_queue_order` indexes continue
+to enforce active identity reuse and FIFO claim/display order.
 
-- If prerequisites are unavailable, it returns the reason without a job.
-- If a matching artifact exists, it returns the ready artifact.
-- If a matching job is active, it returns that job.
-- Otherwise, it inserts one queued job and returns immediately.
+Indexes are justified with query plans or measured repository tests. V1 adds no
+preparation-batch table and no duplicate artifact-state columns.
 
-This prevents a double-click or reload from starting duplicate extraction.
+The migration also adds a partial unique index allowing at most one globally
+running job. The worker advisory lock remains the primary single-worker control;
+the index is database-level defence against an accidental second dispatcher.
 
-### 9.2 Serial worker
+`recordings_move_fingerprint` supports bounded scan-time move candidates. It is
+not used by ordinary catalog or Processing reads.
 
-One worker polls PostgreSQL and runs one job at a time. A short transaction
-marks the next queued job running; processing happens outside the transaction.
+### 8.5 Job and artifact history
 
-The worker reloads source descriptors, verifies identity, processes in a
-temporary workspace, validates, rechecks relevant inputs, publishes, inserts
-the ready row, and marks the job succeeded. A retry may replace a conflicting
-app-owned artifact directory only after the replacement has passed validation;
-the previous directory is retained until the validated rename succeeds.
+One job remains one attempt for one artifact identity. Jobs retain queued,
+started, and finished timestamps plus safe failures. V1 jobs also retain the
+planner-provided work units and estimate key, plus nullable claim-time estimate
+facts. A matching artifact row continues to mean validated ready output for its
+exact identity.
 
-On failure, it marks the job failed with a safe diagnostic. The user may request
-a new attempt. V0 performs no automatic retry.
+Bulk preparation is orchestration, not a durable job kind. Its result can be
+reconstructed from the three current output states, so V1 does not persist a
+second lifecycle for a recording bundle.
 
-At startup, abandoned running jobs become failed/interrupted. Temporary work is
-cleaned only after ownership is proven. V0 needs no lease recovery.
+## 9. Current output and aggregate state
 
-## 10. Artifact storage and reuse
+### 9.1 Per-output resolution
 
-### 10.1 Cache identity
+For each supported kind, current state uses the existing precedence:
 
-A complete identity combines recording, artifact kind, relevant input revision,
-processor version, and output-affecting inputs. It may be hashed into a safe
-derived path; original filenames are never trusted as output paths.
+1. prerequisites unavailable;
+2. compatible ready artifact;
+3. compatible running or queued job;
+4. latest compatible failed job; or
+5. not requested.
 
-### 10.2 Layout
+Current cache identities and unavailable prerequisites come from the matching
+scan-generation `preparation_targets` row. Catalog and Processing views do not
+parse metadata, stat source paths, or read source streams. A missing/stale target
+is unavailable until explicit rescan. Ready-output checks may perform bounded
+validation under the derived root but never access source files.
 
-Temporary and final output use contained, app-owned paths on the same filesystem
-so publication can use atomic rename where practical.
+### 9.2 Recording aggregate
 
-### 10.3 Publication
-
-The artifact store validates job-owned temporary output, writes its manifest,
-publishes it, and only then inserts the ready row. Failure creates no ready
-artifact and cannot affect a source.
-
-### 10.4 Minimal manifest
-
-The manifest records enough identity, settings, source-role, output, timing, and
-validation information to inspect and reuse the artifact. The database is the
-application index; neither location contains large payload data.
-
-## 11. Time and synchronization
-
-### 11.1 Canonical ROS time
-
-V0 uses the bag start declared in metadata as the global origin. Readable record
-timestamps may be compared with it for diagnostics but do not silently replace
-it.
-
-For each ROS message used by V0:
-
-```text
-bag_time_ns = record_timestamp_ns - bag_start_timestamp_ns
-```
-
-Backend domain logic uses signed integer nanoseconds. APIs serialize absolute
-nanoseconds safely, for example as decimal strings. Conversion to floating-point
-seconds occurs only at media and chart interfaces that require it.
-
-### 11.2 Coverage
-
-Every synchronized stream reports:
-
-- start and end offsets relative to bag time;
-- timestamp provenance;
-- whether bounds are measured or inferred; and
-- the mapping from global time to local media time.
-
-The global V0 timeline spans the ROS recording. A camera or telemetry stream may
-cover only part of it. Outside coverage, the UI shows an explicit
-`outside coverage` pane rather than freezing a boundary frame and implying data
-exists.
-
-### 11.3 Front-camera mapping
-
-Front frames use their ROS database record timestamps. If the first encoded
-frame starts at `front_start_s`, then:
+The API calculates the presentation aggregate after all three output states are
+resolved:
 
 ```text
-front_media_time_s = global_time_s - front_start_s
+any processing                 -> processing
+else any queued                -> queued
+else any failed                -> failed
+else all ready                 -> ready
+else                              not_planned
 ```
 
-Generated media must preserve recorded elapsed duration. It must not infer
-duration solely from frame count and an assumed frequency.
+The response always includes the three underlying output states and diagnostics
+so the frontend can build truthful tooltips and detail panels.
 
-Consequently, a gap in ROS record timestamps remains a visible hold in the
-front preview even when message header stamps have a smoother cadence. That is
-truthful record-clock behavior, not permission to substitute header time or an
-assumed frame rate for smoother playback.
+`unavailable` remains a per-output fact, not an aggregate failed attempt. Source
+health separately explains why a recording cannot be prepared.
 
-### 11.4 Top-down mapping
+### 9.3 Health presentation
 
-For top-down frame `i`:
+The API retains the precise catalog health and safe diagnostic. It additionally
+provides the two-state presentation mapping expected by the frontend:
 
 ```text
-topdown_bag_time_ns[i] =
-    csv_unix_timestamp_ns[i] - bag_start_timestamp_ns
+readable                          -> readable
+damaged/missing/unsupported/
+uninspectable                     -> damaged
 ```
 
-CSV Unix timestamps are authoritative. The AVI's nominal frame rate is not
-capture timing.
+This mapping applies to recordings present in the latest complete snapshot.
+Retained source-missing history is not part of the ordinary catalog response;
+a physically present candidate with missing metadata remains current and maps
+to `damaged` with its precise diagnostic.
 
-The derived media must make one second of media time represent one second of CSV
-elapsed time. The chosen encoding strategy may use timestamp-aware timing or a
-measured constant output rate, but it must preserve coverage and avoid
-cumulative drift.
+## 10. Bulk preparation
 
-### 11.5 Browser ownership
+### 10.1 Request contract
 
-The browser's global timeline owns play, pause, seek, and current bag-relative
-time. Neither video is master for the other.
+`POST /api/v1/recordings/prepare` accepts a JSON object containing a non-empty,
+deduplicated, ordered list of positive numeric recording IDs. The list is
+bounded by configuration and request-body limits.
 
-For each available stream:
+The service processes IDs in request order and artifact kinds in this fixed
+order:
+
+1. `front_preview`;
+2. `topdown_preview`;
+3. `imu_series`.
+
+### 10.2 Outcome semantics
+
+For each recording and output, the response reports one of:
+
+- `ready_reused`;
+- `active_reused` with queued or processing state;
+- `queued` for a new attempt;
+- `retry_queued` when the explicit preparation action supersedes a failed
+  current attempt;
+- `unavailable` with a safe reason; or
+- `request_failed` for an isolated database or application failure.
+
+One recording's unavailable prerequisite does not roll back jobs already
+created for another. The response identifies partial success explicitly.
+
+All three targets for one recording are preflighted before inserts. If any is
+unavailable or stale, the service creates no new job for that recording and
+returns the three target diagnostics. Existing ready artifacts and historical
+attempts remain untouched. This preserves the product meaning that preparation
+creates a complete analyzer bundle without inventing an aggregate Incomplete
+state.
+
+### 10.3 Concurrency and idempotency
+
+The existing cache-identity advisory lock and partial unique index remain the
+authority for duplicate prevention. Concurrent preparation requests may return
+the same active job or ready artifact; they must not create duplicates.
+
+The operation returns after state resolution and job insertion. It never waits
+for a processor.
+
+## 11. Serial worker and queue
+
+The worker retains one session-level PostgreSQL advisory lock. A second worker
+exits with a clear diagnostic.
+
+The claim query remains FIFO by `queued_at`, then ID, with `FOR UPDATE SKIP
+LOCKED`. Processing occurs outside the claim transaction.
+
+The worker reloads the source descriptor, revalidates identity, processes in a
+contained temporary workspace, validates output, rechecks current input facts,
+publishes, writes the artifact row, and succeeds the job. Failure publishes no
+ready artifact.
+
+At startup, abandoned running jobs become failed/interrupted as in V0. V1 does
+not add leases, cancellation, priority, automatic retry, or parallel claims.
+
+Worker availability for the Processing view is determined by a bounded probe of
+the existing worker advisory lock. The probe releases the lock immediately if
+it acquires it. It never starts a worker or changes a job. The UI can therefore
+say that the queue is paused when no worker owns the lock.
+
+## 12. Elapsed time and estimation
+
+### 12.1 Factual time
+
+The API returns server time and database timestamps in UTC. The browser derives
+and refreshes:
+
+- queued age from `queued_at`;
+- running elapsed time from `started_at`; and
+- completed runtime from `finished_at - started_at`.
+
+Client display clocks are cosmetic. Refreshing from the API corrects local
+drift.
+
+### 12.2 Estimate model
+
+V1 estimates total duration only for the one running job. It does not present a
+percentage complete or promise a completion time for queued jobs.
+
+When a V1 job is inserted, the matching preparation target supplies immutable
+work units and an estimate key covering kind, processor, schema, profile, and
+encoder identity. Legacy jobs may leave these fields null and are not silently
+treated as compatible samples.
+
+When the worker claims a job, it freezes the estimate fields from bounded
+compatible succeeded jobs before processing begins. Failed, interrupted,
+stale-profile, null-unit, and invalid attempts are excluded. Freezing the
+estimate prevents the displayed prediction from changing merely because later
+jobs finish.
+
+Each kind uses one catalogued input measure:
+
+- front preview: ROS database byte size;
+- top-down preview: source AVI byte size;
+- IMU series: ROS database byte size.
+
+For each compatible sample:
 
 ```text
-media_time_s = global_time_s - stream_start_s
+seconds_per_unit = completed_runtime_seconds / work_units
 ```
 
-The frontend advances global time from a monotonic browser clock, compares each
-player with its desired media time, and corrects visible drift when a documented
-tolerance is exceeded. The Building block 2 front player uses 100 milliseconds:
-small decoder jitter is left alone, while larger divergence is corrected to the
-global clock. Backend responsibilities end at timestamp-correct media, coverage,
-and mapping data.
+The baseline rate is the median of the bounded most recent compatible samples.
+The prediction for the current job is that rate multiplied by its work units.
+The response includes sample count and marks the result approximate.
 
-## 12. Processor boundaries
+At least two compatible samples are required. With fewer samples, invalid input
+size, or unreasonable timestamps, the estimate is unavailable. Implementation
+may add measured outlier rejection only if tests document the exact bounded
+rule; it may not quietly substitute hard-coded demonstration times.
 
-The roadmap owns each processor's supported inputs and acceptance tests. The
-permanent architecture rules are:
+### 12.3 Remaining-time display
 
-- the front processor turns one configured ROS image stream into seekable media
-  using record timestamps;
-- the top-down processor validates the AVI/CSV pair and produces media timed by
-  CSV timestamps; and
-- the IMU processor extracts one configured standard field as bag-relative
-  points, reducing data only when measured browser performance requires it.
+```text
+predicted_total - elapsed > 0  -> approximate remaining duration
+insufficient estimate data     -> "Estimating…" / "Not enough history"
+elapsed >= predicted_total     -> "Estimate exceeded"
+```
 
-Each processor returns coverage and provenance, works with bounded memory, and
-reports malformed or unsupported input without changing sources. None owns a
-playback clock; all outputs map to the global timeline.
+Estimation failure never changes job state or worker behavior.
 
-### 12.1 Building block 2 front profile
+## 13. V1 API contracts
 
-The first front processor accepts the configured `sensor_msgs/msg/Image` topic
-only when metadata and the SQLite topic row both report CDR serialization. It
-supports `bgr8`, stable dimensions, bounded payloads, and one-row-at-a-time
-message iteration from an immutable read-only SQLite connection. SQLite payload
-length is checked before the BLOB is fetched or deserialized, bounding the
-largest serialized image materialized by the processor.
+All V1 metadata endpoints live under `/api/v1`. Existing identity-specific
+media and IMU data routes may remain in place because their stale-URL and range
+contracts are already accepted.
 
-The fixed `h264-720p-v1` output is MP4 with H.264/libx264, yuv420p, a maximum
-size of 1280 × 720, CRF 23, the `veryfast` preset, and a one-microsecond media
-timescale. Frames retain elapsed ROS record time; a frame is forced at least at
-each available two-second keyframe boundary. If several messages have the same
-record timestamp, the last image is encoded once and the collapse count is
-recorded in the manifest.
+Large integers such as nanoseconds and byte sizes remain decimal JSON strings.
+All list limits are bounded and validated.
 
-Validation checks codec, pixel format, dimensions, size, encoded packet count,
-elapsed duration, fast-start MP4 layout, and actual decoded output at
-representative seeks with ffprobe/FFmpeg before publication. PyAV, its linked libraries, the processor version, input
-identities, topic, and every output setting participate in the cache identity.
+### 13.1 Catalog overview
 
-### 12.2 Building block 3 top-down profile
+`GET /api/v1/catalog` returns one coherent saved-catalog view:
 
-The top-down processor pairs the unique `topdown_video` and
-`topdown_timestamps` components already catalogued for a recording. It requires
-one `unix_timestamp` value per decoded AVI frame, parses at most nanosecond
-precision without floating point, and rejects duplicate or unordered values.
-Full CSV and AVI validation remains worker work; the scanner continues to
-record companion presence only.
+- latest successful scan facts;
+- summary-card counts;
+- derived folder nodes;
+- recording list items;
+- precise and presentation source health; and
+- aggregate plus per-output analysis states.
 
-The processor decodes and encodes sequentially with one frame in flight. It
-ignores nominal AVI timing and assigns each output frame a PTS from its CSV
-timestamp relative to the first CSV timestamp. The output reuses the fixed
-`h264-720p-v1` profile and publishes under the distinct `topdown_preview`
-artifact kind. Its cache identity includes metadata timing, AVI and CSV file
-identities, processor and encoder identities, and all output-affecting profile
-settings. Declared dimensions are checked before frame decoding, the decoder
-has an independent pixel ceiling, and decoded dimensions must remain stable.
-Before publication, validation rescales every encoded video packet PTS to the
-profile timescale and compares the complete ordered sequence with the
-CSV-derived sequence produced by the processor.
+The recording list, folder nodes, summary, and saved scan counts describe only
+`source_present = true` rows from the latest complete snapshot. Retained
+source-missing rows remain available to explicit internal history lookups and
+numeric detail/history references, but do not appear as current recordings.
 
-Coverage is the first and last CSV timestamp relative to the bag start and is
-never clipped to the global recording duration. The browser uses the existing
-100-millisecond drift threshold for each player, force-seeks both players on an
-explicit scrub, and hides an individual pane outside measured coverage.
+It performs no scan and creates no job. The response is sufficient to render
+the Recordings view without per-row requests.
 
-### 12.3 Building block 4 IMU profile
+`POST /api/v1/catalog/rescan` runs the bounded scanner outside the event loop,
+applies only a complete result, and returns the new scan facts. The client then
+reloads `GET /api/v1/catalog`. A failure leaves the prior table visible.
 
-The first IMU processor accepts one configured CDR `sensor_msgs/msg/Imu` topic
-and the fixed `angular_velocity.z` component. It opens the catalogued SQLite
-database through an immutable, explicitly read-only connection, verifies the
-source identity and topic contract, checks serialized length before fetching a
-BLOB, and deserializes one row at a time. It uses ROS database record timestamps
-relative to the bag start; message header stamps do not replace that clock.
+### 13.2 Recording detail
 
-The derived artifact is bounded JSON with schema version 1 and ordered
-`[bag_relative_nanoseconds, value]` samples. Nanoseconds are decimal strings so
-the browser does not lose integer precision. Finite values are JSON numbers,
-non-finite source values are explicit `null` gaps, and equal timestamps retain
-database order. The cache identity includes source identities, bag timing,
-topic/type/serialization, component, processor/schema versions, null and
-duplicate policies, and the reduction decision.
+`GET /api/v1/recordings/{recording_id}` returns:
 
-V0 deliberately uses `reduction: none`. A 76,000-sample synthetic profile
-measured a 2.76 MB payload, a 41 ms parse/validation, and a 6 ms Canvas draw in
-headless Edge on the development host, so reduction was not justified. The
-native Canvas trace maps bag-relative sample time to the full recording
-duration. Its cursor and current value are read-only consumers of the existing
-browser global clock; the graph does not own time or add click-to-seek.
+- catalog metadata and components;
+- physical folder path;
+- source diagnostic;
+- aggregate and per-output analysis state;
+- ready artifact metadata and identity-bound URLs; and
+- accepted global duration and coverage facts.
 
-## 13. Delivery contracts
+The route returns no absolute path and starts no work.
 
-The API exposes catalog, artifact, and timeline capabilities without leaking
-database rows or filesystem paths. Front and top-down state/request operations
-use GET and POST on `/api/recordings/{id}/front-preview` and
-`/api/recordings/{id}/topdown-preview`. Each has a separate identity-specific
-GET/HEAD media route with one browser byte range, strong validator, and
-`If-Range` support. A stale artifact URL cannot resolve to a newer artifact.
-IMU uses GET/POST `/api/recordings/{id}/imu-series` and an identity-specific
-GET/HEAD JSON data route with the same contained-file, range, validator, and
-stale-URL rules.
-Scanner dispatch remains replaceable without changing its core contract, and
-ready media supports seeking without a complete download.
+### 13.3 Preparation
 
-## 14. Operational boundaries
+`POST /api/v1/recordings/prepare` follows Section 10. The browser does not call
+three independent generation buttons.
 
-V0 runs locally or on a trusted network and has no authentication. Public
-exposure is out of scope. Resolved source and artifact paths must remain inside
-their configured roots; browser errors omit paths and traces; external commands
-use argument arrays; and data, credentials, and secrets stay out of Git.
+### 13.4 Processing overview
 
-Bounded scans, sequential source reads, one worker, bounded processor memory,
-and exact artifact reuse are the V0 performance strategy. Logs, job errors, and
-artifact metadata should identify the recording/processor, outcome, duration,
-and output size. Measure before adding indexes, parallelism, caching layers,
-metrics, tracing, dashboards, or other production operations infrastructure.
+`GET /api/v1/processing/overview` returns:
 
-`ROADMAP.md` owns processor scope, exact verification, acceptance cases, and the
-deferred backlog.
+- server time;
+- worker `online` or `offline` state;
+- count of running, queued, current failed, and succeeded attempts;
+- the current running job with elapsed/estimate facts; and
+- a bounded first page of the FIFO queue with positions.
+
+`GET /api/v1/processing/jobs` accepts a validated view of `queued`, `failed`, or
+`history`, plus bounded limit/cursor and optional search. Ordering is stable and
+cursor-based so new jobs do not duplicate or skip delivered history rows.
+
+Failures return safe code/message and runtime. Succeeded history joins the exact
+artifact for output size and links by numeric recording ID.
+
+### 13.5 Retry
+
+`POST /api/v1/processing/jobs/{job_id}/retry` uses the failed job only to locate
+its recording and kind. It recomputes current prerequisites and cache identity,
+then reuses or requests current work. It never blindly reruns a stale identity.
+
+Only a failed job is a valid retry target. Repeated clicks are idempotent.
+
+### 13.6 Health
+
+The internal health surface distinguishes:
+
+- API process and database reachability;
+- worker advisory-lock ownership;
+- archive mount readability;
+- derived-root writability and free-space warning; and
+- migration/schema compatibility.
+
+Public engineer-facing health omits credentials and filesystem paths. Deep
+checks do not read source payloads or create processing.
+
+## 14. Frontend delivery contract
+
+Building block 2 ports the `archive/` shell into the currently served package
+assets and replaces mock state with API-driven rendering.
+
+### 14.1 Recordings view
+
+- Folder nodes and counts come from `/api/v1/catalog`.
+- Summary cards count recording aggregate states, except Damaged which counts
+  source-health presentation.
+- Search, filters, sort, pagination, selection, folder collapse, and responsive
+  behavior remain client interactions over real loaded data.
+- **Prepare selected** sends one bounded request and clears or preserves
+  selection according to the displayed result.
+- Rescan is explicit and retains saved data on failure.
+
+### 14.2 Processing view
+
+- Active views poll at the server-recommended interval, initially one second
+  for current/queue state.
+- Manual refresh works with live refresh disabled.
+- Polling pauses or slows while the document is hidden and refreshes immediately
+  on return.
+- Queue, failures, and history render backend data, not timers that mutate mock
+  jobs.
+- Elapsed time may tick locally between authoritative refreshes; ETA changes
+  only from backend estimate facts.
+
+### 14.3 Analyzer view
+
+- Numeric recording routes remain refreshable and bookmarkable.
+- Metadata and output facts come from one detail response.
+- Ready media and IMU data use identity-bound URLs.
+- The browser clock, 100-millisecond correction, coverage rules, IMU selection,
+  decimal nanoseconds, duplicate-last lookup, null gaps, and graph seeking remain
+  accepted behavior.
+- No ordinary per-output generation control is shown.
+
+### 14.4 Safety and accessibility
+
+Backend-controlled text is inserted with text-safe DOM operations. The frontend
+retains Content Security Policy compatibility, keyboard interaction, focus
+visibility, skip navigation, live/busy semantics, reduced motion, and responsive
+breakpoints. Status remains understandable without color or animation.
+
+## 15. Artifact and timeline contracts
+
+V1 does not change processor inputs, output formats, cache identity safety, or
+publication rules merely to integrate the new frontend.
+
+- Front previews remain H.264/yuv420p MP4. Their measured coverage comes from
+  the first and last retained ROS record timestamps; frame cadence comes from
+  strictly ordered image-header timestamps affinely mapped between those
+  endpoints without frame interpolation or a fabricated fixed FPS.
+- Top-down previews remain H.264/yuv420p MP4 timed by CSV Unix timestamps.
+- IMU remains one schema-version-2 JSON bundle with one timestamp and six fixed
+  raw axes per source row.
+- Equal front timestamps collapse to the last frame at that timestamp.
+- Equal IMU timestamps retain source order and current lookup selects the last
+  database-order value at or before the clock.
+- Non-finite IMU values remain per-component `null` gaps.
+- Every output is revalidated before delivery and a stale artifact URL cannot
+  resolve to a replacement.
+
+## 16. NAS trial deployment
+
+### 16.1 VM topology
+
+The trial uses one Ubuntu 22.04 VM with:
+
+- a dedicated unprivileged application user;
+- Python environment and ROS 2 Humble runtime;
+- PostgreSQL bound locally;
+- one FastAPI system service;
+- one serial worker system service;
+- an internal reverse proxy or NAS-managed equivalent;
+- a read-only source mount; and
+- separate writable derived, log/state, and backup locations.
+
+Containers and orchestration are not required for V1. The deployment artifacts
+must not prevent a later containerized deployment.
+
+Repository deployment mode fixes Uvicorn to `127.0.0.1:8000`, validates the
+runtime PostgreSQL role over `/run/postgresql`, and binds the installed release
+to clean source, wheelhouse, and release-contract checksums. The private site
+record owns every real address, export, UUID, credential, and certificate.
+
+### 16.2 Access boundary
+
+The application listens only on loopback or a private VM interface unreachable
+from the public internet. The approved trial entrance terminates TLS where the
+internal environment supports it and restricts access through an internal
+allowlist, VPN, and/or reverse-proxy basic authentication.
+
+Application-managed users and authorization are deferred. The deployment
+runbook must state the exact trial boundary and explicitly prohibit port
+forwarding the raw FastAPI listener.
+
+### 16.3 Services and releases
+
+The API and worker run as distinct service units with:
+
+- explicit working directory and executable paths;
+- private environment files;
+- restart-on-failure with bounded delay;
+- process and file permission hardening compatible with ROS/FFmpeg;
+- logs in the system journal or a documented private location; and
+- startup ordering after mounts and PostgreSQL.
+
+A release procedure:
+
+1. records the current revision and backup;
+2. stages the new checkout or release directory;
+3. installs locked dependencies without changing the active service;
+4. stops API and worker;
+5. applies migrations once;
+6. starts and health-checks the API and worker;
+7. performs smoke checks; and
+8. rolls back application files when checks fail, subject to the documented
+   migration compatibility rule.
+
+Services never run migrations concurrently and never rescan at startup.
+
+### 16.4 Storage and backup
+
+The source mount is excluded from application backup because it is authoritative
+external data and immutable to the service.
+
+Trial backup covers:
+
+- PostgreSQL metadata through a consistent database dump;
+- private deployment configuration and access-control files through an operator
+  process that does not commit them; and
+- the derived root according to available NAS capacity and regeneration cost.
+
+At minimum, artifact manifests and PostgreSQL must be recoverable together or a
+restore must deliberately invalidate absent artifacts. A restore drill uses a
+separate temporary database and derived target before the trial gate passes.
+
+The source mount must match the configured NFS server/export and
+`ro,nosuid,nodev,noexec` options exactly. The derived mount must match its
+configured filesystem/device and `rw,nosuid,nodev`, retain a root-owned marker,
+and expose only an application-owned child for writes. Source loss disables
+source-dependent work without hiding saved state. Low space rejects insertion
+and pauses worker claim without invalidating ready artifacts; database or
+trusted-derived loss fails core readiness while liveness remains available.
+
+### 16.5 Operations
+
+The runbook includes:
+
+- install and configuration validation;
+- start, stop, restart, and status;
+- explicit rescan;
+- logs and safe diagnostics;
+- database migration status;
+- source-mount verification;
+- derived-disk capacity and ownership;
+- queue paused/worker offline recovery;
+- interrupted-job retry;
+- backup and restore;
+- upgrade and rollback; and
+- access revocation for the limited trial group.
+
+## 17. Security boundaries
+
+- Source and derived paths are resolved and contained server-side.
+- Request IDs, recording IDs, job IDs, limits, cursors, and search lengths are
+  validated.
+- Diagnostics are safe for the limited group and retain detailed traces only in
+  private server logs.
+- Proxy headers are trusted only from the configured proxy.
+- Security headers and CSP remain enabled.
+- Cookies are unnecessary unless the selected reverse-proxy access method uses
+  them.
+- PostgreSQL accepts only local VM connections for the trial.
+- The application user has no source-write permission and no administrative
+  database role.
+- Secrets, certificates, password files, database dumps, recordings, and
+  artifacts are excluded from Git.
+
+## 18. Observability and support
+
+V1 uses structured application logs rather than a metrics platform. Important
+events include:
+
+- scan start/completion/failure and counts;
+- bulk preparation request ID, bounded item counts, and outcome counts;
+- job claim, kind, recording ID, duration, result, and output size;
+- estimate availability and sample count at debug level;
+- artifact validation/delivery failures;
+- worker lock acquisition/rejection; and
+- sanitized API failures.
+
+Logs do not include absolute source paths, credentials, or message payloads.
+
+The Processing page is a user-facing operational view, not a replacement for
+private server logs.
+
+## 19. Migration and compatibility
+
+Building block 1 owns the V1 schema migration and versioned APIs. The migration
+must:
+
+- preserve all current numeric recording, job, and artifact IDs;
+- preserve current ready artifacts and cache identities;
+- backfill catalog-generation fields safely;
+- initialize preparation targets conservatively: existing rows remain
+  not-current until the first explicit V1 rescan plans them, while existing
+  artifacts and jobs remain preserved;
+- remain transactionally applicable to a copy of the current database;
+- fail clearly when the database is newer than the application; and
+- leave rollback instructions.
+
+Existing V0 endpoints remain available through Building block 2 to reduce
+integration risk. They may be removed only in a separately reviewed cleanup
+after the V1 frontend no longer consumes them.
+
+The smooth-timing correction requires no database migration or new artifact
+kind. `front-preview-v2` and its timing-policy identity make earlier front
+previews non-current after an explicit successful rescan, while retaining their
+rows and files. Top-down and IMU identities remain reusable. A replacement is
+published only after its exact media PTS sequence validates against the
+processor result.
+
+The move-reconciliation migration does not version or weaken processor cache
+identity. Source resolution uses the current path, while the existing identity
+document uses the stable private anchors. Relevant file device, inode, size,
+mtime, topic, profile, processor, and timing facts still participate, so a copy
+or modified source is a cache miss even when its catalog fingerprint resembles a
+move.
+
+## 20. Verification strategy
+
+### 20.1 Routine synthetic verification
+
+- Nested archive fixtures cover folder discovery, depth/entry bounds,
+  symlinks, malformed candidates, incomplete traversal, generations, missing
+  reconciliation, and unchanged ID reuse.
+- PostgreSQL tests cover migrations, aggregate states, batch idempotency,
+  concurrent requests, queue order, retry-current-identity behavior, indexes,
+  pagination, worker availability, and estimates.
+- API tests cover every V1 response, validation bound, partial failure, safe
+  diagnostic, and database error.
+- Existing processor, artifact, ROS-message, range delivery, timeline, and IMU
+  suites remain green.
+- Browser tests cover the real V1 DOM and remove dependence on mock data.
+
+### 20.2 Manual browser verification
+
+Synthetic fixtures exercise readable, damaged, empty, partially ready, queued,
+processing, failed, ready, offline-worker, slow-response, and retained-rescan
+failure states at all documented breakpoints.
+
+### 20.3 Real-data verification
+
+Real archive checks remain explicit, bounded, and read-only. Before and after
+inventories compare relative names, kinds, sizes, and modification times. All
+generated output is proven to live under the derived root.
+
+### 20.4 Deployment verification
+
+The VM gate covers clean install, upgrade, reboot, service failure, worker
+interruption, database backup/restore, source-mount loss, derived-disk warning,
+access denial, manual rescan, and source immutability.
+
+## 21. Deferred after V1
+
+Feedback may justify multiple workers, job priorities, cancellation, progress
+instrumentation, automatic retry, watching, uploads, user accounts, retention,
+additional formats, arbitrary telemetry, annotations, or richer monitoring.
+None is introduced speculatively during these three blocks.

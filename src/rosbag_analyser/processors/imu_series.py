@@ -7,12 +7,13 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
-from typing import BinaryIO, Callable, Iterator
+from typing import BinaryIO, Callable, Iterator, Sequence
 
 from rosbag_analyser.catalog.paths import source_file_identity
 from rosbag_analyser.imu_series import (
-    IMU_COMPONENT,
     IMU_MESSAGE_TYPE,
+    IMU_SERIES_BY_COMPONENT,
+    IMU_SERIES_DEFINITIONS,
     SERIES_SCHEMA_VERSION,
     ImuSourceDescriptor,
 )
@@ -30,42 +31,49 @@ class ImuSeriesProcessingError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class ImuSeriesResult:
-    sample_count: int
+class ImuComponentResult:
+    id: str
+    component: str
     finite_count: int
     non_finite_count: int
+    minimum_value: float | None
+    maximum_value: float | None
+
+
+@dataclass(frozen=True)
+class ImuSeriesResult:
+    sample_count: int
     duplicate_timestamp_count: int
     coverage_start_ns: int
     coverage_end_ns: int
-    minimum_value: float
-    maximum_value: float
+    series: tuple[ImuComponentResult, ...]
     warnings: tuple[str, ...]
 
 
-ImuValueDecoder = Callable[[bytes], float]
+ImuValueDecoder = Callable[[bytes], Sequence[float]]
 
 
 class ImuSeriesProcessor:
     def __init__(self, value_decoder: ImuValueDecoder | None = None) -> None:
-        self.value_decoder = value_decoder or deserialize_imu_angular_velocity_z
+        self.value_decoder = value_decoder or deserialize_imu_values
 
     def process(
         self, descriptor: ImuSourceDescriptor, output_path: Path
     ) -> ImuSeriesResult:
-        if descriptor.component != IMU_COMPONENT:
+        if descriptor.component not in IMU_SERIES_BY_COMPONENT:
             raise ImuSeriesProcessingError(
                 "imu_component_unsupported",
                 "The configured IMU component is unsupported.",
             )
         sample_count = 0
-        finite_count = 0
-        non_finite_count = 0
         duplicate_count = 0
         first_timestamp: int | None = None
         last_timestamp: int | None = None
         previous_timestamp: int | None = None
-        minimum_value: float | None = None
-        maximum_value: float | None = None
+        finite_counts = [0] * len(IMU_SERIES_DEFINITIONS)
+        non_finite_counts = [0] * len(IMU_SERIES_DEFINITIONS)
+        minimum_values: list[float | None] = [None] * len(IMU_SERIES_DEFINITIONS)
+        maximum_values: list[float | None] = [None] * len(IMU_SERIES_DEFINITIONS)
 
         try:
             with output_path.open("xb") as output:
@@ -79,7 +87,11 @@ class ImuSeriesProcessor:
                 first_sample = True
                 for record_timestamp, serialized in _iter_topic_messages(descriptor):
                     try:
-                        value = float(self.value_decoder(serialized))
+                        values = tuple(
+                            float(value) for value in self.value_decoder(serialized)
+                        )
+                        if len(values) != len(IMU_SERIES_DEFINITIONS):
+                            raise ValueError("unexpected IMU value count")
                     except ImuSeriesProcessingError:
                         raise
                     except Exception as error:
@@ -101,29 +113,37 @@ class ImuSeriesProcessor:
                         first_timestamp = record_timestamp
                     last_timestamp = record_timestamp
 
-                    if math.isfinite(value):
-                        encoded_value = json.dumps(
-                            value,
-                            allow_nan=False,
-                            separators=(",", ":"),
-                        )
-                        finite_count += 1
-                        minimum_value = (
-                            value if minimum_value is None else min(minimum_value, value)
-                        )
-                        maximum_value = (
-                            value if maximum_value is None else max(maximum_value, value)
-                        )
-                    else:
-                        encoded_value = "null"
-                        non_finite_count += 1
+                    encoded_values: list[str] = []
+                    for index, value in enumerate(values):
+                        if math.isfinite(value):
+                            encoded_values.append(
+                                json.dumps(
+                                    value,
+                                    allow_nan=False,
+                                    separators=(",", ":"),
+                                )
+                            )
+                            finite_counts[index] += 1
+                            minimum_values[index] = (
+                                value
+                                if minimum_values[index] is None
+                                else min(minimum_values[index], value)
+                            )
+                            maximum_values[index] = (
+                                value
+                                if maximum_values[index] is None
+                                else max(maximum_values[index], value)
+                            )
+                        else:
+                            encoded_values.append("null")
+                            non_finite_counts[index] += 1
 
                     bag_time_ns = record_timestamp - descriptor.bag_start_ns
                     sample = (
                         "["
                         + json.dumps(str(bag_time_ns))
                         + ","
-                        + encoded_value
+                        + ",".join(encoded_values)
                         + "]"
                     )
                     prefix = "" if first_sample else ","
@@ -147,10 +167,10 @@ class ImuSeriesProcessor:
             raise ImuSeriesProcessingError(
                 "imu_topic_empty", "The configured IMU topic contains no samples."
             )
-        if minimum_value is None or maximum_value is None or finite_count == 0:
+        if not any(finite_counts):
             raise ImuSeriesProcessingError(
                 "imu_values_unavailable",
-                "The IMU stream contains no finite angular-velocity values.",
+                "The IMU stream contains no finite supported values.",
             )
 
         coverage_start = first_timestamp - descriptor.bag_start_ns
@@ -164,23 +184,30 @@ class ImuSeriesProcessor:
             warnings.append("coverage_ends_before_recording")
         elif coverage_end > descriptor.bag_duration_ns:
             warnings.append("coverage_ends_after_recording")
-        if non_finite_count:
+        if any(non_finite_counts):
             warnings.append("non_finite_values_present")
 
         return ImuSeriesResult(
             sample_count=sample_count,
-            finite_count=finite_count,
-            non_finite_count=non_finite_count,
             duplicate_timestamp_count=duplicate_count,
             coverage_start_ns=coverage_start,
             coverage_end_ns=coverage_end,
-            minimum_value=minimum_value,
-            maximum_value=maximum_value,
+            series=tuple(
+                ImuComponentResult(
+                    id=definition.id,
+                    component=definition.component,
+                    finite_count=finite_counts[index],
+                    non_finite_count=non_finite_counts[index],
+                    minimum_value=minimum_values[index],
+                    maximum_value=maximum_values[index],
+                )
+                for index, definition in enumerate(IMU_SERIES_DEFINITIONS)
+            ),
             warnings=tuple(warnings),
         )
 
 
-def deserialize_imu_angular_velocity_z(serialized: bytes) -> float:
+def deserialize_imu_values(serialized: bytes) -> tuple[float, ...]:
     try:
         from rclpy.serialization import deserialize_message
         from sensor_msgs.msg import Imu
@@ -195,7 +222,14 @@ def deserialize_imu_angular_velocity_z(serialized: bytes) -> float:
         raise ImuSeriesProcessingError(
             "imu_deserialization_failed", "An IMU message could not be decoded."
         ) from error
-    return float(message.angular_velocity.z)
+    return (
+        float(message.angular_velocity.x),
+        float(message.angular_velocity.y),
+        float(message.angular_velocity.z),
+        float(message.linear_acceleration.x),
+        float(message.linear_acceleration.y),
+        float(message.linear_acceleration.z),
+    )
 
 
 def _iter_topic_messages(

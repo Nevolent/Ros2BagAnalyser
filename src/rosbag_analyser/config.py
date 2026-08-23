@@ -7,7 +7,9 @@ import re
 import shutil
 import subprocess
 from typing import Mapping
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
+
+from rosbag_analyser.catalog.paths import CatalogScanLimits
 
 
 ARCHIVE_ROOT_ENV = "ROS_BAG_ANALYSER_ARCHIVE_ROOT"
@@ -19,10 +21,30 @@ IMU_COMPONENT_ENV = "ROS_BAG_ANALYSER_IMU_COMPONENT"
 PREVIEW_PROFILE_ENV = "ROS_BAG_ANALYSER_PREVIEW_PROFILE"
 FFMPEG_ENV = "ROS_BAG_ANALYSER_FFMPEG"
 FFPROBE_ENV = "ROS_BAG_ANALYSER_FFPROBE"
+CATALOG_MAX_DEPTH_ENV = "ROS_BAG_ANALYSER_CATALOG_MAX_DEPTH"
+CATALOG_MAX_ENTRIES_ENV = "ROS_BAG_ANALYSER_CATALOG_MAX_ENTRIES"
+CATALOG_MAX_DIRECTORIES_ENV = "ROS_BAG_ANALYSER_CATALOG_MAX_DIRECTORIES"
+CATALOG_MAX_RECORDINGS_ENV = "ROS_BAG_ANALYSER_CATALOG_MAX_RECORDINGS"
+CATALOG_MAX_DIRECTORY_ENTRIES_ENV = (
+    "ROS_BAG_ANALYSER_CATALOG_MAX_DIRECTORY_ENTRIES"
+)
+CATALOG_MAX_RECORDING_ENTRIES_ENV = (
+    "ROS_BAG_ANALYSER_CATALOG_MAX_RECORDING_ENTRIES"
+)
+PREPARE_MAX_RECORDINGS_ENV = "ROS_BAG_ANALYSER_PREPARE_MAX_RECORDINGS"
 
 DEFAULT_FRONT_TOPIC = "/kuupkulgur_v1/sensors/front_camera/image_raw"
 DEFAULT_IMU_COMPONENT = "angular_velocity.z"
+SUPPORTED_IMU_COMPONENTS = (
+    "angular_velocity.x",
+    "angular_velocity.y",
+    "angular_velocity.z",
+    "linear_acceleration.x",
+    "linear_acceleration.y",
+    "linear_acceleration.z",
+)
 DEFAULT_PREVIEW_PROFILE = "h264-720p-v1"
+DEFAULT_PREPARE_MAX_RECORDINGS = 100
 ROS_TOPIC_PATTERN = re.compile(
     r"^/(?:[A-Za-z_][A-Za-z0-9_]*)(?:/[A-Za-z_][A-Za-z0-9_]*)*$"
 )
@@ -88,6 +110,8 @@ class AppConfig:
     preview_profile: PreviewProfile
     ffmpeg_path: Path
     ffprobe_path: Path
+    catalog_scan_limits: CatalogScanLimits
+    prepare_max_recordings: int
 
     @classmethod
     def from_environment(
@@ -96,7 +120,15 @@ class AppConfig:
         values = os.environ if environment is None else environment
         archive_value = _required(values, ARCHIVE_ROOT_ENV)
         derived_value = _required(values, DERIVED_ROOT_ENV)
+        deployment_enabled = (
+            values.get("ROS_BAG_ANALYSER_DEPLOYMENT_MODE", "0").strip() == "1"
+        )
+        if deployment_enabled:
+            _reject_symlink_path(Path(archive_value), "archive root")
+            _reject_symlink_path(Path(derived_value), "derived root")
         database_url = _required(values, DATABASE_URL_ENV)
+        if deployment_enabled:
+            _validate_deployment_database_url(database_url)
         imu_topic = _required(values, IMU_TOPIC_ENV)
         return cls.create(
             archive_value,
@@ -110,6 +142,38 @@ class AppConfig:
             ),
             ffmpeg_path=values.get(FFMPEG_ENV, "ffmpeg"),
             ffprobe_path=values.get(FFPROBE_ENV, "ffprobe"),
+            catalog_max_depth=_environment_int(
+                values, CATALOG_MAX_DEPTH_ENV, CatalogScanLimits().max_depth
+            ),
+            catalog_max_entries=_environment_int(
+                values, CATALOG_MAX_ENTRIES_ENV, CatalogScanLimits().max_entries
+            ),
+            catalog_max_directories=_environment_int(
+                values,
+                CATALOG_MAX_DIRECTORIES_ENV,
+                CatalogScanLimits().max_directories,
+            ),
+            catalog_max_recordings=_environment_int(
+                values,
+                CATALOG_MAX_RECORDINGS_ENV,
+                CatalogScanLimits().max_recordings,
+            ),
+            catalog_max_directory_entries=_environment_int(
+                values,
+                CATALOG_MAX_DIRECTORY_ENTRIES_ENV,
+                CatalogScanLimits().max_directory_entries,
+            ),
+            catalog_max_recording_entries=_environment_int(
+                values,
+                CATALOG_MAX_RECORDING_ENTRIES_ENV,
+                CatalogScanLimits().max_recording_entries,
+            ),
+            prepare_max_recordings=_environment_int(
+                values,
+                PREPARE_MAX_RECORDINGS_ENV,
+                DEFAULT_PREPARE_MAX_RECORDINGS,
+            ),
+            derived_root_writable=not deployment_enabled,
         )
 
     @classmethod
@@ -125,9 +189,21 @@ class AppConfig:
         preview_profile: str = DEFAULT_PREVIEW_PROFILE,
         ffmpeg_path: str | Path = "ffmpeg",
         ffprobe_path: str | Path = "ffprobe",
+        catalog_max_depth: int = CatalogScanLimits().max_depth,
+        catalog_max_entries: int = CatalogScanLimits().max_entries,
+        catalog_max_directories: int = CatalogScanLimits().max_directories,
+        catalog_max_recordings: int = CatalogScanLimits().max_recordings,
+        catalog_max_directory_entries: int = CatalogScanLimits().max_directory_entries,
+        catalog_max_recording_entries: int = CatalogScanLimits().max_recording_entries,
+        prepare_max_recordings: int = DEFAULT_PREPARE_MAX_RECORDINGS,
+        derived_root_writable: bool = True,
     ) -> "AppConfig":
         archive = _validated_directory(Path(archive_root), "archive root", writable=False)
-        derived = _validated_directory(Path(derived_root), "derived root", writable=True)
+        derived = _validated_directory(
+            Path(derived_root),
+            "derived root",
+            writable=derived_root_writable,
+        )
         _reject_overlapping_roots(archive, derived)
         _validate_database_url(database_url)
         front = _validated_topic(front_topic, "front-camera")
@@ -140,6 +216,32 @@ class AppConfig:
         ffprobe = _validated_executable(
             ffprobe_path, "ffprobe", expected_version_prefix="ffprobe version"
         )
+        try:
+            scan_limits = CatalogScanLimits(
+                max_depth=_positive_int(catalog_max_depth, "catalog maximum depth"),
+                max_entries=_positive_int(
+                    catalog_max_entries, "catalog maximum visited entries"
+                ),
+                max_directories=_positive_int(
+                    catalog_max_directories, "catalog maximum directories"
+                ),
+                max_recordings=_positive_int(
+                    catalog_max_recordings, "catalog maximum recordings"
+                ),
+                max_directory_entries=_positive_int(
+                    catalog_max_directory_entries,
+                    "catalog maximum entries per folder",
+                ),
+                max_recording_entries=_positive_int(
+                    catalog_max_recording_entries,
+                    "catalog maximum entries per recording",
+                ),
+            )
+        except ValueError as error:
+            raise ConfigurationError(str(error)) from error
+        preparation_limit = _positive_int(
+            prepare_max_recordings, "preparation maximum recordings"
+        )
         return cls(
             archive_root=archive,
             derived_root=derived,
@@ -150,6 +252,8 @@ class AppConfig:
             preview_profile=profile,
             ffmpeg_path=ffmpeg,
             ffprobe_path=ffprobe,
+            catalog_scan_limits=scan_limits,
+            prepare_max_recordings=preparation_limit,
         )
 
 
@@ -169,6 +273,22 @@ def _required(values: Mapping[str, str], name: str) -> str:
     return value
 
 
+def _environment_int(values: Mapping[str, str], name: str, default: int) -> int:
+    raw = values.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except (AttributeError, ValueError) as error:
+        raise ConfigurationError(f"Setting {name} must be a positive integer.") from error
+
+
+def _positive_int(value: int, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ConfigurationError(f"The configured {label} must be a positive integer.")
+    return value
+
+
 def _validated_directory(path: Path, label: str, *, writable: bool) -> Path:
     try:
         resolved = path.expanduser().resolve(strict=True)
@@ -184,6 +304,24 @@ def _validated_directory(path: Path, label: str, *, writable: bool) -> Path:
     if not os.access(resolved, required_access):
         raise ConfigurationError(f"The configured {label} has insufficient permissions.")
     return resolved
+
+
+def _reject_symlink_path(path: Path, label: str) -> None:
+    candidate = path.expanduser()
+    if not candidate.is_absolute():
+        raise ConfigurationError(f"The configured {label} must be absolute.")
+    current = Path(candidate.anchor)
+    try:
+        for part in candidate.parts[1:]:
+            current = current / part
+            if current.is_symlink():
+                raise ConfigurationError(
+                    f"The configured {label} must not contain a symbolic link."
+                )
+    except OSError as error:
+        raise ConfigurationError(
+            f"The configured {label} could not be checked safely."
+        ) from error
 
 
 def _reject_overlapping_roots(archive: Path, derived: Path) -> None:
@@ -213,6 +351,29 @@ def _validate_database_url(database_url: str) -> None:
         raise ConfigurationError("The database setting must be a PostgreSQL URL.")
 
 
+def _validate_deployment_database_url(database_url: str) -> None:
+    try:
+        parsed = urlsplit(database_url)
+        query = parse_qs(parsed.query, strict_parsing=True)
+    except ValueError as error:
+        raise ConfigurationError(
+            "The deployment PostgreSQL URL is invalid."
+        ) from error
+    if (
+        parsed.scheme != "postgresql"
+        or parsed.username != "rosbag_analyser_runtime"
+        or parsed.password is not None
+        or parsed.hostname is not None
+        or parsed.port is not None
+        or parsed.path != "/rosbag_analyser"
+        or parsed.fragment
+        or query != {"host": ["/run/postgresql"]}
+    ):
+        raise ConfigurationError(
+            "The deployment database must use the local runtime role and Unix socket."
+        )
+
+
 def _validated_topic(value: str, label: str) -> str:
     topic = value.strip()
     if ROS_TOPIC_PATTERN.fullmatch(topic) is None:
@@ -222,9 +383,10 @@ def _validated_topic(value: str, label: str) -> str:
 
 def _validated_imu_component(value: str) -> str:
     component = value.strip()
-    if component != DEFAULT_IMU_COMPONENT:
+    if component not in SUPPORTED_IMU_COMPONENTS:
         raise ConfigurationError(
-            f"The configured IMU component must be {DEFAULT_IMU_COMPONENT}."
+            "The configured IMU component must be one of the supported raw "
+            "angular-velocity or linear-acceleration axes."
         )
     return component
 

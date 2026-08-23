@@ -1,0 +1,21 @@
+[Unit]
+Description=Apply ROS Bag Analyser schema migration for release %i
+Documentation=file:/opt/rosbag-analyser/releases/%i/docs/NAS_TRIAL_RUNBOOK.md
+Requires=postgresql.service
+After=postgresql.service
+Conflicts=rosbag-analyser-api.service rosbag-analyser-worker.service
+
+[Service]
+Type=oneshot
+User=rosbag-analyser-migrate
+Group=rosbag-analyser
+UMask=0027
+WorkingDirectory=/opt/rosbag-analyser/releases/%i
+EnvironmentFile=/etc/rosbag-analyser/migration.env
+LoadCredential=database-pass:/etc/rosbag-analyser/migration.pgpass
+ExecStart=/opt/rosbag-analyser/releases/%i/deploy/scripts/run-service migrate
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictSUIDSGID=yes

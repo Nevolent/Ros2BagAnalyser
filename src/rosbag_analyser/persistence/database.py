@@ -32,6 +32,11 @@ EXPECTED_CATALOG_COLUMNS = {
     ("recordings", "diagnostic_code", "text", "YES", "NO"),
     ("recordings", "diagnostic_message", "text", "YES", "NO"),
     ("recordings", "source_revision", "text", "NO", "NO"),
+    ("recordings", "source_present", "boolean", "NO", "NO"),
+    ("recordings", "last_seen_generation", "bigint", "NO", "NO"),
+    ("recordings", "cache_identity_recording_id", "bigint", "NO", "NO"),
+    ("recordings", "cache_identity_relative_path", "text", "NO", "NO"),
+    ("recordings", "move_fingerprint", "text", "YES", "NO"),
     (
         "recordings",
         "created_at",
@@ -96,6 +101,64 @@ EXPECTED_CATALOG_COLUMNS = {
     ("jobs", "finished_at", "timestamp with time zone", "YES", "NO"),
     ("jobs", "error_code", "text", "YES", "NO"),
     ("jobs", "error_message", "text", "YES", "NO"),
+    ("jobs", "work_units", "bigint", "YES", "NO"),
+    ("jobs", "estimate_key", "text", "YES", "NO"),
+    ("jobs", "estimated_total_ms", "bigint", "YES", "NO"),
+    ("jobs", "estimate_method", "text", "YES", "NO"),
+    ("jobs", "estimate_sample_count", "integer", "YES", "NO"),
+    ("catalog_state", "singleton", "boolean", "NO", "NO"),
+    ("catalog_state", "successful_generation", "bigint", "NO", "NO"),
+    (
+        "catalog_state",
+        "successful_completed_at",
+        "timestamp with time zone",
+        "YES",
+        "NO",
+    ),
+    ("catalog_state", "duration_ms", "bigint", "NO", "NO"),
+    ("catalog_state", "recording_count", "bigint", "NO", "NO"),
+    ("catalog_state", "readable_count", "bigint", "NO", "NO"),
+    ("catalog_state", "damaged_count", "bigint", "NO", "NO"),
+    ("catalog_state", "missing_count", "bigint", "NO", "NO"),
+    ("catalog_state", "unsupported_count", "bigint", "NO", "NO"),
+    ("catalog_state", "uninspectable_count", "bigint", "NO", "NO"),
+    (
+        "catalog_state",
+        "created_at",
+        "timestamp with time zone",
+        "NO",
+        "NO",
+    ),
+    (
+        "catalog_state",
+        "updated_at",
+        "timestamp with time zone",
+        "NO",
+        "NO",
+    ),
+    ("preparation_targets", "recording_id", "bigint", "NO", "NO"),
+    ("preparation_targets", "kind", "text", "NO", "NO"),
+    ("preparation_targets", "scan_generation", "bigint", "NO", "NO"),
+    ("preparation_targets", "planner_identity", "text", "NO", "NO"),
+    ("preparation_targets", "target_state", "text", "NO", "NO"),
+    ("preparation_targets", "cache_identity", "text", "YES", "NO"),
+    ("preparation_targets", "diagnostic_code", "text", "YES", "NO"),
+    ("preparation_targets", "diagnostic_message", "text", "YES", "NO"),
+    ("preparation_targets", "work_units", "bigint", "YES", "NO"),
+    (
+        "preparation_targets",
+        "created_at",
+        "timestamp with time zone",
+        "NO",
+        "NO",
+    ),
+    (
+        "preparation_targets",
+        "updated_at",
+        "timestamp with time zone",
+        "NO",
+        "NO",
+    ),
 }
 
 EXPECTED_CATALOG_DEFAULTS = {
@@ -105,6 +168,13 @@ EXPECTED_CATALOG_DEFAULTS = {
     ("source_components", "updated_at", "CURRENT_TIMESTAMP"),
     ("artifacts", "created_at", "CURRENT_TIMESTAMP"),
     ("jobs", "queued_at", "CURRENT_TIMESTAMP"),
+    ("recordings", "source_present", "true"),
+    ("recordings", "last_seen_generation", "0"),
+    ("catalog_state", "singleton", "true"),
+    ("catalog_state", "created_at", "CURRENT_TIMESTAMP"),
+    ("catalog_state", "updated_at", "CURRENT_TIMESTAMP"),
+    ("preparation_targets", "created_at", "CURRENT_TIMESTAMP"),
+    ("preparation_targets", "updated_at", "CURRENT_TIMESTAMP"),
 }
 
 EXPECTED_CATALOG_IDENTITIES = {
@@ -197,6 +267,18 @@ EXPECTED_CATALOG_CONSTRAINTS = {
     ),
     ("recordings", "c", "CHECK (archive_relative_path <> '')"),
     ("recordings", "c", "CHECK (display_name <> '')"),
+    ("recordings", "c", "CHECK (last_seen_generation >= 0)"),
+    ("recordings", "c", "CHECK (cache_identity_recording_id > 0)"),
+    (
+        "recordings",
+        "c",
+        "CHECK (cache_identity_relative_path <> '')",
+    ),
+    (
+        "recordings",
+        "c",
+        "CHECK (move_fingerprint IS NULL OR char_length(move_fingerprint) = 64)",
+    ),
     ("source_components", "p", "PRIMARY KEY (id)"),
     (
         "source_components",
@@ -302,9 +384,96 @@ EXPECTED_CATALOG_CONSTRAINTS = {
         "CHECK (state = 'failed' AND error_code IS NOT NULL AND error_message IS NOT "
         "NULL OR state <> 'failed' AND error_code IS NULL AND error_message IS NULL)",
     ),
+    (
+        "jobs",
+        "c",
+        "CHECK (work_units IS NULL AND estimate_key IS NULL AND estimated_total_ms "
+        "IS NULL AND estimate_method IS NULL AND estimate_sample_count IS NULL OR "
+        "work_units > 0 AND char_length(estimate_key) = 64 AND "
+        "(estimated_total_ms IS NULL AND estimate_method IS NULL AND "
+        "estimate_sample_count IS NULL OR estimated_total_ms > 0 AND "
+        "estimate_method = 'median_rate_v1' AND estimate_sample_count >= 2 OR "
+        "estimated_total_ms IS NULL AND estimate_method = 'insufficient_history' "
+        "AND estimate_sample_count >= 0 AND estimate_sample_count <= 1))",
+    ),
+    ("catalog_state", "p", "PRIMARY KEY (singleton)"),
+    ("catalog_state", "c", "CHECK (singleton)"),
+    ("catalog_state", "c", "CHECK (successful_generation >= 0)"),
+    ("catalog_state", "c", "CHECK (duration_ms >= 0)"),
+    ("catalog_state", "c", "CHECK (recording_count >= 0)"),
+    ("catalog_state", "c", "CHECK (readable_count >= 0)"),
+    ("catalog_state", "c", "CHECK (damaged_count >= 0)"),
+    ("catalog_state", "c", "CHECK (missing_count >= 0)"),
+    ("catalog_state", "c", "CHECK (unsupported_count >= 0)"),
+    ("catalog_state", "c", "CHECK (uninspectable_count >= 0)"),
+    (
+        "catalog_state",
+        "c",
+        "CHECK (successful_generation = 0 AND successful_completed_at IS NULL OR "
+        "successful_generation > 0 AND successful_completed_at IS NOT NULL)",
+    ),
+    ("preparation_targets", "p", "PRIMARY KEY (recording_id, kind)"),
+    (
+        "preparation_targets",
+        "f",
+        "FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE",
+    ),
+    (
+        "preparation_targets",
+        "c",
+        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview', 'imu_series']))",
+    ),
+    ("preparation_targets", "c", "CHECK (scan_generation >= 0)"),
+    (
+        "preparation_targets",
+        "c",
+        "CHECK (char_length(planner_identity) = 64)",
+    ),
+    (
+        "preparation_targets",
+        "c",
+        "CHECK (target_state = ANY (ARRAY['available', 'unavailable']))",
+    ),
+    (
+        "preparation_targets",
+        "c",
+        "CHECK (cache_identity IS NULL OR char_length(cache_identity) = 64)",
+    ),
+    (
+        "preparation_targets",
+        "c",
+        "CHECK (diagnostic_message IS NULL OR char_length(diagnostic_message) <= 500)",
+    ),
+    (
+        "preparation_targets",
+        "c",
+        "CHECK (work_units IS NULL OR work_units > 0)",
+    ),
+    (
+        "preparation_targets",
+        "c",
+        "CHECK (target_state = 'available' AND cache_identity IS NOT NULL AND "
+        "work_units IS NOT NULL AND diagnostic_code IS NULL AND diagnostic_message "
+        "IS NULL OR target_state = 'unavailable' AND cache_identity IS NULL AND "
+        "work_units IS NULL AND diagnostic_code IS NOT NULL AND diagnostic_message "
+        "IS NOT NULL)",
+    ),
 }
 
 EXPECTED_PROCESSING_INDEXES = {
+    (
+        "recordings_move_fingerprint",
+        "recordings",
+        False,
+        True,
+        (
+            "move_fingerprint",
+            "source_present",
+            "last_seen_generation",
+            "id",
+        ),
+        "move_fingerprint IS NOT NULL",
+    ),
     (
         "jobs_one_active_identity",
         "jobs",
@@ -321,8 +490,55 @@ EXPECTED_PROCESSING_INDEXES = {
         ("queued_at", "id"),
         "state = 'queued'",
     ),
+    (
+        "jobs_one_running_globally",
+        "jobs",
+        True,
+        True,
+        ("(true)",),
+        "state = 'running'",
+    ),
+    (
+        "preparation_targets_current_identity",
+        "preparation_targets",
+        False,
+        True,
+        ("kind", "cache_identity", "recording_id"),
+        "target_state = 'available'",
+    ),
+    (
+        "jobs_actionable_failure",
+        "jobs",
+        False,
+        True,
+        ("kind", "cache_identity", "finished_at", "id"),
+        "state = 'failed'",
+    ),
+    (
+        "jobs_succeeded_history",
+        "jobs",
+        False,
+        True,
+        ("finished_at", "id"),
+        "state = 'succeeded'",
+    ),
+    (
+        "jobs_estimation_samples",
+        "jobs",
+        False,
+        True,
+        ("estimate_key", "finished_at", "id"),
+        "state = 'succeeded' AND work_units IS NOT NULL",
+    ),
 }
-EXPECTED_TABLES = ("recordings", "source_components", "artifacts", "jobs")
+EXPECTED_TABLES = (
+    "recordings",
+    "source_components",
+    "artifacts",
+    "jobs",
+    "catalog_state",
+    "preparation_targets",
+)
 
 
 def open_connection(database_url: str) -> Connection[dict[str, object]]:
@@ -352,6 +568,13 @@ def apply_catalog_migration(database_url: str) -> None:
         )
         for migration in migrations:
             connection.execute(migration)
+        _validate_catalog_schema(connection)
+
+
+def validate_catalog_schema(database_url: str) -> None:
+    """Validate the exact accepted schema without applying a migration."""
+    with open_connection(database_url) as connection:
+        connection.execute("SET TRANSACTION READ ONLY")
         _validate_catalog_schema(connection)
 
 

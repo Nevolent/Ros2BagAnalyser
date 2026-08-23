@@ -1,0 +1,9 @@
+[Unit]
+Description=ROS Bag Analyser V1 trial services
+Documentation=file:/opt/rosbag-analyser/current/docs/NAS_TRIAL_RUNBOOK.md
+Requires=rosbag-analyser-preflight.service rosbag-analyser-api.service rosbag-analyser-worker.service
+After=rosbag-analyser-preflight.service rosbag-analyser-api.service rosbag-analyser-worker.service
+StopWhenUnneeded=no
+
+[Install]
+WantedBy=multi-user.target

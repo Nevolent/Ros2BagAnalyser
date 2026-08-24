@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 import sqlite3
+import time
 
 import pytest
 
@@ -12,6 +13,7 @@ from rosbag_analyser.processors import imu_series as imu_processor_module
 from rosbag_analyser.catalog.metadata import TopicFact
 from rosbag_analyser.catalog.paths import source_file_identity
 from rosbag_analyser.imu_series import ImuSourceDescriptor
+from rosbag_analyser.job_control import JobCanceled
 from rosbag_analyser.processors.imu_series import (
     MAX_SERIALIZED_IMU_BYTES,
     ImuSeriesProcessingError,
@@ -77,6 +79,37 @@ def _descriptor(database: Path, bag_start_ns: int, count: int) -> ImuSourceDescr
 
 def _all_components(value: float) -> tuple[float, ...]:
     return (value, value, value, value, value, value)
+
+
+class _CancelAtFirstCheckpoint:
+    phases: list[str]
+
+    def __init__(self) -> None:
+        self.phases = []
+
+    def checkpoint(self, phase: str, *, force: bool = False) -> None:
+        del force
+        self.phases.append(phase)
+        raise JobCanceled("synthetic cancellation")
+
+
+def test_imu_control_reaches_a_bounded_processing_checkpoint(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "recording.db3"
+    _create_imu_database(database, [1_000])
+    control = _CancelAtFirstCheckpoint()
+    started = time.perf_counter()
+
+    with pytest.raises(JobCanceled):
+        ImuSeriesProcessor(lambda payload: _all_components(float(payload[0]))).process(
+            _descriptor(database, 1_000, 1),
+            tmp_path / "series.json",
+            control=control,  # type: ignore[arg-type]
+        )
+
+    assert time.perf_counter() - started < 2
+    assert control.phases == ["processing"]
 
 
 def test_extracts_record_time_values_nulls_and_duplicates_without_source_writes(

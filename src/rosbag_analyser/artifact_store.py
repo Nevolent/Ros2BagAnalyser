@@ -15,6 +15,7 @@ import tempfile
 from typing import Any
 
 from rosbag_analyser.config import PreviewProfile
+from rosbag_analyser.job_control import JobControlToken
 from rosbag_analyser.timeline import media_pts_digest_chunk
 
 
@@ -134,7 +135,10 @@ class ArtifactStore:
         expected_frame_count: int,
         measured_span_ns: int,
         expected_media_pts_sha256: str | None = None,
+        control: JobControlToken | None = None,
     ) -> MediaValidation:
+        if control is not None:
+            control.checkpoint("validating", force=True)
         self._assert_contained(media_path)
         try:
             details = media_path.stat(follow_symlinks=False)
@@ -174,6 +178,8 @@ class ArtifactStore:
                 text=True,
                 timeout=30,
             )
+            if control is not None:
+                control.checkpoint("validating", force=True)
             document = json.loads(completed.stdout)
             stream = document["streams"][0]
             format_facts = document["format"]
@@ -230,7 +236,9 @@ class ArtifactStore:
 
         if profile.container == "mp4":
             self._validate_mp4_faststart(media_path, details.st_size)
-        self._validate_representative_seeks(media_path, validation.duration_seconds)
+        self._validate_representative_seeks(
+            media_path, validation.duration_seconds, control=control
+        )
         try:
             final_details = media_path.stat(follow_symlinks=False)
         except OSError as error:
@@ -323,7 +331,10 @@ class ArtifactStore:
         expected_columns: tuple[SeriesColumnExpectation, ...],
         expected_coverage_start_ns: int,
         expected_coverage_end_ns: int,
+        control: JobControlToken | None = None,
     ) -> SeriesValidation:
+        if control is not None:
+            control.checkpoint("validating", force=True)
         self._assert_contained(series_path)
         try:
             before = series_path.stat(follow_symlinks=False)
@@ -372,6 +383,8 @@ class ArtifactStore:
             minimum_values: list[float | None] = [None] * len(expected_columns)
             maximum_values: list[float | None] = [None] * len(expected_columns)
             for sample in samples:
+                if control is not None:
+                    control.checkpoint("validating")
                 if (
                     not isinstance(sample, list)
                     or len(sample) != len(expected_columns) + 1
@@ -439,6 +452,8 @@ class ArtifactStore:
                 "The generated IMU series does not match its expected data.",
             ) from error
 
+        if control is not None:
+            control.checkpoint("validating", force=True)
         return SeriesValidation(
             size_bytes=before.st_size,
             device_id=before.st_dev,
@@ -927,13 +942,19 @@ class ArtifactStore:
         self._assert_contained(path)
 
     def _validate_representative_seeks(
-        self, media_path: Path, duration_seconds: float
+        self,
+        media_path: Path,
+        duration_seconds: float,
+        *,
+        control: JobControlToken | None = None,
     ) -> None:
         points = {0.0}
         if duration_seconds > 0.05:
             points.add(duration_seconds / 2)
             points.add(max(0.0, duration_seconds - 0.05))
         for point in sorted(points):
+            if control is not None:
+                control.checkpoint("validating", force=True)
             command = [
                 os.fspath(self.ffmpeg_path),
                 "-v",
@@ -956,6 +977,8 @@ class ArtifactStore:
                     text=True,
                     timeout=30,
                 )
+                if control is not None:
+                    control.checkpoint("validating", force=True)
                 produced_frame = any(
                     line.strip() and not line.lstrip().startswith("#")
                     for line in completed.stdout.splitlines()

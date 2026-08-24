@@ -34,6 +34,7 @@ from rosbag_analyser.imu_series import (
     SERIES_SCHEMA_VERSION,
     ImuSourceResolver,
 )
+from rosbag_analyser.job_control import JobCanceled, JobControlToken
 from rosbag_analyser.persistence.database import open_connection
 from rosbag_analyser.persistence.processing_repository import (
     ArtifactWrite,
@@ -141,7 +142,10 @@ class SerialWorker:
     def _run_front_job(self, job: JobRecord) -> None:
         workspace = None
         started = time.monotonic()
+        control = self._control_token(job)
         try:
+            if control is not None:
+                control.checkpoint("setup", force=True)
             resolution = self.resolver.resolve(job.recording_id)
             if resolution.descriptor is None:
                 message = (
@@ -164,7 +168,11 @@ class SerialWorker:
 
             workspace = self.artifact_store.create_workspace(job.id)
             output_path = workspace / "preview.mp4"
-            result = self.processor.process(descriptor, output_path)
+            result = (
+                self.processor.process(descriptor, output_path, control=control)
+                if control is not None
+                else self.processor.process(descriptor, output_path)
+            )
 
             validation = self.artifact_store.validate_preview(
                 output_path,
@@ -174,6 +182,7 @@ class SerialWorker:
                 expected_frame_count=result.encoded_frame_count,
                 measured_span_ns=result.measured_span_ns,
                 expected_media_pts_sha256=result.media_pts_sha256,
+                control=control,
             )
             manifest: dict[str, object] = {
                 "schema_version": 2,
@@ -233,6 +242,8 @@ class SerialWorker:
                     "preview_inputs_changed",
                     "Preview inputs changed during generation.",
                 )
+            if control is not None:
+                control.publishing_gate()
             published = self.artifact_store.publish(
                 workspace,
                 job.id,
@@ -259,6 +270,10 @@ class SerialWorker:
                 job.id,
                 time.monotonic() - started,
                 published.size_bytes,
+            )
+        except JobCanceled:
+            workspace = self._finish_cancellation(
+                job, workspace, self.artifact_store
             )
         except (FrontPreviewProcessingError, ArtifactStoreError) as error:
             self.repository.fail_job(job.id, error.code, error.safe_message)
@@ -290,7 +305,10 @@ class SerialWorker:
         resolver = self.topdown_resolver
         processor = self.topdown_processor
         artifact_store = self.topdown_artifact_store
+        control = self._control_token(job)
         try:
+            if control is not None:
+                control.checkpoint("setup", force=True)
             if resolver is None or processor is None or artifact_store is None:
                 raise TopdownPreviewProcessingError(
                     "topdown_processor_unavailable",
@@ -318,7 +336,11 @@ class SerialWorker:
 
             workspace = artifact_store.create_workspace(job.id)
             output_path = workspace / "preview.mp4"
-            result = processor.process(descriptor, output_path)
+            result = (
+                processor.process(descriptor, output_path, control=control)
+                if control is not None
+                else processor.process(descriptor, output_path)
+            )
             validation = artifact_store.validate_preview(
                 output_path,
                 processor.profile,
@@ -327,6 +349,7 @@ class SerialWorker:
                 expected_frame_count=result.encoded_frame_count,
                 measured_span_ns=result.measured_span_ns,
                 expected_media_pts_sha256=result.media_pts_sha256,
+                control=control,
             )
             manifest: dict[str, object] = {
                 "schema_version": 1,
@@ -380,6 +403,8 @@ class SerialWorker:
                     "topdown_inputs_changed",
                     "Top-down preview inputs changed during generation.",
                 )
+            if control is not None:
+                control.publishing_gate()
             published = artifact_store.publish(
                 workspace,
                 job.id,
@@ -407,6 +432,8 @@ class SerialWorker:
                 time.monotonic() - started,
                 published.size_bytes,
             )
+        except JobCanceled:
+            workspace = self._finish_cancellation(job, workspace, artifact_store)
         except (TopdownPreviewProcessingError, ArtifactStoreError) as error:
             self.repository.fail_job(job.id, error.code, error.safe_message)
             logger.warning(
@@ -443,7 +470,10 @@ class SerialWorker:
         resolver = self.imu_resolver
         processor = self.imu_processor
         artifact_store = self.imu_artifact_store
+        control = self._control_token(job)
         try:
+            if control is not None:
+                control.checkpoint("setup", force=True)
             if resolver is None or processor is None or artifact_store is None:
                 raise ImuSeriesProcessingError(
                     "imu_processor_unavailable", "IMU series processing is unavailable."
@@ -470,7 +500,11 @@ class SerialWorker:
 
             workspace = artifact_store.create_workspace(job.id)
             output_path = workspace / "series.json"
-            result = processor.process(descriptor, output_path)
+            result = (
+                processor.process(descriptor, output_path, control=control)
+                if control is not None
+                else processor.process(descriptor, output_path)
+            )
             result_by_id = {series.id: series for series in result.series}
             validation = artifact_store.validate_series(
                 output_path,
@@ -490,6 +524,7 @@ class SerialWorker:
                 ),
                 expected_coverage_start_ns=result.coverage_start_ns,
                 expected_coverage_end_ns=result.coverage_end_ns,
+                control=control,
             )
             default_series = IMU_SERIES_BY_COMPONENT[descriptor.component]
             manifest: dict[str, object] = {
@@ -552,6 +587,8 @@ class SerialWorker:
                 raise ImuSeriesProcessingError(
                     "imu_inputs_changed", "IMU series inputs changed during generation."
                 )
+            if control is not None:
+                control.publishing_gate()
             published = artifact_store.publish_series(
                 workspace,
                 job.id,
@@ -580,6 +617,8 @@ class SerialWorker:
                 result.sample_count,
                 published.size_bytes,
             )
+        except JobCanceled:
+            workspace = self._finish_cancellation(job, workspace, artifact_store)
         except (ImuSeriesProcessingError, ArtifactStoreError) as error:
             self.repository.fail_job(job.id, error.code, error.safe_message)
             logger.warning(
@@ -603,6 +642,41 @@ class SerialWorker:
                     logger.exception(
                         "Owned workspace cleanup failed for IMU job %s.", job.id
                     )
+
+    def _control_token(self, job: JobRecord) -> JobControlToken | None:
+        required = (
+            "worker_checkpoint",
+            "acknowledge_pause",
+            "enter_publishing",
+            "begin_cancel_cleanup",
+            "complete_cancellation",
+        )
+        if not all(hasattr(self.repository, name) for name in required):
+            return None
+        return JobControlToken(self.repository, job.id)
+
+    def _finish_cancellation(self, job: JobRecord, workspace, artifact_store):
+        try:
+            self.repository.begin_cancel_cleanup(job.id)
+            if workspace is not None and workspace.exists():
+                artifact_store.clean_workspace(workspace, job.id)
+            self.repository.complete_cancellation(job.id)
+            logger.info("Processing job %s was canceled safely.", job.id)
+            return None
+        except (ArtifactStoreError, RuntimeError):
+            try:
+                self.repository.fail_job(
+                    job.id,
+                    "cancellation_cleanup_failed",
+                    "Cancellation cleanup failed. The attempt was stopped and requires review.",
+                )
+            except RuntimeError:
+                logger.exception(
+                    "Cancellation failure state could not be recorded for job %s.",
+                    job.id,
+                )
+            logger.exception("Cancellation cleanup failed for job %s.", job.id)
+            return workspace
 
 
 def create_worker(

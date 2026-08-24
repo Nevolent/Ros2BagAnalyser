@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import time
 
 import av
 import numpy as np
@@ -13,6 +14,7 @@ import pytest
 
 from rosbag_analyser.artifact_store import ArtifactStore, ArtifactStoreError
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
+from rosbag_analyser.job_control import JobCanceled
 from rosbag_analyser.timeline import media_pts_digest_chunk
 
 
@@ -57,6 +59,46 @@ def _media_pts_sha256(values: tuple[int, ...]) -> str:
     for value in values:
         digest.update(media_pts_digest_chunk(value))
     return digest.hexdigest()
+
+
+class _CancelAtCheckpoint:
+    def __init__(self, call_number: int) -> None:
+        self.call_number = call_number
+        self.calls: list[str] = []
+
+    def checkpoint(self, phase: str, *, force: bool = False) -> None:
+        del force
+        self.calls.append(phase)
+        if len(self.calls) == self.call_number:
+            raise JobCanceled("synthetic cancellation")
+
+
+@pytest.mark.parametrize("call_number", [1, 2])
+def test_media_validation_control_is_bounded_before_and_after_external_probe(
+    tmp_path: Path, call_number: int
+) -> None:
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    store = _store(derived)
+    workspace = store.create_workspace(40 + call_number)
+    output = workspace / "preview.mp4"
+    _write_preview(output)
+    control = _CancelAtCheckpoint(call_number)
+    started = time.perf_counter()
+
+    with pytest.raises(JobCanceled):
+        store.validate_preview(
+            output,
+            V0_PREVIEW_PROFILE,
+            expected_width=4,
+            expected_height=2,
+            expected_frame_count=2,
+            measured_span_ns=250_000_000,
+            control=control,  # type: ignore[arg-type]
+        )
+
+    assert time.perf_counter() - started < 2
+    assert control.calls == ["validating"] * call_number
 
 
 def _manifest(path: Path, identity: str) -> dict[str, object]:

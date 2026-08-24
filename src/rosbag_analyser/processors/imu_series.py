@@ -17,6 +17,7 @@ from rosbag_analyser.imu_series import (
     SERIES_SCHEMA_VERSION,
     ImuSourceDescriptor,
 )
+from rosbag_analyser.job_control import JobControlToken
 
 
 MAX_SERIALIZED_IMU_BYTES = 1024 * 1024
@@ -58,7 +59,11 @@ class ImuSeriesProcessor:
         self.value_decoder = value_decoder or deserialize_imu_values
 
     def process(
-        self, descriptor: ImuSourceDescriptor, output_path: Path
+        self,
+        descriptor: ImuSourceDescriptor,
+        output_path: Path,
+        *,
+        control: JobControlToken | None = None,
     ) -> ImuSeriesResult:
         if descriptor.component not in IMU_SERIES_BY_COMPONENT:
             raise ImuSeriesProcessingError(
@@ -86,6 +91,8 @@ class ImuSeriesProcessor:
                 )
                 first_sample = True
                 for record_timestamp, serialized in _iter_topic_messages(descriptor):
+                    if control is not None:
+                        control.checkpoint("processing")
                     try:
                         values = tuple(
                             float(value) for value in self.value_decoder(serialized)
@@ -154,6 +161,8 @@ class ImuSeriesProcessor:
                     )
                     first_sample = False
                     sample_count += 1
+                if control is not None:
+                    control.checkpoint("processing", force=True)
                 _write_bounded(output, b"]}", written)
         except ImuSeriesProcessingError:
             raise

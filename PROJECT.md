@@ -3,8 +3,9 @@
 **Status:** V1 product contract approved on 2026-08-04; Building blocks 1 and 2
 and all three corrective slices accepted; Building block 3 repository readiness
 implemented, verified, and accepted as the working pre-overhaul baseline on
-2026-08-23; Prompt 2A big UI overhaul invoked on 2026-08-23; live Gate 0, VM
-commissioning, real-source acceptance, and trial admission not completed
+2026-08-23; Prompt 2A big UI overhaul implemented and synthetically verified
+on 2026-08-23, pending user review; live Gate 0, VM commissioning, real-source
+acceptance, and trial admission not completed
 
 **Target:** Limited-group engineering trial hosted in an internal NAS virtual
 machine
@@ -26,15 +27,14 @@ deployment scale, or collaboration features.
 
 ## 2. Product decisions
 
-The product sections below describe the accepted, currently served
-pre-overhaul baseline. Prompt 2A was approved and invoked on 2026-08-23 as the
-next implementation block. Its approved delta is:
+Prompt 2A was approved, invoked, and implemented on 2026-08-23. Its corrective
+product delta is:
 
 - use only the current reference's Recordings, Processing, and Analyzer
   surfaces; remove the leftover Experiments/Files surface and all mock data;
-- show the friendly recording name without a separate Recorded column in the
-  Recordings table, while retaining truthful source identity and recorded time
-  in details and accessible context;
+- show the friendly recording name and a separate Recorded column in the
+  Recordings table, while retaining truthful source identity in secondary and
+  accessible context; recorded time always comes from `start_time_ns`;
 - let users prepare any non-empty subset of the existing front, top-down, and
   IMU outputs without changing the three artifact kinds;
 - add persistent pause/resume, cancel, queue reorder, bulk cancel, and bulk
@@ -47,10 +47,17 @@ next implementation block. Its approved delta is:
 - require state-by-state visual parity with the frozen authored reference,
   allowing only documented truthful-data and dynamic-media differences.
 
-Until Prompt 2A is implemented and accepted, these bullets are approved work,
-not claims about the currently served interface. The complete implementation,
-safety, persistence, and acceptance contract is owned by Prompt 2A in
+The implementation remains uncommitted pending user review. Its live-VM,
+authoritative-source, and visual screenshot acceptance remain gated. The
+complete safety, persistence, and acceptance contract is owned by Prompt 2A in
 `BUILDING_BLOCK_PROMPTS.md`.
+
+The 2026-08-24 Recordings-page review supersedes only Prompt 2A's earlier
+name/date presentation choice. It restores the frozen reference's Recorded
+column, attached non-native filter menus, viewport-positioned status tooltips,
+reference folder/search styling, single-line selection action, and restrained
+selected/focus treatments. Processing, Analyzer, backend, processing, timing,
+and deployment contracts are unchanged.
 
 The following decisions define V1:
 
@@ -66,8 +73,9 @@ The following decisions define V1:
   path.
 - **Prepare selected** is the only ordinary preparation action on the
   Recordings page.
-- One preparation request resolves three existing outputs: front preview,
-  top-down preview, and the six-channel IMU bundle.
+- One preparation request resolves a user-chosen non-empty subset of the three
+  existing outputs: front preview, top-down preview, and the six-channel IMU
+  bundle.
 - Those outputs remain separate artifact jobs internally so each can be
   reused, fail, and retry independently.
 - One serial worker is sufficient for the first trial.
@@ -153,7 +161,7 @@ gain a failed job merely because it cannot be prepared.
 
 The user selects visible table rows and chooses **Prepare selected**.
 
-For every selected recording, the application must:
+For every selected recording and selected output, the application must:
 
 - calculate current identities and prerequisites for the three supported
   outputs;
@@ -165,10 +173,12 @@ For every selected recording, the application must:
 - prevent duplicate active jobs and duplicate current artifacts; and
 - return a per-recording, per-output result.
 
-All three fixed outputs are preflighted before new work is inserted for one
-recording. If any required output is unavailable, that recording is rejected as
-a complete preparation unit and no new jobs are created for it. Existing valid
-artifacts are retained. Other selected recordings continue independently.
+Only the chosen outputs are preflighted. An unavailable chosen output is
+reported independently and creates no impossible work; compatible ready or
+active chosen outputs are still reused and valid output is retained. Other
+selected recordings continue independently. Aggregate readiness and Analyzer
+admission still reflect all three outputs, so partial preparation is truthful
+and never presented as a complete analyzer bundle.
 
 The request is bounded and idempotent. One unavailable recording does not roll
 back valid work for the others. The UI reports reused, queued, active, and
@@ -189,9 +199,12 @@ It must show:
 - one current running job, when present;
 - its recording, output kind, start age, exact elapsed time, and estimated
   remaining time when enough compatible history exists;
-- an indeterminate activity indicator rather than a fabricated completion
-  percentage;
-- the persistent FIFO queue with stable positions and queued ages;
+- an indeterminate activity indicator unless a processor exposes a proven
+  exact completed/total unit pair;
+- the persistent, explicitly reorderable queue with stable positions and
+  queued ages;
+- durable pause/resume and cancellation controls at bounded safe checkpoints;
+- queued-row and bounded bulk cancellation, reorder, and failed-retry controls;
 - failed current attempts with safe diagnostics, runtime, details, and retry;
 - bounded, paginated succeeded history with runtime, output size, and a link to
   open the recording;
@@ -204,8 +217,9 @@ insufficient relevant history it reads **Estimating…** or **Not enough
 history**. If elapsed time passes the estimate, it reads **Estimate exceeded**;
 it must not display a false zero remaining.
 
-V1 does not add cancellation, reordering, priorities, multiple workers,
-percent-complete reporting, or automatic retry.
+V1 does not add priorities, multiple workers, fabricated percentage progress,
+or automatic retry. Cancellation and reorder remain explicit user operations;
+they do not introduce preemption, a second worker, or a background scheduler.
 
 ### 4.5 Analyzer
 
@@ -312,7 +326,8 @@ Automatic watching, uploads, and scan-on-start are outside V1.
   target; a changed planner/configuration requires an explicit rescan.
 - Use database timestamps for queue age, elapsed time, and completed runtime.
 - Join succeeded jobs to matching artifacts for output size.
-- Keep queue order identical to worker claim order.
+- Keep the stable mutable queue order identical to worker claim order and
+  serialize reorder, insertion, cancellation, and claim against that order.
 - Paginate history and bound every processing response.
 - Estimate duration only from compatible completed attempts and relevant
   catalogued input measures.
@@ -390,9 +405,9 @@ V1 is ready for the limited engineering trial when:
 2. Recordings show truthful health and aggregate analysis states.
 3. Selecting multiple recordings and choosing **Prepare selected** queues only
    missing current output and reuses compatible work.
-4. The Processing view accurately reports current work, FIFO positions,
-   elapsed time, cautious estimates, failures, retries, and history across
-   restarts.
+4. The Processing view accurately reports current work, authoritative queue
+   positions, wall and active elapsed time, cautious estimates, controls,
+   failures, retries, cancellation, and history across restarts.
 5. The served browser matches the `archive/` reference and contains no mock
    catalog, job, media, or telemetry data.
 6. A prepared short and long recording remain synchronized and reusable.
@@ -410,8 +425,8 @@ V1 is ready for the limited engineering trial when:
 - Public internet exposure or a public SaaS product.
 - Application-managed user accounts, roles, or fine-grained permissions.
 - Multiple workers, distributed scheduling, Redis, brokers, priorities,
-  cancellation, quotas, or automatic retry.
-- Percent-complete processor instrumentation.
+  quotas, or automatic retry.
+- Fabricated or approximate percent-complete processor instrumentation.
 - Browser uploads, automatic filesystem watching, or source mutation.
 - ROS bag repair, reindexing, conversion, or deletion.
 - ROS 1, general MCAP, compression, split-bag, or arbitrary format support.

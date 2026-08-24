@@ -1,13 +1,14 @@
 # ROS 2 Bag Analyser — V1 Architecture
 
-> **Status:** Approved pre-overhaul V1 build contract; Building blocks 1 and 2
+> **Status:** Approved V1 build contract; Building blocks 1 and 2
 > and their corrective slices accepted; Building block 3 repository readiness
 > implemented, verified, and accepted as the working baseline on 2026-08-23;
-> Prompt 2A big UI overhaul invoked; live commissioning pending
+> Prompt 2A big UI overhaul implemented and synthetically verified, pending
+> user review; live commissioning pending
 >
 > **Target:** Internal limited-group NAS trial
 >
-> **Last updated:** 2026-08-23
+> **Last updated:** 2026-08-24
 
 ## 1. Objective and baseline
 
@@ -25,19 +26,18 @@ moves. The primary additions are:
 
 - bounded recursive discovery and a physical folder-tree contract;
 - one aggregate preparation state per recording;
-- one bounded bulk preparation operation;
-- persistent queue, failure, history, elapsed-time, and estimate APIs;
+- one bounded, selectively scoped bulk preparation operation;
+- persistent queue, control, failure, history, elapsed-time, and estimate APIs;
 - the frontend under `archive/` wired to real data; and
 - a repeatable internal VM deployment.
 
 The V0 documents in [docs/v0](docs/v0/INDEX.md) remain the evidence for source
 facts, processor correctness, artifact identity, timing, and real-data safety.
 
-### 1.1 Approved Prompt 2A architecture delta
+### 1.1 Implemented Prompt 2A architecture delta
 
-The architecture sections below remain the accepted implementation baseline.
-Prompt 2A, approved and invoked on 2026-08-23, is the next block and owns these
-not-yet-implemented changes:
+Prompt 2A was approved, invoked, implemented, and synthetically verified on
+2026-08-23. It owns these corrective changes:
 
 - the current Recordings, Processing, and Analyzer reference replaces the
   served presentation while Experiments/Files and all mock payloads are
@@ -59,9 +59,13 @@ not-yet-implemented changes:
 
 Prompt 2A in `BUILDING_BLOCK_PROMPTS.md` owns the detailed state machine,
 migration/API contracts, checkpoint semantics, failure rules, and visual test
-matrix. The existing decisions below describe current behavior until that block
-is implemented and accepted; conflicts are deliberate, dated overhaul deltas,
-not evidence that the new behavior already exists.
+matrix. The implementation is uncommitted pending user review, and live-VM,
+authoritative-source, and screenshot acceptance remain separately gated.
+
+The 2026-08-24 Recordings review restores the separate Recorded table column
+using the already-delivered decimal `start_time_ns` catalog fact. Filter menus
+and status-tooltip placement are browser presentation only: they add no API,
+source read, persistence, job, processor, or timing behavior.
 
 ## 2. V1 decisions
 
@@ -76,10 +80,11 @@ not evidence that the new behavior already exists.
 | Source archive | One configured, physically nested, strictly read-only root |
 | Derived data | Separate configured writable filesystem root |
 | Expensive work | Exactly one serial worker |
-| Preparation | One bulk user action, three independent artifact jobs |
+| Preparation | One bulk user action, a non-empty chosen subset of three independent artifact jobs |
 | Artifact kinds | `front_preview`, `topdown_preview`, `imu_series` |
-| Queue order | FIFO by `queued_at`, then job ID |
-| Job progress | Indeterminate; V1 does not claim percentage complete |
+| Queue order | Stable mutable `queue_order`, shared exactly by display, reorder, insertion, cancellation, and worker claim |
+| Job control | Durable pause/resume and cancellation at cooperative safe checkpoints; one serial worker |
+| Job progress | Indeterminate unless a processor has an exact completed/total unit pair |
 | Estimate | Historical, kind-specific, source-size-normalized, explicitly approximate |
 | ROS time | Database record time relative to bag start |
 | Front media cadence | Image-header capture cadence affinely mapped between measured ROS record endpoints |
@@ -151,7 +156,7 @@ flowchart LR
     API -->|"explicit bounded rescan"| SCAN["Recursive catalog scanner"]
     SCAN -. "read only" .-> NAS["NAS recording archive"]
     API -->|"prepare selected"| PG
-    WORKER["One serial ROS worker"] -->|"claim and complete FIFO jobs"| PG
+    WORKER["One serial ROS worker"] -->|"claim and complete ordered jobs"| PG
     WORKER -. "read only" .-> NAS
     WORKER --> DERIVED["Derived artifact root"]
     API -->|"identity-bound output"| DERIVED
@@ -175,7 +180,7 @@ proxy. PostgreSQL and the worker are not reachable from engineer browsers.
 | `artifact_store` | Existing contained temporary work, validation, publication, and delivery |
 | `timeline` | Existing integer time conversion, coverage, and browser mappings |
 | `api` | Thin versioned request/response composition |
-| `worker` | One advisory-lock-protected FIFO dispatcher |
+| `worker` | One advisory-lock-protected dispatcher using the authoritative stable mutable queue order |
 | `web` | Served implementation of the `archive/` visual contract |
 
 V1 does not introduce a generic repository framework, event bus, job framework,
@@ -361,8 +366,10 @@ Building block 1 added the measured focused indexes:
 - `jobs_succeeded_history` for newest-first history; and
 - `jobs_estimation_samples` for compatible bounded history samples.
 
-The inherited `jobs_one_active_identity` and `jobs_queue_order` indexes continue
-to enforce active identity reuse and FIFO claim/display order.
+The inherited `jobs_one_active_identity` continues to enforce active identity
+reuse. Migration `0007_job_controls.sql` replaces the FIFO index with a partial
+`jobs_queue_order (queue_order, id)` index that matches display and worker claim
+order, plus newest-first canceled history.
 
 Indexes are justified with query plans or measured repository tests. V1 adds no
 preparation-batch table and no duplicate artifact-state columns.
@@ -377,8 +384,10 @@ not used by ordinary catalog or Processing reads.
 ### 8.5 Job and artifact history
 
 One job remains one attempt for one artifact identity. Jobs retain queued,
-started, and finished timestamps plus safe failures. V1 jobs also retain the
-planner-provided work units and estimate key, plus nullable claim-time estimate
+started, and finished timestamps plus safe failures. Prompt 2A adds durable
+control state/revision, execution phase, pause/cancel timestamps, accumulated
+paused time, and a positive stable queue order. It also retains the
+planner-provided work units and estimate key plus nullable enqueue-time estimate
 facts. A matching artifact row continues to mean validated ready output for its
 exact identity.
 
@@ -444,11 +453,13 @@ to `damaged` with its precise diagnostic.
 ### 10.1 Request contract
 
 `POST /api/v1/recordings/prepare` accepts a JSON object containing a non-empty,
-deduplicated, ordered list of positive numeric recording IDs. The list is
-bounded by configuration and request-body limits.
+deduplicated, ordered list of positive numeric recording IDs and a validated
+non-empty subset of the three output kinds. Both lists are bounded by
+configuration and request-body limits. Omitting the kind list retains the
+backward-compatible all-three behavior.
 
-The service processes IDs in request order and artifact kinds in this fixed
-order:
+The service processes IDs in request order and only the selected artifact kinds
+in this fixed order:
 
 1. `front_preview`;
 2. `topdown_preview`;
@@ -469,12 +480,12 @@ For each recording and output, the response reports one of:
 One recording's unavailable prerequisite does not roll back jobs already
 created for another. The response identifies partial success explicitly.
 
-All three targets for one recording are preflighted before inserts. If any is
-unavailable or stale, the service creates no new job for that recording and
-returns the three target diagnostics. Existing ready artifacts and historical
-attempts remain untouched. This preserves the product meaning that preparation
-creates a complete analyzer bundle without inventing an aggregate Incomplete
-state.
+Chosen targets are resolved independently. An unavailable or stale chosen
+target creates no job for that output, but compatible ready/active chosen
+outputs are still reused and other chosen outputs may be queued. Existing ready
+artifacts and historical attempts remain untouched. Aggregate readiness and
+Analyzer admission still require all three current outputs, so a partially
+prepared recording is never presented as a complete analyzer bundle.
 
 ### 10.3 Concurrency and idempotency
 
@@ -490,16 +501,22 @@ for a processor.
 The worker retains one session-level PostgreSQL advisory lock. A second worker
 exits with a clear diagnostic.
 
-The claim query remains FIFO by `queued_at`, then ID, with `FOR UPDATE SKIP
-LOCKED`. Processing occurs outside the claim transaction.
+The claim query uses `queue_order`, then ID, with `FOR UPDATE SKIP LOCKED`.
+Insertion, claim, queued cancellation, and reorder take the same transaction-
+level advisory lock before row locks, so displayed order and actual serial claim
+order cannot diverge. `queued_at` remains immutable historical age.
 
 The worker reloads the source descriptor, revalidates identity, processes in a
 contained temporary workspace, validates output, rechecks current input facts,
-publishes, writes the artifact row, and succeeds the job. Failure publishes no
-ready artifact.
+passes a transactional publication gate, publishes, writes the artifact row,
+and succeeds the job. Failure or acknowledged cancellation publishes no ready
+artifact. The dependency-free control token checks durable control state at
+setup, processor units, validation, publication, and cleanup boundaries.
 
-At startup, abandoned running jobs become failed/interrupted as in V0. V1 does
-not add leases, cancellation, priority, automatic retry, or parallel claims.
+At startup, abandoned running jobs—including paused work—become
+failed/`worker_interrupted` as in V0; pause is not durable execution across a
+worker restart. V1 does not add leases, priority, automatic retry, or parallel
+claims.
 
 Worker availability for the Processing view is determined by a bounded probe of
 the existing worker advisory lock. The probe releases the lock immediately if
@@ -514,7 +531,9 @@ The API returns server time and database timestamps in UTC. The browser derives
 and refreshes:
 
 - queued age from `queued_at`;
-- running elapsed time from `started_at`; and
+- wall elapsed time from `started_at`;
+- active elapsed time from wall elapsed minus accumulated/current acknowledged
+  pause time; and
 - completed runtime from `finished_at - started_at`.
 
 Client display clocks are cosmetic. Refreshing from the API corrects local
@@ -522,19 +541,19 @@ drift.
 
 ### 12.2 Estimate model
 
-V1 estimates total duration only for the one running job. It does not present a
-percentage complete or promise a completion time for queued jobs.
+V1 estimates likely total duration for running and queued jobs. It does not
+present a fabricated percentage complete or promise a completion time.
 
 When a V1 job is inserted, the matching preparation target supplies immutable
 work units and an estimate key covering kind, processor, schema, profile, and
 encoder identity. Legacy jobs may leave these fields null and are not silently
 treated as compatible samples.
 
-When the worker claims a job, it freezes the estimate fields from bounded
-compatible succeeded jobs before processing begins. Failed, interrupted,
-stale-profile, null-unit, and invalid attempts are excluded. Freezing the
-estimate prevents the displayed prediction from changing merely because later
-jobs finish.
+When a job is inserted, it freezes estimate fields from bounded compatible
+succeeded jobs. Pre-migration queued rows with missing estimate facts may take
+the same snapshot at claim. Failed, interrupted, canceled, stale-profile,
+null-unit, and invalid attempts are excluded. Freezing prevents a displayed
+prediction from changing merely because later jobs finish.
 
 Each kind uses one catalogued input measure:
 
@@ -560,9 +579,9 @@ rule; it may not quietly substitute hard-coded demonstration times.
 ### 12.3 Remaining-time display
 
 ```text
-predicted_total - elapsed > 0  -> approximate remaining duration
+predicted_total - active_elapsed > 0  -> approximate remaining duration
 insufficient estimate data     -> "Estimating…" / "Not enough history"
-elapsed >= predicted_total     -> "Estimate exceeded"
+active_elapsed >= predicted_total     -> "Estimate exceeded"
 ```
 
 Estimation failure never changes job state or worker behavior.
@@ -623,13 +642,16 @@ three independent generation buttons.
 
 - server time;
 - worker `online` or `offline` state;
-- count of running, queued, current failed, and succeeded attempts;
-- the current running job with elapsed/estimate facts; and
-- a bounded first page of the FIFO queue with positions.
+- count of running, queued, current failed, succeeded, and canceled attempts;
+- the current running job with wall/active elapsed, control, phase, and estimate
+  facts; and
+- a bounded first page of the authoritative queue with positions and cumulative
+  approximate ready-in estimates when every predecessor input is valid.
 
-`GET /api/v1/processing/jobs` accepts a validated view of `queued`, `failed`, or
-`history`, plus bounded limit/cursor and optional search. Ordering is stable and
-cursor-based so new jobs do not duplicate or skip delivered history rows.
+`GET /api/v1/processing/jobs` accepts a validated view of `queued`, `failed`,
+`history`, or `canceled`, plus bounded limit/cursor and optional search.
+Ordering is stable and cursor-based so new jobs do not duplicate or skip
+delivered history rows.
 
 Failures return safe code/message and runtime. Succeeded history joins the exact
 artifact for output size and links by numeric recording ID.
@@ -642,7 +664,24 @@ then reuses or requests current work. It never blindly reruns a stale identity.
 
 Only a failed job is a valid retry target. Repeated clicks are idempotent.
 
-### 13.6 Health
+### 13.6 Processing controls
+
+The approved control routes are:
+
+- `POST /api/v1/processing/jobs/{job_id}/pause`;
+- `POST /api/v1/processing/jobs/{job_id}/resume`;
+- `POST /api/v1/processing/jobs/{job_id}/cancel`;
+- `POST /api/v1/processing/jobs/cancel` with a bounded ordered ID list;
+- `POST /api/v1/processing/jobs/reorder` with bounded IDs and `earlier` or
+  `later`; and
+- `POST /api/v1/processing/jobs/retry` with bounded failed IDs.
+
+Controls return authoritative outcomes, actual job/control state, allowed
+controls, and server time. Request acknowledgement is distinct from worker
+acknowledgement and terminal cancellation. Reorder is all-or-none on a stale or
+claimed selection; bounded bulk cancel/retry reports per-item outcomes.
+
+### 13.7 Health
 
 The internal health surface distinguishes:
 
@@ -678,8 +717,10 @@ assets and replaces mock state with API-driven rendering.
 - Manual refresh works with live refresh disabled.
 - Polling pauses or slows while the document is hidden and refreshes immediately
   on return.
-- Queue, failures, and history render backend data, not timers that mutate mock
-  jobs.
+- Queue, failures, canceled work, and history render backend data, not timers
+  that mutate mock jobs.
+- Pause/resume/cancel, queued-row controls, reorder, bulk cancel, and bulk retry
+  refresh authoritative API state instead of simulating local state changes.
 - Elapsed time may tick locally between authoritative refreshes; ETA changes
   only from backend estimate facts.
 
@@ -794,7 +835,7 @@ At minimum, artifact manifests and PostgreSQL must be recoverable together or a
 restore must deliberately invalidate absent artifacts. A restore drill uses a
 separate temporary database and derived target before the trial gate passes.
 
-The source mount must match the configured NFS server/export and
+The source mount must match the configured NFS export or SMB/CIFS share and
 `ro,nosuid,nodev,noexec` options exactly. The derived mount must match its
 configured filesystem/device and `rw,nosuid,nodev`, retain a root-owned marker,
 and expose only an application-owned child for writes. Source loss disables
@@ -869,6 +910,14 @@ must:
 - fail clearly when the database is newer than the application; and
 - leave rollback instructions.
 
+Prompt 2A migration `0007_job_controls.sql` remains within the exact six-domain-
+table contract. It adds only `jobs` columns, the owned queue-order sequence,
+validated lifecycle/control constraints, and partial queue/canceled indexes. It
+backfills order from historical `queued_at, id` without changing those ages or
+artifact identities. The additive schema is forward-only for deployment:
+rollback uses a tested pre-migration database restore unless the previous
+release is explicitly proven compatible with schema 0007.
+
 Existing V0 endpoints remain available through Building block 2 to reduce
 integration risk. They may be removed only in a separately reviewed cleanup
 after the V1 frontend no longer consumes them.
@@ -923,7 +972,7 @@ access denial, manual rescan, and source immutability.
 
 ## 21. Deferred after V1
 
-Feedback may justify multiple workers, job priorities, cancellation, progress
+Feedback may justify multiple workers, job priorities, richer exact progress
 instrumentation, automatic retry, watching, uploads, user accounts, retention,
 additional formats, arbitrary telemetry, annotations, or richer monitoring.
 None is introduced speculatively during these three blocks.

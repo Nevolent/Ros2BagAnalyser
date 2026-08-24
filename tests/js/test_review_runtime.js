@@ -181,7 +181,7 @@ class FakeElement {
   closest(selector) { let current = this; while (current) { if (current.matches(selector)) return current; current = current.parentNode; } return null; }
   contains(element) { return element === this || this.children.some((child) => child.contains(element)); }
   focus() { this.ownerDocument.activeElement = this; }
-  getBoundingClientRect() { return { left: this.rectLeft, right: this.rectLeft + this.rectWidth, width: this.rectWidth, height: this.rectHeight }; }
+  getBoundingClientRect() { return { top: 0, bottom: this.rectHeight, left: this.rectLeft, right: this.rectLeft + this.rectWidth, width: this.rectWidth, height: this.rectHeight }; }
   getContext(kind) { return kind === "2d" ? this.context : null; }
   play() { this.paused = false; return Promise.resolve(); }
   pause() { this.paused = true; }
@@ -211,9 +211,15 @@ class FakeDocument {
   }
   build() {
     this.element("div", "live-region");
+    const sidebar = this.element("aside", "", null, "sidebar");
+    const revealSlot = this.element("div", "folder-reveal-slot", sidebar);
+    this.element("button", "expand-folders", revealSlot);
+    const toolList = this.element("nav", "", sidebar, "tool-list");
+    this.element("span", "", toolList, "tool-list-indicator");
     ["recordings", "analyzer", "processing"].forEach((view) => {
-      const link = this.element("a", view === "analyzer" ? "analyzer-nav" : "");
+      const link = this.element("a", view === "analyzer" ? "analyzer-nav" : view === "recordings" ? "archive-view-button" : "", toolList, "tool-button");
       link.dataset.nav = view;
+      link.dataset.view = view === "recordings" ? "archive" : view === "processing" ? "progression" : "analyzer";
       link.dataset.route = "";
       link.href = view === "recordings" ? "/" : `/${view}`;
     });
@@ -223,49 +229,106 @@ class FakeDocument {
     this.element("nav", "folder-tree", recordings);
     this.element("input", "folder-search", recordings);
     this.element("button", "collapse-folders", recordings);
-    this.element("button", "expand-folders", recordings);
     this.element("div", "recordings-page", recordings, "recordings-page");
-    ["last-scanned", "recording-loading", "recording-empty", "recording-filter-empty", "recording-failure", "recording-failure-text", "page-buttons", "page-status", "selected-count"].forEach((id) => this.element("div", id, recordings));
-    ["rescan-archive", "recording-retry", "prepare-selected", "previous-page", "next-page", "clear-filters"].forEach((id) => this.element("button", id, recordings));
+    ["last-scanned", "recording-loading", "recording-empty", "recording-filter-empty", "recording-failure", "recording-failure-text", "page-buttons", "page-status", "selected-count", "selection-context"].forEach((id) => this.element("div", id, recordings));
+    ["rescan-archive", "recording-retry", "prepare-selected", "previous-page", "next-page", "clear-filters", "clear-filter-menu"].forEach((id) => this.element("button", id, recordings));
     this.element("tbody", "recording-rows", recordings);
-    ["recording-search", "analysis-filter", "health-filter", "select-all-recordings"].forEach((id) => this.element("input", id, recordings));
+    ["recording-search", "select-all-recordings"].forEach((id) => this.element("input", id, recordings));
+    const buildFilter = (key, values) => {
+      const control = this.element("div", "", recordings, "recording-filter");
+      control.dataset.catalogFilter = key;
+      const input = this.element("input", `${key}-filter`, control);
+      input.value = "all";
+      const trigger = this.element("button", `${key}-filter-trigger`, control, "recording-filter-trigger");
+      trigger.setAttribute("aria-expanded", "false");
+      this.element("span", `${key}-filter-value`, trigger, "recording-filter-value").textContent = "All";
+      const menu = this.element("div", `${key}-filter-menu`, control, "recording-filter-menu");
+      menu.hidden = true;
+      values.forEach(([value, label], index) => {
+        const option = this.element("button", "", menu);
+        option.dataset.filterValue = value;
+        option.setAttribute("aria-selected", String(index === 0));
+        option.textContent = label;
+      });
+    };
+    buildFilter("health", [["all", "All"], ["readable", "Readable"], ["damaged", "Damaged"]]);
+    buildFilter("analysis", [["all", "All"], ["ready", "Ready"], ["processing", "Processing"], ["queued", "Queued"], ["not_planned", "Not planned"], ["failed", "Failed"]]);
     ["recordings", "ready", "processing", "queued", "failed", "damaged"].forEach((key) => this.element("strong", `summary-${key}`, recordings));
     ["name", "recorded", "duration", "size", "health", "analysis"].forEach((key) => { const button = this.element("button", "", recordings, "table-sort"); button.dataset.sort = key; });
     ["ready", "processing", "queued", "failed", "not_planned"].forEach((key) => { const button = this.element("button", "", recordings); button.dataset.summaryAnalysis = key; });
     const damaged = this.element("button", "", recordings); damaged.dataset.summaryHealth = "damaged";
 
+    const prepareDialog = this.element("dialog", "prepare-dialog");
+    const prepareForm = this.element("form", "prepare-form", prepareDialog);
+    this.element("p", "prepare-selection-summary", prepareForm);
+    this.element("div", "prepare-recordings", prepareForm);
+    this.element("p", "prepare-impact", prepareForm);
+    ["front_preview", "topdown_preview", "imu_series"].forEach((kind) => {
+      const input = this.element("input", "", prepareForm);
+      input.setAttribute("name", "output_kind");
+      input.value = kind;
+      input.checked = true;
+    });
+    this.element("button", "cancel-prepare", prepareForm);
+    this.element("button", "confirm-prepare", prepareForm);
+
+    const cancelDialog = this.element("dialog", "cancel-job-dialog");
+    this.element("h2", "cancel-job-title", cancelDialog);
+    this.element("p", "cancel-job-copy", cancelDialog);
+    this.element("button", "keep-processing", cancelDialog);
+    this.element("button", "confirm-job-cancel", cancelDialog);
+
+    const toast = this.element("aside", "operation-toast");
+    this.element("strong", "operation-toast-title", toast);
+    this.element("span", "operation-toast-copy", toast);
+    this.element("button", "view-processing-toast", toast);
+    this.element("button", "dismiss-toast", toast);
+
     const processing = this.element("main", "processing-view");
     processing.dataset.viewPanel = "processing";
     ["processing-notice", "processing-last-update", "current-job-host", "queue-empty", "queue-description", "failures-empty", "history-empty", "history-description"].forEach((id) => this.element("div", id, processing));
-    ["refresh-processing", "live-toggle", "history-more"].forEach((id) => this.element("button", id, processing));
+    ["refresh-processing", "live-toggle", "history-more", "move-selected-queue-up", "move-selected-queue-down", "cancel-selected-queue", "retry-selected-failures"].forEach((id) => {
+      const button = this.element("button", id, processing);
+      if (["move-selected-queue-up", "move-selected-queue-down", "cancel-selected-queue", "retry-selected-failures"].includes(id)) this.element("span", "", button);
+    });
     this.element("span", "live-toggle-label", processing);
     this.element("input", "processing-search", processing);
     ["processing-queue-count", "processing-failed-count", "processing-history-count"].forEach((id) => this.element("strong", id, processing));
     ["queue", "failed", "history"].forEach((key) => { const button = this.element("button", "", processing); button.dataset.jobFilter = key; });
+    this.element("i", "", processing, "processing-tab-indicator");
     this.element("section", "processing-queue-panel", processing);
     this.element("section", "processing-failures-panel", processing);
     this.element("section", "processing-history-panel", processing);
     this.element("tbody", "queue-rows", processing);
     this.element("tbody", "failure-rows", processing);
     this.element("tbody", "history-rows", processing);
+    ["queue-selection-actions", "queue-selection-footer", "queue-selected-count", "failure-selection-actions", "failure-selection-footer", "failure-selected-count"].forEach((id) => this.element("div", id, processing));
+    this.element("input", "select-all-queued", processing);
+    this.element("input", "select-all-failures", processing);
     const dialog = this.element("dialog", "processing-error-dialog", processing);
-    ["processing-error-title", "processing-error-copy", "processing-error-meta"].forEach((id) => this.element("div", id, dialog));
-    ["close-processing-error", "dismiss-processing-error"].forEach((id) => this.element("button", id, dialog));
+    ["processing-error-title", "processing-error-copy", "processing-error-meta", "processing-error-recovery"].forEach((id) => this.element("div", id, dialog));
+    ["close-processing-error", "dismiss-processing-error", "copy-processing-error", "open-processing-recording", "retry-processing-error"].forEach((id) => this.element("button", id, dialog));
 
     const analyzer = this.element("main", "analyzer-view");
     analyzer.dataset.viewPanel = "analyzer";
+    this.element("aside", "recording-details-panel", analyzer);
     ["detail-name", "detail-recorded", "detail-duration", "detail-size", "detail-storage", "detail-messages", "detail-topics", "detail-health", "detail-error", "component-count", "component-rows", "output-rows", "analyzer-action"].forEach((id) => this.element("div", id, analyzer));
     this.buildPreview("front", analyzer);
     this.buildPreview("topdown", analyzer);
     const imuPane = this.element("section", "imu-series-pane", analyzer);
-    ["imu-state-badge", "imu-message", "imu-message-title", "imu-status", "imu-graph", "imu-summary", "imu-current-value", "imu-current-state", "imu-warnings", "selected-sensor-label"].forEach((id) => this.element("div", id, imuPane));
+    ["imu-state-badge", "imu-message", "imu-message-title", "imu-status", "imu-graph", "imu-summary", "imu-current-value", "imu-current-time", "imu-current-state", "imu-warnings", "selected-sensor-label"].forEach((id) => this.element("div", id, imuPane));
     this.element("button", "imu-state-action", imuPane);
     const picker = this.element("div", "", imuPane, "sensor-picker");
     this.element("button", "sensor-picker-trigger", picker);
     this.element("div", "sensor-picker-menu", picker);
     const plot = this.element("div", "imu-plot", imuPane);
     this.element("canvas", "imu-canvas", plot);
-    this.element("span", "imu-cursor", plot);
+    const cursor = this.element("span", "imu-cursor", plot);
+    this.element("span", "imu-cursor-marker", cursor);
+    const selection = this.element("span", "imu-selection", plot);
+    this.element("span", "imu-selection-start", selection);
+    this.element("span", "imu-selection-end", selection);
+    ["chart-reset", "chart-zoom-out", "chart-zoom-in", "collapse-recording-details"].forEach((id) => this.element("button", id, analyzer));
     this.element("button", "timeline-play", analyzer);
     this.element("input", "global-time-slider", analyzer);
     this.element("span", "timeline-current", analyzer);
@@ -356,9 +419,9 @@ function detailFixture() {
 }
 
 function overviewFixture(overrides = {}) {
-  const current = { id: 31, recording_id: 7, recording_name: "run <safe>", kind: "front_preview", state: "running", queued_at: "2026-08-04T12:00:00Z", started_at: "2026-08-04T12:00:02Z", finished_at: null, queued_age_ms: 4000, elapsed_ms: 2000, runtime_ms: null, diagnostic: null, output_size_bytes: null, queue_position: null, estimate: { status: "available", estimated_total_ms: 5000, remaining_ms: 3000, method: "median_rate_v1", sample_count: 3 } };
-  const queued = { ...current, id: 32, state: "queued", started_at: null, elapsed_ms: null, queue_position: 7, estimate: null };
-  return { server_time: "2026-08-04T12:00:04Z", worker_online: true, running_count: 1, queued_count: 1, failed_count: 1, succeeded_count: 2, current, queue: [queued], recommended_poll_interval_ms: 1500, ...overrides };
+  const current = { id: 31, recording_id: 7, recording_name: "run <safe>", kind: "front_preview", state: "running", control_state: "none", execution_phase: "processing", allowed_controls: ["pause", "cancel"], queued_at: "2026-08-04T12:00:00Z", started_at: "2026-08-04T12:00:02Z", finished_at: null, queued_age_ms: 4000, elapsed_ms: 2000, active_elapsed_ms: 2000, paused_elapsed_ms: 0, runtime_ms: null, diagnostic: null, output_size_bytes: null, queue_position: null, estimate: { status: "available", estimated_total_ms: 5000, remaining_ms: 3000, method: "median_rate_v1", sample_count: 3 } };
+  const queued = { ...current, id: 32, state: "queued", control_state: "none", execution_phase: "queued", allowed_controls: ["move_earlier", "move_later", "cancel"], started_at: null, elapsed_ms: null, active_elapsed_ms: null, queue_position: 7, estimate: null, queue_estimate: { status: "available", ready_in_ms: 8000, sample_count: 5 } };
+  return { server_time: "2026-08-04T12:00:04Z", worker_online: true, running_count: 1, queued_count: 1, failed_count: 1, succeeded_count: 2, canceled_count: 0, current, queue: [queued], recommended_poll_interval_ms: 1500, ...overrides };
 }
 
 function makeResponse(body, status = 200) { return { ok: status >= 200 && status < 300, status, async json() { return body; } }; }
@@ -414,15 +477,15 @@ test("startup reads the saved catalog once and renders hostile values as text", 
   await flush();
   assert.deepEqual(harness.calls.map((call) => [call.options.method || "GET", call.url]), [["GET", "/api/v1/catalog"]]);
   assert.equal(harness.document.querySelector("#recording-rows").children.length, 2);
-  assert.equal(harness.document.querySelector("#recording-rows").children[0].querySelector("a").textContent, "run <script>alert(1)</script>");
-  assert.equal(harness.document.querySelector("#summary-damaged").textContent, "1");
+  const rowLinks = harness.document.querySelector("#recording-rows").children.map((row) => row.querySelector("a"));
+  assert.equal(rowLinks.some((link) => link.textContent === "run <script>alert(1)</script>"), true);
   assert.match(harness.document.querySelector("#folder-tree").children.at(-1).children[0].querySelector(".folder-label").textContent, /Site <north>/);
   assert.equal(harness.calls.some((call) => call.url.includes("rescan") || call.url.includes("prepare")), false);
   assert.equal(vm.runInContext("recordingDisplayName('2025_11_04_figure8')", harness.context), "Figure 8");
   assert.equal(vm.runInContext("recordingDisplayName('unexpected_name')", harness.context), "unexpected_name");
 });
 
-test("recording rows show a readable dated name above the full source name and split recorded time", async () => {
+test("recording rows show a readable name, exact identity context, and the truthful Recorded column", async () => {
   const recording = {
     ...catalogFixture().recordings[0],
     name: "2025_11_04_figure8",
@@ -436,7 +499,26 @@ test("recording rows show a readable dated name above the full source name and s
   const row = harness.document.querySelector("#recording-rows").children[0];
   assert.equal(row.querySelector(".recording-link").textContent, "Figure 8");
   assert.equal(row.querySelector(".cell-sublabel").textContent, "2025_11_04_figure8");
+  assert.equal(row.children.length, 7);
   assert.equal(row.querySelector(".date-cell").querySelector("time").children.length, 2);
+  assert.match(row.querySelector(".recording-link").getAttribute("aria-label"), /Exact source name 2025_11_04_figure8\. Recorded /);
+});
+
+test("recording filters use attached custom menus and update the catalog state", async () => {
+  const harness = createHarness("/", async (url) => {
+    if (url === "/api/v1/catalog") return makeResponse(catalogFixture());
+    throw new Error(url);
+  });
+  await flush();
+  const trigger = harness.document.querySelector("#analysis-filter-trigger");
+  trigger.dispatch("click");
+  assert.equal(trigger.getAttribute("aria-expanded"), "true");
+  assert.equal(harness.document.querySelector("#analysis-filter-menu").hidden, false);
+  const ready = harness.document.querySelector('#analysis-filter-menu').querySelector('[data-filter-value="ready"]');
+  ready.dispatch("click");
+  assert.equal(harness.document.querySelector("#analysis-filter").value, "ready");
+  assert.equal(harness.document.querySelector("#analysis-filter-value").textContent, "Ready");
+  assert.equal(trigger.getAttribute("aria-expanded"), "false");
 });
 
 test("folder selection, filtering, pagination, and visible selection use stable numeric IDs", async () => {
@@ -458,6 +540,27 @@ test("folder selection, filtering, pagination, and visible selection use stable 
   assert.match(harness.document.querySelector("#folder-tree").children.at(-1).textContent, /No folders found/);
 });
 
+test("collapsed folder shortcut follows the active Recordings route", async () => {
+  const harness = createHarness();
+  await flush();
+  vm.runInContext("updateFolderPanelState(false)", harness.context);
+  const slot = harness.document.querySelector("#folder-reveal-slot");
+  const sidebar = harness.document.querySelector(".sidebar");
+  assert.equal(slot.classList.contains("is-visible"), true);
+  assert.equal(sidebar.classList.contains("has-folder-slot"), true);
+  vm.runInContext("navigate('/processing')", harness.context);
+  await flush();
+  assert.equal(slot.classList.contains("is-visible"), false);
+  assert.equal(slot.classList.contains("is-reserved"), false);
+  assert.equal(sidebar.classList.contains("has-folder-slot"), false);
+  assert.equal(harness.document.querySelector("#expand-folders").tabIndex, -1);
+  vm.runInContext("navigate('/')", harness.context);
+  await flush();
+  assert.equal(slot.classList.contains("is-visible"), true);
+  assert.equal(slot.classList.contains("is-reserved"), true);
+  assert.equal(sidebar.classList.contains("has-folder-slot"), true);
+});
+
 test("failed explicit rescan retains rows, folder choice, and selection", async () => {
   let scans = 0;
   const harness = createHarness("/", async (url) => {
@@ -467,7 +570,7 @@ test("failed explicit rescan retains rows, folder choice, and selection", async 
   });
   await flush();
   vm.runInContext("selectFolder('site/day')", harness.context);
-  const checkbox = harness.document.querySelector("#recording-rows").children[0].querySelector(".row-select");
+  const checkbox = harness.document.querySelectorAll(".row-select").find((item) => item.value === "7");
   checkbox.checked = true;
   checkbox.dispatch("change");
   await vm.runInContext("rescanCatalog()", harness.context);
@@ -487,14 +590,14 @@ test("Prepare selected freezes one ordered request, blocks duplicates, and opens
     throw new Error(`${options.method || "GET"} ${url}`);
   });
   await flush();
-  const checkbox = harness.document.querySelector("#recording-rows").children[0].querySelector(".row-select");
+  const checkbox = harness.document.querySelectorAll(".row-select").find((item) => item.value === "7");
   checkbox.checked = true;
   checkbox.dispatch("change");
   const first = vm.runInContext("prepareSelected()", harness.context);
   const duplicate = vm.runInContext("prepareSelected()", harness.context);
   await flush();
   assert.equal(harness.calls.filter((call) => call.url === "/api/v1/recordings/prepare").length, 1);
-  assert.deepEqual(JSON.parse(harness.calls.find((call) => call.url === "/api/v1/recordings/prepare").options.body), { recording_ids: [7] });
+  assert.deepEqual(JSON.parse(harness.calls.find((call) => call.url === "/api/v1/recordings/prepare").options.body), { recording_ids: [7], output_kinds: ["front_preview", "topdown_preview", "imu_series"] });
   resolvePrepare();
   await Promise.all([first, duplicate]);
   await flush();
@@ -509,7 +612,7 @@ test("all-ready preparation stays on Recordings and reports reuse", async () => 
     throw new Error(url);
   });
   await flush();
-  const checkbox = harness.document.querySelector("#recording-rows").children[0].querySelector(".row-select");
+  const checkbox = harness.document.querySelectorAll(".row-select").find((item) => item.value === "7");
   checkbox.checked = true;
   checkbox.dispatch("change");
   await vm.runInContext("prepareSelected()", harness.context);
@@ -517,15 +620,50 @@ test("all-ready preparation stays on Recordings and reports reuse", async () => 
   assert.equal(harness.document.querySelector("#catalog-notice"), null);
 });
 
-test("Processing preserves FIFO positions, server estimates, offline state, and bounded polling", async () => {
+test("preparation dialog submits only the frozen non-empty output subset", async () => {
+  let resolvePrepare;
+  const pending = new Promise((resolve) => { resolvePrepare = resolve; });
+  const harness = createHarness("/", async (url) => {
+    if (url === "/api/v1/catalog") return makeResponse(catalogFixture());
+    if (url === "/api/v1/recordings/prepare") {
+      await pending;
+      return makeResponse({ recordings: [{ recording_id: 7, outcome: "accepted", analysis_state: "queued", outputs: ["front_preview", "imu_series"].map((kind) => ({ kind, outcome: "queued", state: "queued", diagnostic: null })) }] }, 202);
+    }
+    if (url === "/api/v1/processing/overview") return makeResponse(overviewFixture());
+    throw new Error(url);
+  });
+  await flush();
+  const checkbox = harness.document.querySelectorAll(".row-select").find((item) => item.value === "7");
+  checkbox.checked = true;
+  checkbox.dispatch("change");
+  harness.document.querySelector("#prepare-selected").dispatch("click");
+  assert.equal(harness.document.querySelector("#prepare-dialog").open, true);
+  const outputChoices = harness.document.querySelector("#prepare-form").querySelectorAll('[name="output_kind"]');
+  outputChoices[1].checked = false;
+  outputChoices[1].dispatch("change");
+  const submission = vm.runInContext("prepareSelected()", harness.context);
+  await flush();
+  const request = harness.calls.find((call) => call.url === "/api/v1/recordings/prepare");
+  assert.deepEqual(JSON.parse(request.options.body), { recording_ids: [7], output_kinds: ["front_preview", "imu_series"] });
+  outputChoices[2].checked = false;
+  outputChoices[2].dispatch("change");
+  assert.deepEqual(JSON.parse(request.options.body), { recording_ids: [7], output_kinds: ["front_preview", "imu_series"] });
+  resolvePrepare();
+  await submission;
+  await flush();
+  assert.equal(harness.window.location.pathname, "/processing");
+});
+
+test("Processing preserves authoritative queue positions, server estimates, offline state, and bounded polling", async () => {
   const harness = createHarness("/processing", async (url) => {
     if (url === "/api/v1/processing/overview") return makeResponse(overviewFixture());
     throw new Error(url);
   });
   await flush();
   const queueRow = harness.document.querySelector("#queue-rows").children[0];
-  assert.equal(queueRow.children[0].textContent, "7");
-  assert.match(harness.document.querySelector("#current-job-host").textContent, /Approximately/);
+  assert.match(queueRow.children[3].textContent, /#7/);
+  assert.match(queueRow.children[4].textContent, /≈ 0:08/);
+  assert.match(harness.document.querySelector("#current-job-host").textContent, /Likely duration≈ 0:03/);
   assert.equal(vm.runInContext("estimateText({status: 'unavailable', sample_count: 0})", harness.context), "Not enough history");
   assert.equal(vm.runInContext("estimateText({status: 'exceeded'})", harness.context), "Estimate exceeded");
   assert.equal([...harness.timers.values()][0].delay, 1500);
@@ -534,6 +672,97 @@ test("Processing preserves FIFO positions, server estimates, offline state, and 
   assert.equal(harness.timers.size, 0);
   vm.runInContext("processingState.overview.worker_online = false; renderProcessingOverview(); showNotice(processingElements.notice, 'Worker offline.', 'warning')", harness.context);
   assert.match(harness.document.querySelector("#processing-notice").textContent, /offline/);
+});
+
+test("Processing keeps an informative current-job card while idle", async () => {
+  const harness = createHarness("/processing", async (url) => {
+    if (url === "/api/v1/processing/overview") return makeResponse(overviewFixture({
+      current: null,
+      running_count: 0,
+      queued_count: 0,
+      queue: [],
+    }));
+    throw new Error(url);
+  });
+  await flush();
+  const host = harness.document.querySelector("#current-job-host");
+  assert.equal(host.hidden, false);
+  assert.equal(host.querySelector(".current-job--empty") !== null, true);
+  assert.match(host.textContent, /Nothing is processing currently/);
+  assert.match(host.textContent, /queue is empty/);
+  assert.equal(host.querySelector('[role="progressbar"]'), null);
+});
+
+test("Processing controls use authoritative mutations, selection actions, and cancellation confirmation", async () => {
+  const harness = createHarness("/processing", async (url, options) => {
+    if (url === "/api/v1/processing/overview") return makeResponse(overviewFixture());
+    if (url === "/api/v1/processing/jobs/31/pause") return makeResponse({ job_id: 31, outcome: "requested", job: null, server_time: "2026-08-04T12:00:05Z" });
+    if (url === "/api/v1/processing/jobs/reorder") return makeResponse({ items: [{ job_id: 32, outcome: "reordered", job: null }], server_time: "2026-08-04T12:00:05Z" });
+    if (url === "/api/v1/processing/jobs/32/cancel") return makeResponse({ job_id: 32, outcome: "canceled", job: null, server_time: "2026-08-04T12:00:05Z" });
+    throw new Error(`${options.method || "GET"} ${url}`);
+  });
+  await flush();
+  const pause = harness.document.querySelector("#current-job-host").querySelectorAll("button").find((button) => button.textContent === "Pause");
+  pause.dispatch("click");
+  await flush();
+  assert.equal(harness.calls.filter((call) => call.url.endsWith("/31/pause") && call.options.method === "POST").length, 1);
+
+  const queueCheckbox = harness.document.querySelector(".queue-row-select");
+  queueCheckbox.checked = true;
+  queueCheckbox.dispatch("change");
+  assert.equal(harness.document.querySelector("#queue-selection-actions").hidden, false);
+  harness.document.querySelector("#move-selected-queue-up").dispatch("click");
+  await flush();
+  const reorder = harness.calls.find((call) => call.url.endsWith("/reorder"));
+  assert.deepEqual(JSON.parse(reorder.options.body), { job_ids: [32], direction: "earlier" });
+
+  harness.document.querySelector(".queue-cancel").dispatch("click");
+  assert.equal(harness.document.querySelector("#cancel-job-dialog").open, true);
+  assert.equal(harness.calls.some((call) => call.url.endsWith("/32/cancel")), false);
+  harness.document.querySelector("#confirm-job-cancel").dispatch("click");
+  await flush();
+  assert.equal(harness.calls.filter((call) => call.url.endsWith("/32/cancel") && call.options.method === "POST").length, 1);
+  assert.equal(harness.document.querySelector("#queue-rows").children.length, 0);
+  assert.equal(harness.document.querySelector("#processing-queue-count").textContent, "0");
+});
+
+test("Recordings distinguish a partially prepared output set", async () => {
+  const partial = catalogFixture();
+  partial.recordings[0].outputs[0] = { ...partial.recordings[0].outputs[0], state: "ready" };
+  const harness = createHarness("/", async (url) => {
+    if (url === "/api/v1/catalog") return makeResponse(partial);
+    throw new Error(url);
+  });
+  await flush();
+  const indicator = harness.document.querySelector(".table-status--partial");
+  assert.equal(indicator.getAttribute("aria-label"), "Partially prepared");
+  assert.match(indicator.querySelector("use").getAttribute("href"), /icon-analysis-subset/);
+});
+
+test("Analyzer shows repeated diagnostics once and hides redundant terminal badges", async () => {
+  const detail = detailFixture();
+  const message = "SQLite header declares a different database size.";
+  detail.diagnostic = { code: "sqlite_size", message };
+  detail.components[0].diagnostic = { code: "sqlite_size", message };
+  detail.outputs.forEach((output) => {
+    output.state = "unavailable";
+    output.artifact = null;
+    output.diagnostic = { code: "sqlite_size", message };
+  });
+  detail.analysis_state = "not_planned";
+  const harness = createHarness("/recordings/7", async (url) => {
+    if (url === "/api/v1/recordings/7") return makeResponse(detail);
+    throw new Error(url);
+  });
+  await flush();
+  assert.equal(harness.document.querySelector("#detail-error").textContent, message);
+  assert.doesNotMatch(harness.document.querySelector("#output-rows").textContent, /SQLite header/);
+  assert.doesNotMatch(harness.document.querySelector("#front-preview-pane").textContent, /SQLite header/);
+  assert.doesNotMatch(harness.document.querySelector("#topdown-preview-pane").textContent, /SQLite header/);
+  assert.doesNotMatch(harness.document.querySelector("#imu-series-pane").textContent, /SQLite header/);
+  assert.equal(harness.document.querySelector("#front-state-badge").hidden, true);
+  assert.equal(harness.document.querySelector("#topdown-state-badge").hidden, true);
+  assert.equal(harness.document.querySelector("#imu-state-badge").hidden, true);
 });
 
 test("failure detail is safe, restores focus, retry is idempotent, and history cursors deduplicate", async () => {
@@ -556,13 +785,13 @@ test("failure detail is safe, restores focus, retry is idempotent, and history c
   assert.equal(harness.document.activeElement, tabs[1]);
   assert.equal(tabs[1].getAttribute("aria-selected"), "true");
   const failureRow = harness.document.querySelector("#failure-rows").children[0];
-  const details = failureRow.children.at(-1).querySelectorAll("button")[1];
+  const details = failureRow.children[2].querySelector("button");
   details.dispatch("click");
   assert.equal(harness.document.querySelector("#processing-error-dialog").open, true);
   assert.equal(harness.document.querySelector("#processing-error-copy").textContent, "Failed <without markup>");
   harness.document.querySelector("#processing-error-dialog").dispatch("cancel");
   assert.equal(harness.document.activeElement, details);
-  const retry = failureRow.children.at(-1).querySelectorAll("button")[0];
+  const retry = failureRow.children.at(-1).querySelector("button");
   retry.dispatch("click");
   await flush();
   assert.equal(harness.calls.filter((call) => call.url.endsWith("/retry")).length, 1);
@@ -570,6 +799,10 @@ test("failure detail is safe, restores focus, retry is idempotent, and history c
   await flush();
   await vm.runInContext("loadProcessingPage('history', {append: true})", harness.context);
   assert.equal(harness.document.querySelector("#history-rows").children.length, 2);
+  const completed = harness.document.querySelector("#history-rows").children[0].querySelector(".history-completed");
+  assert.equal(completed.querySelector("time").children.length, 2);
+  assert.equal(completed.querySelector("time").children[0].tagName, "strong");
+  assert.equal(completed.querySelector("time").children[1].tagName, "span");
 });
 
 test("direct Analyzer route binds identity URLs, precise health, six IMU channels, gaps, coverage, and independent failure", async () => {
@@ -586,6 +819,11 @@ test("direct Analyzer route binds identity URLs, precise health, six IMU channel
   assert.equal(harness.document.querySelector("#detail-health").textContent, "Readable with warnings");
   assert.equal(harness.document.querySelector("#detail-health").querySelector(".metadata-status--good") !== null, true);
   assert.equal(harness.document.querySelector("#detail-storage").textContent, "sqlite3");
+  const outputDetails = harness.document.querySelector("#output-rows").textContent;
+  assert.match(outputDetails, /Front-camera previewMP4 · H\.264/);
+  assert.match(outputDetails, /Top-down previewMP4 · H\.264/);
+  assert.match(outputDetails, /IMU data bundleJSON/);
+  assert.doesNotMatch(outputDetails, /coverage/i);
   assert.equal(harness.document.querySelector("#front-video").src, "/api/recordings/7/front-preview/media/101");
   assert.equal(harness.document.querySelector("#topdown-video").src, "/api/recordings/7/topdown-preview/media/102");
   assert.equal(harness.document.querySelector("#front-summary"), null);
@@ -593,7 +831,9 @@ test("direct Analyzer route binds identity URLs, precise health, six IMU channel
   assert.equal(harness.document.querySelector("#topdown-state-badge").hidden, true);
   assert.equal(harness.document.querySelector("#imu-state-badge").hidden, true);
   assert.doesNotMatch(harness.document.querySelector("#imu-summary").textContent, /coverage|samples|timestamps/i);
-  assert.equal(harness.document.querySelector("#imu-canvas").context.operations.some(([operation]) => operation === "createLinearGradient"), true);
+  const graphOperations = harness.document.querySelector("#imu-canvas").context.operations;
+  assert.equal(graphOperations.some(([operation]) => operation === "stroke"), true);
+  assert.equal(graphOperations.filter(([operation]) => operation === "arc").length, 2);
   assert.equal(harness.document.querySelector("#sensor-picker-menu").querySelectorAll("[data-sensor]").length, 6);
   assert.match(harness.document.querySelector("#imu-warnings").children[0].textContent, /1 sample gap/);
   vm.runInContext("applyGlobalTime(0, true)", harness.context);
@@ -603,10 +843,79 @@ test("direct Analyzer route binds identity URLs, precise health, six IMU channel
   assert.equal(harness.document.querySelector("#front-video").currentTime, 4);
   vm.runInContext("applyGlobalTime(1, true)", harness.context);
   assert.equal(harness.document.querySelector("#imu-current-state").textContent, "");
+  vm.runInContext("zoomGraph(0.5)", harness.context);
+  assert.equal(vm.runInContext("reviewController.telemetry.viewEnd - reviewController.telemetry.viewStart", harness.context), 5);
+  assert.equal(vm.runInContext("reviewController.clock.globalTime", harness.context), 1);
+  harness.document.querySelector("#imu-plot").dispatch("pointerdown", { pointerId: 3, pointerType: "mouse", button: 0, isPrimary: true, shiftKey: true, clientX: 100 });
+  harness.document.querySelector("#imu-plot").dispatch("pointerup", { pointerId: 3, pointerType: "mouse", button: 0, isPrimary: true, shiftKey: true, clientX: 350 });
+  assert.equal(vm.runInContext("reviewController.telemetry.viewEnd - reviewController.telemetry.viewStart < 5", harness.context), true);
+  assert.match(harness.document.querySelector("#imu-selection-start").textContent, /^170000000/);
+  assert.match(harness.document.querySelector("#imu-selection-end").textContent, /^170000000/);
+  harness.document.querySelector("#chart-reset").dispatch("click");
+  assert.equal(vm.runInContext("reviewController.telemetry.viewEnd - reviewController.telemetry.viewStart", harness.context), 10);
+  assert.equal(harness.document.querySelector("#imu-cursor-marker").hidden, false);
+  harness.document.querySelector("#imu-plot").dispatch("wheel", { deltaY: 1, deltaX: 0 });
+  assert.equal(vm.runInContext("reviewController.clock.globalTime > 1", harness.context), true);
   vm.runInContext("showMediaFailure('front')", harness.context);
   assert.equal(harness.document.querySelector("#front-video").hidden, true);
   assert.equal(harness.document.querySelector("#topdown-video").hidden, false);
   assert.equal(vm.runInContext("window.ImuGraph.sampleAtOrBefore(reviewController.telemetry.samples, 2).value", harness.context), null);
+  const previousFrameIds = new Set(harness.frames.keys());
+  vm.runInContext("setRecordingDetailsCollapsed(true, {returnFocus: false})", harness.context);
+  const layoutFrameId = [...harness.frames.keys()].find((id) => !previousFrameIds.has(id));
+  const layoutFrame = harness.frames.get(layoutFrameId);
+  harness.frames.delete(layoutFrameId);
+  layoutFrame(1000);
+  assert.equal(harness.document.querySelector("#analyzer-view").classList.contains("is-details-collapsed"), true);
+  assert.equal(harness.document.querySelector("#collapse-recording-details").getAttribute("aria-expanded"), "false");
+});
+
+test("recording details uses the reference's ordered height and graph-width animation", async () => {
+  const harness = createHarness();
+  await flush();
+  const analyzer = harness.document.querySelector("#analyzer-view");
+  const details = harness.document.querySelector("#recording-details-panel");
+  const telemetry = harness.document.querySelector("#imu-series-pane");
+  const calls = [];
+  const rect = (width, height) => ({ top: 0, bottom: height, left: 0, right: width, width, height });
+
+  details.getBoundingClientRect = () => rect(300, analyzer.classList.contains("is-details-collapsed") ? 248 : 640);
+  telemetry.getBoundingClientRect = () => rect(analyzer.classList.contains("is-details-collapsed") ? 900 : 500, 300);
+  const animate = (element) => (keyframes, options) => {
+    calls.push({ element, keyframes, options });
+    return { finished: Promise.resolve(), cancel() {} };
+  };
+  details.animate = animate("details");
+  telemetry.animate = animate("telemetry");
+
+  let previousFrameIds = new Set(harness.frames.keys());
+  vm.runInContext("setRecordingDetailsCollapsed(true, {returnFocus: false})", harness.context);
+  await flush();
+  assert.deepEqual(calls.map(({ element, options }) => [element, options.duration]), [["details", 360], ["telemetry", 520]]);
+  assert.equal(JSON.stringify(calls[0].keyframes), JSON.stringify([{ height: "640px" }, { height: "248px" }]));
+  assert.equal(JSON.stringify(calls[1].keyframes), JSON.stringify([{ width: "500px" }, { width: "900px" }]));
+  [...harness.frames.keys()].filter((id) => !previousFrameIds.has(id)).forEach((id) => {
+    harness.frames.get(id)(1000);
+    harness.frames.delete(id);
+  });
+  assert.equal(analyzer.classList.contains("is-details-collapsed"), true);
+  assert.equal(details.style.height, "");
+  assert.equal(telemetry.style.width, "");
+
+  calls.length = 0;
+  previousFrameIds = new Set(harness.frames.keys());
+  vm.runInContext("setRecordingDetailsCollapsed(false, {returnFocus: false})", harness.context);
+  await flush();
+  assert.deepEqual(calls.map(({ element, options }) => [element, options.duration]), [["telemetry", 520], ["details", 360]]);
+  assert.equal(JSON.stringify(calls[0].keyframes), JSON.stringify([{ width: "900px" }, { width: "500px" }]));
+  assert.equal(JSON.stringify(calls[1].keyframes), JSON.stringify([{ height: "248px" }, { height: "640px" }]));
+  [...harness.frames.keys()].filter((id) => !previousFrameIds.has(id)).forEach((id) => {
+    harness.frames.get(id)(1000);
+    harness.frames.delete(id);
+  });
+  assert.equal(analyzer.classList.contains("is-details-collapsed"), false);
+  assert.equal(details.style.height, "");
+  assert.equal(telemetry.style.width, "");
 });
 
 test("video drift correction keeps one seek in flight and retries only after its timeout", async () => {

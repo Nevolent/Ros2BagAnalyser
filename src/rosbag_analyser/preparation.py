@@ -111,17 +111,44 @@ class PreparationService:
     def prepare_selected(
         self,
         recording_ids: tuple[int, ...],
+        output_kinds: tuple[str, ...] = PROCESSING_KINDS,
     ) -> PrepareSelectedResult:
+        selected_kinds = tuple(kind for kind in PROCESSING_KINDS if kind in output_kinds)
+        if (
+            not selected_kinds
+            or len(output_kinds) != len(set(output_kinds))
+            or set(selected_kinds) != set(output_kinds)
+        ):
+            raise ValueError("Select a unique non-empty set of supported outputs.")
         existing = self.processing_repository.get_current_outputs(recording_ids)
         invalid_by_recording: dict[int, dict[str, int]] = {}
+        baseline_states: dict[int, dict[str, str]] = {
+            recording_id: {kind: "unavailable" for kind in PROCESSING_KINDS}
+            for recording_id in recording_ids
+        }
         for current in existing:
-            if current.artifact is None:
-                continue
-            diagnostic = self._validate_artifact(current.artifact)
-            if diagnostic is not None:
-                invalid_by_recording.setdefault(current.target.recording_id, {})[
-                    current.target.kind
-                ] = current.artifact.id
+            state = "not_requested"
+            target = current.target
+            if target.target_state != "available" or target.cache_identity is None:
+                state = "unavailable"
+            elif current.artifact is not None:
+                diagnostic = self._validate_artifact(current.artifact)
+                if diagnostic is None:
+                    state = "ready"
+                else:
+                    state = "failed"
+                    invalid_by_recording.setdefault(target.recording_id, {})[
+                        target.kind
+                    ] = current.artifact.id
+            elif current.active_job is not None:
+                state = (
+                    "processing"
+                    if current.active_job.state == "running"
+                    else "queued"
+                )
+            elif current.latest_failed_job is not None:
+                state = "failed"
+            baseline_states.setdefault(target.recording_id, {})[target.kind] = state
 
         results: list[PrepareRecordingResult] = []
         has_active_work = False
@@ -133,6 +160,7 @@ class PreparationService:
                 schedule = self.processing_repository.prepare_recording(
                     recording_id,
                     self.planner.planner_identities,
+                    output_kinds=selected_kinds,
                     invalid_artifact_ids=invalid_by_recording.get(recording_id),
                     admission_diagnostic=admission_diagnostic,
                 )
@@ -150,7 +178,7 @@ class PreparationService:
                             "This recording could not be scheduled. The request can be repeated safely.",
                         ),
                     )
-                    for kind in PROCESSING_KINDS
+                    for kind in selected_kinds
                 )
                 results.append(
                     PrepareRecordingResult(
@@ -161,7 +189,18 @@ class PreparationService:
                     )
                 )
                 continue
-            result = self._result_from_schedule(schedule)
+            result = self._result_from_schedule(schedule, selected_kinds)
+            current_states = baseline_states[recording_id]
+            for output in result.outputs:
+                current_states[output.kind] = output.state
+            result = PrepareRecordingResult(
+                result.recording_id,
+                result.outcome,
+                _aggregate_state(
+                    tuple(current_states[kind] for kind in PROCESSING_KINDS)
+                ),
+                result.outputs,
+            )
             has_active_work = has_active_work or any(
                 output.state in {"queued", "processing"} for output in result.outputs
             )
@@ -284,11 +323,12 @@ class PreparationService:
     @staticmethod
     def _result_from_schedule(
         schedule: PreparationSchedule,
+        output_kinds: tuple[str, ...] = PROCESSING_KINDS,
     ) -> PrepareRecordingResult:
         if not schedule.recording_found:
             outputs = tuple(
                 PrepareOutputResult(kind, "not_found", "unavailable")
-                for kind in PROCESSING_KINDS
+                for kind in output_kinds
             )
             return PrepareRecordingResult(
                 schedule.recording_id,

@@ -2024,6 +2024,120 @@ Report:
 - the exact user decision required before resuming Building block 3 or admitting
   trial users.
 
+> **Implementation handoff — 2026-08-23:** Prompt 2A was implemented against
+> the accepted checkpoint `810ae16` and left uncommitted for user review. This
+> is synthetic repository evidence, not user acceptance, authoritative-source
+> evidence, or permission to resume live Building block 3 work.
+
+#### Implemented corrective boundary
+
+- The frozen reference hashes remain exactly
+  `5373286f…` (`index.html`), `01eb9329…` (`styles.css`), `a5d85e83…`
+  (`script.js`), and `b2fb92cb…` (`tech-trace-icon.svg`); `archive/` has no
+  diff.
+- The served shell retains only Recordings, Processing, and Analyzer. Saved
+  catalog/detail, job, media, and IMU APIs replace reference mock rows, images,
+  jobs, timers, and graph payloads. Experiments/Files and their handlers are
+  removed. The separate Recordings Recorded column is intentionally removed;
+  the full source identity and recorded time remain accessible in row context
+  and Analyzer detail.
+- Prepare selected freezes ordered numeric recording IDs plus any validated
+  non-empty subset of the existing three output kinds. Results preserve only
+  rejected selection and navigate to real Processing state when active work
+  exists.
+- Migration `0007_job_controls.sql` adds durable control state/revision,
+  execution phase, pause/cancel timestamps, accumulated pause time, stable
+  queue order, its owned sequence, and queue/canceled indexes to `jobs`. It
+  keeps exactly six domain tables, preserves `queued_at`, and is classified as
+  forward-only/database-restore rollback unless old code is separately proven
+  schema-0007 compatible.
+- The single worker uses one dependency-free control token through front,
+  top-down, IMU, validation, cleanup, and the transactional publication gate.
+  Paused work resumes in the same process/attempt, but a worker restart marks
+  it `worker_interrupted`; pause is not durable execution across restart.
+- Display, insertion, claim, queued cancel, and earlier/later reorder share one
+  serialized `queue_order`. The V1 API now exposes pause/resume/cancel, bounded
+  bulk cancel/reorder/retry, canceled history, authoritative allowed controls,
+  wall/active/paused time, and response server time. Bulk retry also carries a
+  response server time.
+- Running progress remains indeterminate because no existing processor has a
+  fully proven phase-wide exact denominator. Estimates freeze at enqueue (with
+  a compatibility fallback at claim), exclude paused/canceled/invalid samples,
+  and produce cumulative approximate queued Ready in only while the worker,
+  current state, predecessor order, and every estimate input remain valid.
+- Analyzer graph-window zoom/reset, wheel/pointer scrub, Shift-drag selection,
+  plus/minus/arrows/Page/Home/End/Space/K behavior, and playback paging remain
+  presentation over the one unchanged full-recording clock.
+- Deployment contracts now identify migrations 0001–0007, rate-limit the new
+  mutations, and make planned drain fail closed on paused/pause-requested work.
+
+#### Files changed in the handoff
+
+`AGENTS.md`, `ARCHITECTURE.md`, `PROJECT.md`, `README.md`, `ROADMAP.md`,
+`BUILDING_BLOCK_PROMPTS.md`, `deploy/README.md`,
+`deploy/nginx/rosbag-analyser.conf.template`, `deploy/release-contract.json`,
+`deploy/scripts/drain-worker`, `deploy/scripts/smoke_check.py`,
+`docs/ENGINEER_TRIAL_GUIDE.md`, `docs/NAS_TRIAL_RUNBOOK.md`,
+`src/rosbag_analyser/api/v1_routes.py`,
+`src/rosbag_analyser/api/v1_schemas.py`,
+`src/rosbag_analyser/artifact_store.py`, `src/rosbag_analyser/job_control.py`,
+`src/rosbag_analyser/persistence/database.py`,
+`src/rosbag_analyser/persistence/migrations/0007_job_controls.sql`,
+`src/rosbag_analyser/persistence/processing_repository.py`,
+`src/rosbag_analyser/preparation.py`, `src/rosbag_analyser/processing_view.py`,
+the three files under `src/rosbag_analyser/processors/`,
+`src/rosbag_analyser/web/app.js`, `src/rosbag_analyser/web/index.html`,
+`src/rosbag_analyser/web/styles.css`, `src/rosbag_analyser/worker.py`, and the
+focused API, JavaScript, PostgreSQL, deployment, preparation, worker,
+processor, artifact-control, and Prompt 2A guard tests under `tests/`.
+
+#### Synthetic verification completed
+
+- Routine unit/API/deployment: 340 passed, 2 environment-dependent skipped.
+- Disposable PostgreSQL: 38 passed, including faithful/empty migration,
+  pause/ack/resume/cancel, every nonterminal restart state, canceled history,
+  publication race, claim/cancel, and concurrent insertion/claim/reorder.
+  Maximum 5,000-recording response remained
+  2,652,445 bytes; catalog was 434 ms and Processing 29 ms in the final run.
+- Dependency-free browser/runtime: 22 passed, plus JavaScript syntax. The
+  76,000-row/six-channel measurement was 10,141,317 payload bytes, 109.905 ms
+  parse, 28.638 ms visible transform, and 5.748 ms for 10,000 lookups.
+- ROS Humble focused serialization: 2 passed with third-party pytest plugin
+  autoload disabled to avoid an unrelated missing `lark` plugin dependency.
+- Synthetic cancellation reached the front and IMU checkpoints in 20 ms,
+  top-down in 10 ms, validation-before-command in 10 ms, and the
+  validation-after-external-probe checkpoint in 550 ms. Normal token polling is
+  capped at 250 ms between per-unit calls; each owned external validation
+  command has a 30-second timeout and immediately rechecks afterward.
+- Python byte-compilation, shell syntax for shell-owned deployment scripts,
+  HTML parsing, CSS brace/comment/string balance, Git whitespace checks,
+  frozen-reference hash guards, prohibited-asset guards, and zero archive diff
+  passed. No dependency was added.
+
+#### Acceptance still deliberately incomplete
+
+No authoritative source content, real archive, live database, VM, NAS,
+firewall, mount, service, or deployment target was accessed or changed. The
+real-data annex, source before/after inventory, live restart/interruption proof,
+and Gate 0 remain pending. Automated DOM/interaction checks passed, but a usable
+local browser/screenshot path was unavailable, so paired reference screenshots,
+the full viewport/state visual matrix, 200-percent zoom, coarse-pointer,
+reduced-motion, and manual keyboard/focus review remain explicit user-visible
+acceptance work. No Prompt 2A commit or push was made. User review is required
+before committing this handoff or deciding whether Building block 3 may resume.
+
+> **Recordings visual review correction — 2026-08-24:** During user review, the
+> user explicitly superseded decision-record item 2 only for the Recordings
+> table and restored the frozen reference's separate Recorded column. The value
+> remains derived solely from `start_time_ns`. This bounded follow-up also
+> authorizes attached non-native Recordings filter menus, viewport-aware status
+> tooltips that cannot widen the table, the reference folder/search icon and
+> spacing treatment, a single-line Prepare selected transition, and removal of
+> the white rectangular focus treatment from Recordings controls while
+> retaining a restrained keyboard-visible state. Processing, Analyzer, API,
+> persistence, worker, processor, source, artifact, timing, deployment, and
+> `archive/` behavior remain outside this follow-up.
+
 
 ## Prompt 3 — TrueNAS VM deployment and trial commissioning
 
@@ -2518,8 +2632,10 @@ Implement and document this release order:
 
 1. Verify Gate 0, maintenance approval, active release/schema, service state,
    queue/running work, mount identity, and capacity.
-2. Close the engineer-facing proxy/API write entrance, then drain the worker
-   for planned work. Do not assume a queue-pause feature that does not exist.
+2. Close the engineer-facing proxy/API write entrance, resolve any durable
+   paused or pause-requested current work through an explicit resume-and-drain
+   or cancel decision, then drain the worker for planned work. Do not rewrite
+   control state directly.
 3. Stage and fully validate the candidate beside the active release.
 4. Create a PostgreSQL custom-format pre-deploy dump to the approved protected
    destination and verify it with pg_restore --list.
@@ -2787,7 +2903,8 @@ Record and prove:
    never search outside the fixed root merely to manufacture the case.
 9. Two engineer sessions can browse saved catalog and ready artifacts while one
    serial worker runs. A bounded mixed Prepare selected request is idempotent,
-   displays exact FIFO order, and never shows more than one running job.
+   displays the exact authoritative queue order after allowed controls, and
+   never shows more than one running job.
 10. Through the proxy, verify front/top byte ranges and HEAD, stale identity
     rejection, all six IMU choices, global clock, seek, 100 ms correction, and
     coverage hide/clear behavior.
@@ -2828,7 +2945,8 @@ Do not:
 - run Humble on an unsupported newer Ubuntu or perform an in-place platform
   upgrade;
 - add containers, Kubernetes, HA, Redis, broker, multiple workers, priority,
-  cancellation, automatic retry, quota eviction, or source watching;
+  new processing control kinds, automatic retry, quota eviction, or source
+  watching;
 - add application-managed users/roles;
 - add processors, source formats, artifact kinds, telemetry, timing changes, or
   frontend redesign;

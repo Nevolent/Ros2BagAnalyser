@@ -106,6 +106,16 @@ EXPECTED_CATALOG_COLUMNS = {
     ("jobs", "estimated_total_ms", "bigint", "YES", "NO"),
     ("jobs", "estimate_method", "text", "YES", "NO"),
     ("jobs", "estimate_sample_count", "integer", "YES", "NO"),
+    ("jobs", "control_state", "text", "NO", "NO"),
+    ("jobs", "execution_phase", "text", "YES", "NO"),
+    ("jobs", "control_revision", "bigint", "NO", "NO"),
+    ("jobs", "last_pause_requested_at", "timestamp with time zone", "YES", "NO"),
+    ("jobs", "last_pause_acknowledged_at", "timestamp with time zone", "YES", "NO"),
+    ("jobs", "last_resumed_at", "timestamp with time zone", "YES", "NO"),
+    ("jobs", "accumulated_paused_ms", "bigint", "NO", "NO"),
+    ("jobs", "cancel_requested_at", "timestamp with time zone", "YES", "NO"),
+    ("jobs", "cancel_finished_at", "timestamp with time zone", "YES", "NO"),
+    ("jobs", "queue_order", "bigint", "NO", "NO"),
     ("catalog_state", "singleton", "boolean", "NO", "NO"),
     ("catalog_state", "successful_generation", "bigint", "NO", "NO"),
     (
@@ -168,6 +178,10 @@ EXPECTED_CATALOG_DEFAULTS = {
     ("source_components", "updated_at", "CURRENT_TIMESTAMP"),
     ("artifacts", "created_at", "CURRENT_TIMESTAMP"),
     ("jobs", "queued_at", "CURRENT_TIMESTAMP"),
+    ("jobs", "control_state", "'none'::text"),
+    ("jobs", "control_revision", "0"),
+    ("jobs", "accumulated_paused_ms", "0"),
+    ("jobs", "queue_order", "nextval('jobs_queue_order_seq'::regclass)"),
     ("recordings", "source_present", "true"),
     ("recordings", "last_seen_generation", "0"),
     ("catalog_state", "singleton", "true"),
@@ -363,7 +377,8 @@ EXPECTED_CATALOG_CONSTRAINTS = {
     (
         "jobs",
         "c",
-        "CHECK (state = ANY (ARRAY['queued', 'running', 'succeeded', 'failed']))",
+        "CHECK (state = ANY (ARRAY['queued', 'running', 'succeeded', 'failed', "
+        "'canceled']))",
     ),
     (
         "jobs",
@@ -374,15 +389,41 @@ EXPECTED_CATALOG_CONSTRAINTS = {
         "jobs",
         "c",
         "CHECK (state = 'queued' AND started_at IS NULL AND finished_at IS NULL "
-        "OR state = 'running' AND started_at IS NOT NULL AND finished_at IS NULL "
-        "OR (state = ANY (ARRAY['succeeded', 'failed'])) AND started_at IS NOT NULL "
-        "AND finished_at IS NOT NULL)",
+        "AND control_state = 'none' AND execution_phase IS NULL AND "
+        "cancel_requested_at IS NULL AND cancel_finished_at IS NULL OR state = "
+        "'running' AND started_at IS NOT NULL AND finished_at IS NULL AND "
+        "execution_phase IS NOT NULL AND cancel_finished_at IS NULL OR (state = "
+        "ANY (ARRAY['succeeded', 'failed'])) AND started_at IS NOT NULL AND "
+        "finished_at IS NOT NULL AND control_state = 'none' AND execution_phase IS "
+        "NULL AND cancel_finished_at IS NULL OR state = 'canceled' AND finished_at "
+        "IS NOT NULL AND control_state = 'none' AND execution_phase IS NULL AND "
+        "cancel_requested_at IS NOT NULL AND cancel_finished_at IS NOT NULL)",
     ),
     (
         "jobs",
         "c",
         "CHECK (state = 'failed' AND error_code IS NOT NULL AND error_message IS NOT "
         "NULL OR state <> 'failed' AND error_code IS NULL AND error_message IS NULL)",
+    ),
+    (
+        "jobs",
+        "c",
+        "CHECK ((control_state = ANY (ARRAY['none', 'pause_requested', 'paused', "
+        "'cancel_requested'])) AND (execution_phase IS NULL OR (execution_phase = ANY "
+        "(ARRAY['setup', 'processing', 'validating', 'publishing', 'cleanup']))) AND "
+        "control_revision >= 0 AND accumulated_paused_ms >= 0 AND queue_order > 0)",
+    ),
+    (
+        "jobs",
+        "c",
+        "CHECK ((control_state <> 'pause_requested' OR last_pause_requested_at IS NOT "
+        "NULL) AND (control_state <> 'paused' OR last_pause_acknowledged_at IS NOT "
+        "NULL) AND (control_state <> 'cancel_requested' OR cancel_requested_at IS "
+        "NOT NULL) AND ((control_state <> ALL (ARRAY['pause_requested', 'paused', "
+        "'cancel_requested'])) OR state = 'running') AND (control_state <> 'paused' "
+        "OR last_pause_acknowledged_at >= last_pause_requested_at) AND (started_at IS "
+        "NULL OR finished_at IS NULL OR finished_at >= started_at) AND "
+        "(cancel_finished_at IS NULL OR cancel_finished_at >= cancel_requested_at))",
     ),
     (
         "jobs",
@@ -487,7 +528,7 @@ EXPECTED_PROCESSING_INDEXES = {
         "jobs",
         False,
         True,
-        ("queued_at", "id"),
+        ("queue_order", "id"),
         "state = 'queued'",
     ),
     (
@@ -529,6 +570,14 @@ EXPECTED_PROCESSING_INDEXES = {
         True,
         ("estimate_key", "finished_at", "id"),
         "state = 'succeeded' AND work_units IS NOT NULL",
+    ),
+    (
+        "jobs_canceled_history",
+        "jobs",
+        False,
+        True,
+        ("finished_at", "id"),
+        "state = 'canceled'",
     ),
 }
 EXPECTED_TABLES = (

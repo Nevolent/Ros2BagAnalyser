@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
@@ -15,10 +15,13 @@ from rosbag_analyser.preparation import (
     RecordingAnalysis,
 )
 from rosbag_analyser.processing_view import (
+    BulkControlResult,
+    ControlResult,
     EstimateView,
     ProcessingJobView,
     ProcessingOverview,
     ProcessingPage,
+    QueueEstimateView,
     RetryResult,
 )
 from rosbag_analyser.v1_catalog import V1CatalogView, V1RecordingDetail
@@ -144,6 +147,15 @@ class PrepareSelectedRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     recording_ids: list[StrictInt] = Field(min_length=1, max_length=10_000)
+    output_kinds: list[OutputKind] = Field(
+        default_factory=lambda: [
+            "front_preview",
+            "topdown_preview",
+            "imu_series",
+        ],
+        min_length=1,
+        max_length=3,
+    )
 
     @field_validator("recording_ids")
     @classmethod
@@ -153,6 +165,32 @@ class PrepareSelectedRequest(BaseModel):
         if len(values) != len(set(values)):
             raise ValueError("Recording IDs must be unique.")
         return values
+
+    @field_validator("output_kinds")
+    @classmethod
+    def validate_output_kinds(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("Output kinds must be unique.")
+        return values
+
+
+class JobIdsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_ids: list[StrictInt] = Field(min_length=1, max_length=10_000)
+
+    @field_validator("job_ids")
+    @classmethod
+    def validate_job_ids(cls, values: list[int]) -> list[int]:
+        if any(value <= 0 for value in values):
+            raise ValueError("Job IDs must be positive integers.")
+        if len(values) != len(set(values)):
+            raise ValueError("Job IDs must be unique.")
+        return values
+
+
+class ReorderJobsRequest(JobIdsRequest):
+    direction: Literal["earlier", "later"]
 
 
 class PrepareOutputResponse(BaseModel):
@@ -183,6 +221,13 @@ class EstimateResponse(BaseModel):
     sample_count: int | None
 
 
+class QueueEstimateResponse(BaseModel):
+    status: Literal["available", "unavailable"]
+    ready_in_ms: int | None
+    method: str | None
+    sample_count: int | None
+
+
 class ProcessingJobResponse(BaseModel):
     id: int
     recording_id: int
@@ -194,11 +239,22 @@ class ProcessingJobResponse(BaseModel):
     finished_at: datetime | None
     queued_age_ms: int
     elapsed_ms: int | None
+    active_elapsed_ms: int | None
+    paused_ms: int
     runtime_ms: int | None
     diagnostic: DiagnosticResponse | None
     output_size_bytes: str | None
     queue_position: int | None
     estimate: EstimateResponse | None
+    queue_estimate: QueueEstimateResponse | None
+    control_state: Literal["none", "pause_requested", "paused", "cancel_requested"]
+    execution_phase: Literal[
+        "setup", "processing", "validating", "publishing", "cleanup"
+    ] | None
+    control_revision: int
+    allowed_controls: list[
+        Literal["pause", "resume", "cancel", "move_earlier", "move_later"]
+    ]
 
 
 class ProcessingOverviewResponse(BaseModel):
@@ -208,6 +264,7 @@ class ProcessingOverviewResponse(BaseModel):
     queued_count: int
     failed_count: int
     succeeded_count: int
+    canceled_count: int
     current: ProcessingJobResponse | None
     queue: list[ProcessingJobResponse]
     recommended_poll_interval_ms: int
@@ -226,6 +283,23 @@ class RetryResponse(BaseModel):
     job_id: int | None
     artifact_id: int | None
     diagnostic: DiagnosticResponse | None
+
+
+class ControlResponse(BaseModel):
+    requested_job_id: int
+    outcome: str
+    job: ProcessingJobResponse | None
+    server_time: datetime
+
+
+class BulkControlResponse(BaseModel):
+    items: list[ControlResponse]
+    server_time: datetime
+
+
+class BulkRetryResponse(BaseModel):
+    items: list[RetryResponse]
+    server_time: datetime
 
 
 def catalog_response(view: V1CatalogView) -> CatalogResponse:
@@ -362,6 +436,7 @@ def processing_overview_response(
         queued_count=view.queued_count,
         failed_count=view.failed_count,
         succeeded_count=view.succeeded_count,
+        canceled_count=view.canceled_count,
         current=None if view.current is None else _job_response(view.current),
         queue=[_job_response(item) for item in view.queue],
         recommended_poll_interval_ms=view.recommended_poll_interval_ms,
@@ -384,6 +459,25 @@ def retry_response(result: RetryResult) -> RetryResponse:
         job_id=result.job_id,
         artifact_id=result.artifact_id,
         diagnostic=_diagnostic(result.diagnostic),
+    )
+
+
+def control_response(
+    result: ControlResult, *, server_time: datetime | None = None
+) -> ControlResponse:
+    return ControlResponse(
+        requested_job_id=result.requested_job_id,
+        outcome=result.outcome,
+        job=None if result.job is None else _job_response(result.job),
+        server_time=server_time or datetime.now(timezone.utc),
+    )
+
+
+def bulk_control_response(result: BulkControlResult) -> BulkControlResponse:
+    server_time = datetime.now(timezone.utc)
+    return BulkControlResponse(
+        items=[control_response(item, server_time=server_time) for item in result.items],
+        server_time=server_time,
     )
 
 
@@ -460,11 +554,20 @@ def _job_response(item: ProcessingJobView) -> ProcessingJobResponse:
         finished_at=item.finished_at,
         queued_age_ms=item.queued_age_ms,
         elapsed_ms=item.elapsed_ms,
+        active_elapsed_ms=item.active_elapsed_ms,
+        paused_ms=item.paused_ms,
         runtime_ms=item.runtime_ms,
         diagnostic=_diagnostic(item.diagnostic),
         output_size_bytes=_number_string(item.output_size_bytes),
         queue_position=item.queue_position,
         estimate=None if item.estimate is None else _estimate(item.estimate),
+        queue_estimate=(
+            None if item.queue_estimate is None else _queue_estimate(item.queue_estimate)
+        ),
+        control_state=item.control_state,
+        execution_phase=item.execution_phase,
+        control_revision=item.control_revision,
+        allowed_controls=list(item.allowed_controls),
     )
 
 
@@ -473,6 +576,15 @@ def _estimate(item: EstimateView) -> EstimateResponse:
         status=item.status,
         estimated_total_ms=item.estimated_total_ms,
         remaining_ms=item.remaining_ms,
+        method=item.method,
+        sample_count=item.sample_count,
+    )
+
+
+def _queue_estimate(item: QueueEstimateView) -> QueueEstimateResponse:
+    return QueueEstimateResponse(
+        status=item.status,
+        ready_in_ms=item.ready_in_ms,
         method=item.method,
         sample_count=item.sample_count,
     )

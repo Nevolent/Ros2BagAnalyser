@@ -183,7 +183,8 @@ def test_low_space_admission_returns_unavailable_without_scheduling_work() -> No
             return ()
 
         def prepare_recording(
-            self, recording_id, planner_identities, *, invalid_artifact_ids=None,
+            self, recording_id, planner_identities, *, output_kinds=PROCESSING_KINDS,
+            invalid_artifact_ids=None,
             admission_diagnostic=None,
         ):
             del planner_identities, invalid_artifact_ids
@@ -200,7 +201,7 @@ def test_low_space_admission_returns_unavailable_without_scheduling_work() -> No
                         diagnostic_code=admission_diagnostic.code,
                         diagnostic_message=admission_diagnostic.message,
                     )
-                    for kind in PROCESSING_KINDS
+                    for kind in output_kinds
                 ),
             )
 
@@ -231,3 +232,83 @@ def test_low_space_admission_returns_unavailable_without_scheduling_work() -> No
         and output.diagnostic.code == "derived_space_low"
         for output in result.recordings[0].outputs
     )
+
+
+def test_selective_preparation_forwards_only_chosen_kinds() -> None:
+    class CatalogRepository:
+        def get_catalog_state(self):
+            return type("State", (), {"successful_generation": GENERATION})()
+
+    class Repository:
+        def __init__(self) -> None:
+            self.selected: tuple[str, ...] | None = None
+
+        def get_current_outputs(self, recording_ids):
+            del recording_ids
+            return ()
+
+        def prepare_recording(
+            self,
+            recording_id,
+            planner_identities,
+            *,
+            output_kinds,
+            invalid_artifact_ids=None,
+            admission_diagnostic=None,
+        ):
+            del planner_identities, invalid_artifact_ids, admission_diagnostic
+            self.selected = output_kinds
+            return PreparationSchedule(
+                recording_id,
+                True,
+                (
+                    ScheduledOutput(
+                        "imu_series",
+                        "queued",
+                        "queued",
+                        _target("imu_series"),
+                        job=_job("imu_series", "queued"),
+                    ),
+                ),
+            )
+
+    repository = Repository()
+    service = PreparationService(
+        CatalogRepository(),  # type: ignore[arg-type]
+        repository,  # type: ignore[arg-type]
+        FakePlanner(),  # type: ignore[arg-type]
+        {kind: ValidStore() for kind in PROCESSING_KINDS},  # type: ignore[dict-item]
+    )
+
+    result = service.prepare_selected((7,), ("imu_series",))
+
+    assert repository.selected == ("imu_series",)
+    assert [item.kind for item in result.recordings[0].outputs] == ["imu_series"]
+    assert result.recordings[0].analysis_state == "queued"
+
+
+def test_selective_not_found_response_contains_only_requested_kinds() -> None:
+    class CatalogRepository:
+        def get_catalog_state(self):
+            return type("State", (), {"successful_generation": GENERATION})()
+
+    class Repository:
+        def get_current_outputs(self, recording_ids):
+            del recording_ids
+            return ()
+
+        def prepare_recording(self, recording_id, planner_identities, **kwargs):
+            del planner_identities, kwargs
+            return PreparationSchedule(recording_id, False, ())
+
+    service = PreparationService(
+        CatalogRepository(),  # type: ignore[arg-type]
+        Repository(),  # type: ignore[arg-type]
+        FakePlanner(),  # type: ignore[arg-type]
+        {kind: ValidStore() for kind in PROCESSING_KINDS},  # type: ignore[dict-item]
+    )
+
+    result = service.prepare_selected((404,), ("imu_series",))
+
+    assert result.recordings[0].outcome == "not_found"
+    assert [item.kind for item in result.recordings[0].outputs] == ["imu_series"]

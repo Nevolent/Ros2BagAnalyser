@@ -4,6 +4,7 @@ from fractions import Fraction
 import hashlib
 from pathlib import Path
 import shutil
+import time
 
 import av
 import numpy as np
@@ -13,6 +14,7 @@ import rosbag_analyser.processors.topdown_preview as topdown_processor_module
 from rosbag_analyser.catalog.paths import source_file_identity
 from rosbag_analyser.artifact_store import ArtifactStore
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
+from rosbag_analyser.job_control import JobCanceled
 from rosbag_analyser.processors.topdown_preview import (
     TopdownPreviewProcessingError,
     TopdownPreviewProcessor,
@@ -84,6 +86,37 @@ def _inventory(root: Path) -> tuple[tuple[str, int, int], ...]:
         for path in sorted(root.iterdir())
         if path.is_file()
     )
+
+
+class _CancelAtFirstCheckpoint:
+    phases: list[str]
+
+    def __init__(self) -> None:
+        self.phases = []
+
+    def checkpoint(self, phase: str, *, force: bool = False) -> None:
+        del force
+        self.phases.append(phase)
+        raise JobCanceled("synthetic cancellation")
+
+
+def test_topdown_control_reaches_a_bounded_processing_checkpoint(
+    tmp_path: Path,
+) -> None:
+    _write_avi(tmp_path / "camera.avi", frame_count=1)
+    _write_csv(tmp_path / "camera.csv", ["1700000000.1"])
+    control = _CancelAtFirstCheckpoint()
+    started = time.perf_counter()
+
+    with pytest.raises(JobCanceled):
+        TopdownPreviewProcessor(V0_PREVIEW_PROFILE).process(
+            _descriptor(tmp_path),
+            tmp_path / "preview.mp4",
+            control=control,  # type: ignore[arg-type]
+        )
+
+    assert time.perf_counter() - started < 2
+    assert control.phases == ["processing"]
 
 
 def test_exact_unix_timestamp_parsing_never_uses_float() -> None:

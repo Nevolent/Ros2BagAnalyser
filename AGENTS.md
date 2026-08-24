@@ -28,8 +28,9 @@ on 2026-08-16. Its repository-readiness phase is implemented and locally
 verified. On 2026-08-23 the user accepted all preceding application and
 repository-readiness work as the working pre-overhaul baseline and authorized
 its Git checkpoint and push. Prompt 2A, the big UI overhaul and real
-processing-controls correction, is approved and invoked. Gate 0 and every live
-Building block 3 phase remain pending and paused during the overhaul.
+processing-controls correction, was implemented and synthetically verified on
+2026-08-23 and is uncommitted pending user review. Gate 0 and every live
+Building block 3 phase remain pending and paused through that review.
 
 V1 has three sequential blocks:
 
@@ -331,13 +332,13 @@ After implementation, report:
 
 ## Current instruction
 
-The complete application and repository-readiness state preceding Prompt 2A is
-the accepted working baseline. Preserve all accepted backend, processor,
-artifact, timing, safety, moved-path, frontend, local-operation, and deployment-
-readiness behavior except where the invoked Prompt 2A explicitly changes the
-product contract. Establish the authorized baseline Git checkpoint before
-Prompt 2A application-code work. Keep `archive/` unchanged as the frozen
-overhaul reference and exclude its mock/generated payloads from Git/runtime.
-Do not begin live VM mutation until Gate 0 and the exact command/rollback review
-are approved; do not read authoritative source content until the real-data
-annex is approved.
+The accepted checkpoint preceding Prompt 2A remains the working baseline.
+Prompt 2A application and repository changes are implemented and synthetically
+verified but remain uncommitted pending user review. Preserve the accepted
+backend, processor, artifact, timing, safety, moved-path, local-operation, and
+deployment-readiness behavior except for Prompt 2A's approved product delta.
+Keep `archive/` unchanged as the frozen overhaul reference and exclude its
+mock/generated payloads from Git/runtime. Do not commit or resume Building
+block 3 without explicit user direction. Do not begin live VM mutation until
+Gate 0 and the exact command/rollback review are approved; do not read
+authoritative source content until the real-data annex is approved.

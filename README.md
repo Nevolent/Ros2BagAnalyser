@@ -26,12 +26,12 @@ synthetic/disposable targets. On 2026-08-23 the user accepted all preceding
 application and repository-readiness work as the working pre-overhaul baseline
 and authorized its Git checkpoint and push.
 
-The newer 2026-08-23 static frontend in [`archive/`](archive/index.html) is now
-the approved visual/interaction source for the invoked Prompt 2A big UI
-overhaul. The currently served frontend remains the accepted working
-pre-overhaul implementation until that prompt is completed. Gate 0 has not been
-supplied, no live VM or NAS change has been made, and no authoritative source
-content has been read.
+The newer 2026-08-23 static frontend in [`archive/`](archive/index.html) is the
+frozen visual/interaction source for Prompt 2A. The overhaul and its real
+processing controls are implemented and synthetically verified, with the
+working tree left uncommitted for user review. Gate 0 has not been supplied, no
+live VM or NAS change has been made, and no authoritative source content has
+been read.
 
 ## V1 outcome
 
@@ -133,6 +133,18 @@ Front-video correction keeps the accepted 100-millisecond threshold while
 allowing only one automatic seek in flight and pausing correction during
 buffering.
 
+Prompt 2A updates that served frontend to the frozen 2026-08-23 reference,
+removes Experiments/Files, adds selective preparation and Analyzer graph-window
+interactions, and keeps all operational content API-backed. The 2026-08-24
+Recordings review restores the reference's separate Recorded column from
+`start_time_ns` and corrects only that page's visual interactions. Additive
+migration `0007_job_controls.sql` adds durable
+pause/resume/cancel state and stable mutable queue order without adding a
+domain table. The single worker cooperatively acknowledges controls at safe
+processor, validation, publication, and cleanup checkpoints; the Processing
+view also exposes authoritative reorder, bulk cancel/retry, wall/active elapsed
+time, and cumulative approximate queue estimates.
+
 Building block 3 adds strict loopback deployment configuration, exact mount and
 low-space admission checks, sanitized capability-aware health, release/source
 identity preflight, safe logging, checksummed offline packaging, systemd/Nginx/
@@ -175,10 +187,10 @@ incomplete, so it cannot advance generation or mark saved recordings missing.
 ## Current implementation gate
 
 Building block 3 repository readiness is accepted as part of the working
-pre-overhaul baseline, but its live phases remain gated. Prompt 2A, the big UI
-overhaul and real processing-controls block, was invoked on 2026-08-23 and is
-the next implementation work after the baseline checkpoint. Live deployment
-does not resume in parallel.
+pre-overhaul baseline, but its live phases remain gated. Prompt 2A was
+implemented and synthetically verified on 2026-08-23 after the authorized
+baseline checkpoint; it is awaiting user review and remains uncommitted. Live
+deployment does not resume in parallel.
 
 The established V1 sequence remains:
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import subprocess
+import time
 import weakref
 
 import pytest
@@ -15,6 +16,7 @@ from rosbag_analyser.catalog.metadata import TopicFact
 from rosbag_analyser.catalog.paths import source_file_identity
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
 from rosbag_analyser.front_preview import FrontSourceDescriptor
+from rosbag_analyser.job_control import JobCanceled
 from rosbag_analyser.processors.front_preview import (
     DecodedImage,
     FrontPreviewProcessingError,
@@ -91,6 +93,38 @@ def _decoder(serialized: bytes) -> DecodedImage:
         data=bytes([value, 0, 255] * 4 + [0, 0]) * 2,
         header_timestamp_ns=2_000_000_000 + value * 100_000_000,
     )
+
+
+class _CancelAtFirstCheckpoint:
+    phases: list[str]
+
+    def __init__(self) -> None:
+        self.phases = []
+
+    def checkpoint(self, phase: str, *, force: bool = False) -> None:
+        del force
+        self.phases.append(phase)
+        raise JobCanceled("synthetic cancellation")
+
+
+def test_front_control_reaches_a_bounded_processing_checkpoint(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "recording.db3"
+    _create_image_database(database, [100, 200])
+    control = _CancelAtFirstCheckpoint()
+    started = time.perf_counter()
+
+    with pytest.raises(JobCanceled):
+        FrontPreviewProcessor(V0_PREVIEW_PROFILE, _decoder).process(
+            _descriptor(database, 0, 2),
+            tmp_path / "preview.mp4",
+            control=control,  # type: ignore[arg-type]
+        )
+
+    assert time.perf_counter() - started < 2
+    assert control.phases == ["processing"]
+    assert not (tmp_path / "preview.mp4").exists()
 
 
 def _probe_frames(path: Path) -> list[dict[str, str]]:

@@ -381,6 +381,7 @@ def test_processing_request_reuses_one_active_job_and_one_ready_artifact(
     assert while_running.job is not None
     assert while_running.job.id == running.id
 
+    assert repository.enter_publishing(running.id).execution_phase == "publishing"
     ready = repository.complete_job(
         running.id,
         ArtifactWrite(
@@ -436,6 +437,7 @@ def test_request_racing_job_completion_reuses_one_ready_artifact(
 
     def complete():
         start.wait()
+        assert repository.enter_publishing(running.id).execution_phase == "publishing"
         return repository.complete_job(running.id, artifact)
 
     def request():
@@ -489,6 +491,7 @@ def test_interrupted_job_fails_without_artifact_and_explicit_retry_succeeds(
     assert retry.job.id != running.id
     rerun = repository.claim_next_job()
     assert rerun is not None
+    assert repository.enter_publishing(rerun.id).execution_phase == "publishing"
     repository.complete_job(
         rerun.id,
         ArtifactWrite(
@@ -528,6 +531,7 @@ def test_explicit_retry_retires_only_the_observed_invalid_artifact(
     running = repository.claim_next_job()
     assert requested.job is not None
     assert running is not None
+    assert repository.enter_publishing(running.id).execution_phase == "publishing"
     ready = repository.complete_job(
         running.id,
         ArtifactWrite(
@@ -728,8 +732,8 @@ async def test_catalog_reads_complete_while_serial_worker_job_is_processing(
             )
 
     class BlockingProcessor:
-        def process(self, descriptor, output_path: Path):
-            del descriptor, output_path
+        def process(self, descriptor, output_path: Path, *, control=None):
+            del descriptor, output_path, control
             processor_started.set()
             if not release_processor.wait(timeout=10):
                 raise AssertionError("The test did not release the worker processor.")
@@ -1599,6 +1603,7 @@ def test_actionable_failures_history_join_and_stable_cursor(postgres_url: str) -
     assert repository.list_processing_jobs("failed", limit=10) == ()
     rerun = repository.claim_next_job()
     assert rerun is not None
+    assert repository.enter_publishing(rerun.id).execution_phase == "publishing"
     ready = repository.complete_job(
         rerun.id,
         ArtifactWrite(
@@ -1700,6 +1705,219 @@ def test_actionable_failures_history_join_and_stable_cursor(postgres_url: str) -
     second_ids = [item.job.id for item in second_page]
     assert inserted_ids[-1] in second_ids
     assert all(item.job.finished_at < cursor_job.finished_at for item in second_page)
+
+
+@pytest.mark.postgres
+def test_prompt_2a_pause_resume_cancel_and_publication_gate_are_durable(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+
+    requested = repository.request_job(
+        recording_id,
+        "front_preview",
+        "7" * 64,
+        work_units=100,
+        estimate_key="8" * 64,
+    )
+    assert requested.job is not None
+    running = repository.claim_next_job()
+    assert running is not None
+
+    pause = repository.request_pause(running.id)
+    assert pause.outcome == "requested"
+    assert pause.recording_name == "run"
+    assert pause.job is not None and pause.job.control_state == "pause_requested"
+    acknowledged = repository.acknowledge_pause(running.id)
+    assert acknowledged.control_state == "paused"
+    assert acknowledged.last_pause_acknowledged_at is not None
+    resumed = repository.request_resume(running.id)
+    assert resumed.outcome == "resumed"
+    assert resumed.job is not None and resumed.job.control_state == "none"
+
+    cancel = repository.cancel_job(running.id)
+    assert cancel.outcome == "requested"
+    gated = repository.enter_publishing(running.id)
+    assert gated.control_state == "cancel_requested"
+    assert gated.execution_phase != "publishing"
+    repository.begin_cancel_cleanup(running.id)
+    canceled = repository.complete_cancellation(running.id)
+    assert canceled.state == "canceled"
+    assert canceled.cancel_requested_at is not None
+    assert canceled.cancel_finished_at is not None
+    assert repository.get_artifact(recording_id, "front_preview", "7" * 64) is None
+    canceled_history = repository.list_processing_jobs("canceled", limit=10)
+    assert [item.job.id for item in canceled_history] == [running.id]
+
+    replacement = repository.request_job(recording_id, "front_preview", "7" * 64)
+    assert replacement.job is not None
+    publishing = repository.claim_next_job()
+    assert publishing is not None
+    assert repository.enter_publishing(publishing.id).execution_phase == "publishing"
+    too_late = repository.cancel_job(publishing.id)
+    assert too_late.outcome == "already_finalizing"
+    artifact = repository.complete_job(
+        publishing.id,
+        ArtifactWrite(
+            recording_id=recording_id,
+            kind="front_preview",
+            cache_identity="7" * 64,
+            output_relative_path="front_preview/published/preview.mp4",
+            mime_type="video/mp4",
+            size_bytes=42,
+            coverage_start_ns=0,
+            coverage_end_ns=1,
+            manifest={"cache_identity": "7" * 64},
+        ),
+    )
+    assert artifact.cache_identity == "7" * 64
+
+
+@pytest.mark.postgres
+def test_prompt_2a_queue_insert_claim_and_reorder_share_one_order(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    initial = [
+        repository.request_job(recording_id, kind, character * 64).job
+        for kind, character in zip(PROCESSING_KINDS, "abc", strict=True)
+    ]
+    assert all(job is not None for job in initial)
+    initial_jobs = [job for job in initial if job is not None]
+    barrier = threading.Barrier(3)
+
+    def insert_job():
+        barrier.wait()
+        return repository.request_job(
+            recording_id, "front_preview", "d" * 64
+        ).job
+
+    def claim_job():
+        barrier.wait()
+        return repository.claim_next_job()
+
+    def move_job():
+        barrier.wait()
+        return repository.reorder_jobs((initial_jobs[2].id,), "earlier")
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        inserted_future = executor.submit(insert_job)
+        claimed_future = executor.submit(claim_job)
+        moved_future = executor.submit(move_job)
+        inserted = inserted_future.result(timeout=10)
+        claimed = claimed_future.result(timeout=10)
+        moved = moved_future.result(timeout=10)
+
+    assert inserted is not None
+    assert claimed is not None and claimed.id == initial_jobs[0].id
+    assert moved.outcome == "reordered"
+    queued = repository.list_processing_jobs("queued", limit=10)
+    assert [item.queue_position for item in queued] == list(range(1, 4))
+    assert len({item.job.queue_order for item in queued}) == 3
+    assert {item.job.id for item in queued} == {
+        initial_jobs[1].id,
+        initial_jobs[2].id,
+        inserted.id,
+    }
+
+
+@pytest.mark.postgres
+def test_prompt_2a_claim_and_queued_cancel_serialize_truthfully(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    requested = repository.request_job(
+        recording_id, "front_preview", "i" * 64
+    ).job
+    assert requested is not None
+    barrier = threading.Barrier(2)
+
+    def claim_job():
+        barrier.wait()
+        return repository.claim_next_job()
+
+    def cancel_job():
+        barrier.wait()
+        return repository.cancel_job(requested.id)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        claimed_future = executor.submit(claim_job)
+        canceled_future = executor.submit(cancel_job)
+        claimed = claimed_future.result(timeout=10)
+        canceled = canceled_future.result(timeout=10)
+
+    if claimed is None:
+        assert canceled.outcome == "canceled"
+        assert canceled.job is not None and canceled.job.state == "canceled"
+    else:
+        assert claimed.id == requested.id
+        assert canceled.outcome == "requested"
+        assert canceled.job is not None
+        assert canceled.job.control_state == "cancel_requested"
+
+    overview = repository.processing_overview(queue_limit=10)
+    assert overview.queued_count == 0
+    assert overview.running_count + overview.canceled_count == 1
+
+
+@pytest.mark.postgres
+def test_prompt_2a_restart_interrupts_every_nonterminal_control_state(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    interrupted: list[tuple[int, str]] = []
+
+    for character, control_state in zip(
+        "efgh",
+        ("none", "pause_requested", "paused", "cancel_requested"),
+        strict=True,
+    ):
+        requested = repository.request_job(
+            recording_id, "front_preview", character * 64
+        ).job
+        assert requested is not None
+        running = repository.claim_next_job()
+        assert running is not None and running.id == requested.id
+        if control_state in {"pause_requested", "paused"}:
+            pause = repository.request_pause(running.id)
+            assert pause.outcome == "requested"
+        if control_state == "paused":
+            acknowledged = repository.acknowledge_pause(running.id)
+            assert acknowledged.control_state == "paused"
+        if control_state == "cancel_requested":
+            cancel = repository.cancel_job(running.id)
+            assert cancel.outcome == "requested"
+
+        assert repository.mark_running_jobs_interrupted() == (running.id,)
+        interrupted.append((running.id, control_state))
+
+    with open_connection(postgres_url) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, state, error_code, control_state, execution_phase
+            FROM jobs
+            WHERE id = ANY (%s)
+            ORDER BY id
+            """,
+            ([job_id for job_id, _ in interrupted],),
+        ).fetchall()
+
+    assert [str(row["state"]) for row in rows] == ["failed"] * 4
+    assert [str(row["error_code"]) for row in rows] == ["worker_interrupted"] * 4
+    assert [str(row["control_state"]) for row in rows] == ["none"] * 4
+    assert [row["execution_phase"] for row in rows] == [None] * 4
 
 
 @pytest.mark.postgres
@@ -1809,11 +2027,12 @@ def test_maximum_synthetic_catalog_bulk_queries_and_response_are_bounded(
         )
         connection.execute(
             """
-            INSERT INTO jobs (
-                recording_id, kind, cache_identity, state, started_at
-            )
-            SELECT target.recording_id, target.kind, target.cache_identity,
-                   'running', CURRENT_TIMESTAMP - interval '1 second'
+                INSERT INTO jobs (
+                    recording_id, kind, cache_identity, state, started_at,
+                    execution_phase
+                )
+                SELECT target.recording_id, target.kind, target.cache_identity,
+                       'running', CURRENT_TIMESTAMP - interval '1 second', 'processing'
             FROM preparation_targets AS target
             WHERE target.kind = 'front_preview' AND target.recording_id = 1001
             """
@@ -2124,7 +2343,8 @@ async def test_v1_nested_synthetic_operational_acceptance(
             assert active_ms < 2_000
             assert active.json()["current"]["id"] == running.id
             assert active.json()["current"]["elapsed_ms"] >= 0
-            assert active.json()["current"]["estimate"]["status"] == "available"
+            assert active.json()["current"]["estimate"]["status"] == "unavailable"
+            assert active.json()["current"]["estimate"]["estimated_total_ms"] is not None
 
             with open_connection(postgres_url) as connection:
                 connection.execute(
@@ -2142,7 +2362,7 @@ async def test_v1_nested_synthetic_operational_acceptance(
                     ),
                 )
             exceeded = await client.get("/api/v1/processing/overview")
-            assert exceeded.json()["current"]["estimate"]["status"] == "exceeded"
+            assert exceeded.json()["current"]["estimate"]["status"] == "unavailable"
             assert exceeded.json()["current"]["estimate"]["remaining_ms"] is None
             processing_repository.fail_job(
                 running.id, "synthetic_processing_failed", "Synthetic failure."

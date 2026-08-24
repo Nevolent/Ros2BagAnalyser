@@ -19,9 +19,11 @@ repository-readiness phase is implemented and locally verified. On 2026-08-23
 the user accepted all preceding application and repository-readiness work as
 the working pre-overhaul baseline and authorized a Git checkpoint and push.
 Prompt 2A, the big UI overhaul and real processing-controls correction, was
-approved and invoked for the next implementation phase. Gate 0, live VM
-commissioning, authoritative-source acceptance, and trial admission remain
-incomplete and paused during the overhaul.
+approved, invoked, implemented, and synthetically verified on 2026-08-23. It
+is uncommitted pending user review. A recordings-only visual correction was
+invoked on 2026-08-24 during that review. Gate 0, live VM commissioning,
+authoritative-source acceptance, and trial admission remain incomplete and
+paused through that review.
 
 V1 has three sequential building blocks:
 
@@ -636,11 +638,58 @@ Stop if exact integration needs a new API capability, processor, artifact kind,
 timing rule, external runtime dependency, or material visual redesign not
 already approved in Building block 1 or the V1 documents.
 
+## 5A. Prompt 2A — Big UI overhaul and real processing controls
+
+**Status:** Implemented and synthetically verified on 2026-08-23; uncommitted
+pending user review; real-source, screenshot, and live commissioning acceptance
+remain gated
+
+### Implemented boundary
+
+- The served dependency-free frontend now follows the frozen 2026-08-23
+  `archive/` Recordings, Processing, and Analyzer surfaces without serving its
+  mock operational payloads. Experiments/Files are removed. The 2026-08-24
+  recordings-only review restores the reference's separate Recorded column
+  from `start_time_ns` and corrects filters, tooltips, folder styling, focus,
+  selected rows, and the single-line Prepare selected action without changing
+  Processing or Analyzer.
+- Prepare selected freezes the chosen recording IDs and any non-empty subset of
+  front, top-down, and IMU output kinds for one bounded authoritative request.
+- Additive migration `0007_job_controls.sql` keeps the exact six domain tables
+  while adding durable control state, execution phase, pause/cancel timing,
+  stable queue order, and canceled-history indexing to `jobs`.
+- The one worker uses cooperative checkpoints and a transactional publication
+  gate for pause/resume/cancel. Reorder, insertion, queued cancellation, and
+  claim share one serialized order; bulk cancel and failed retry are bounded.
+- Processing reports wall and active elapsed time, authoritative allowed
+  controls, canceled counts/history, and cumulative approximate queue estimates
+  only while every required predecessor input is valid. Progress stays
+  indeterminate because no existing processor exposes a complete exact unit
+  contract suitable for a truthful percentage.
+- Analyzer adds graph-window zoom/reset/paging, wheel scrubbing, Shift-drag
+  selection, and keyboard navigation over the unchanged full-recording clock,
+  media timing, correction, and measured coverage behavior.
+- Deployment assets recognize schema 0007 and rate-limit the approved mutation
+  routes. Planned drain fails closed on paused or pause-requested work so the
+  operator must explicitly resume or cancel before upgrade.
+
+### Verification and remaining gates
+
+Synthetic unit, API, worker, browser-runtime, deployment, migration, repository,
+queue-concurrency, and maximum-catalog checks are recorded in the Prompt 2A
+completion note in `BUILDING_BLOCK_PROMPTS.md`. The frozen archive hashes and
+zero archive diff are rechecked at handoff. No authoritative source was read,
+no VM/NAS/database deployment target was changed, and no new dependency was
+installed. Automated browser behavior was exercised, but screenshot comparison
+was unavailable in the local environment and remains explicit visual acceptance
+work. Resume Building block 3 only after Prompt 2A review and the existing Gate
+0/exact-command/rollback approvals.
+
 ## 6. Building block 3 — TrueNAS VM deployment and trial commissioning
 
 **Status:** Invoked on 2026-08-16; repository readiness implemented, locally
 verified, and accepted as part of the 2026-08-23 pre-overhaul baseline; external
-Gate 0 and live phases pending and paused during Prompt 2A
+Gate 0 and live phases pending and paused through Prompt 2A review
 
 **Dependency:** Accepted backend and frontend, plus the administrator handoff in
 Gate 0 below
@@ -957,8 +1006,9 @@ The bounded live matrix must prove:
    remains honestly unavailable without source repair; otherwise synthetic
    malformed evidence is retained and the live case is recorded not applicable.
 7. Two engineer sessions can browse, prepare a bounded mixed selection, observe
-   exactly one running job and FIFO queue order, and review synchronized output
-   while work continues.
+   exactly one running job and the authoritative stable queue order, use only
+   allowed Prompt 2A controls, and review synchronized output while work
+   continues.
 8. Front/top media range semantics, IMU choices, global clock, correction, seeks,
    coverage, stale identities, and saved artifacts work through the proxy.
 9. A service restart with queued work preserves the queue. A controlled worker

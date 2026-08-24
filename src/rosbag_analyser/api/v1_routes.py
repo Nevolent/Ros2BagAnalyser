@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 from typing import Annotated, Literal
 
@@ -12,14 +13,21 @@ from rosbag_analyser.processing_view import InvalidProcessingCursor
 from .catalog_routes import _require_source_capability, _run_catalog_call
 from .v1_schemas import (
     CatalogResponse,
+    BulkControlResponse,
+    BulkRetryResponse,
+    ControlResponse,
+    JobIdsRequest,
     PrepareSelectedRequest,
     PrepareSelectedResponse,
     ProcessingJobsResponse,
     ProcessingOverviewResponse,
     RecordingDetailResponse,
+    ReorderJobsRequest,
     RescanResponse,
     RetryResponse,
     catalog_response,
+    bulk_control_response,
+    control_response,
     prepare_response,
     processing_jobs_response,
     processing_overview_response,
@@ -109,7 +117,7 @@ async def prepare_selected(
         request,
         "prepare selected recordings",
         lambda: request.app.state.preparation_service.prepare_selected(
-            tuple(body.recording_ids)
+            tuple(body.recording_ids), tuple(body.output_kinds)
         ),
     )
     if result.has_active_work:
@@ -130,7 +138,7 @@ async def processing_overview(request: Request) -> ProcessingOverviewResponse:
 @router.get("/processing/jobs", response_model=ProcessingJobsResponse)
 async def processing_jobs(
     request: Request,
-    view: Annotated[Literal["queued", "failed", "history"], Query()],
+    view: Annotated[Literal["queued", "failed", "history", "canceled"], Query()],
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     cursor: Annotated[str | None, Query(max_length=512)] = None,
     q: Annotated[str, Query(max_length=100)] = "",
@@ -192,6 +200,106 @@ async def retry_failed_job(
     return retry_response(result)
 
 
+@router.post(
+    "/processing/jobs/{job_id:int}/pause",
+    response_model=ControlResponse,
+)
+async def pause_job(
+    job_id: Annotated[int, Path(gt=0)], request: Request, response: Response
+) -> ControlResponse:
+    result = await _database_call(
+        request,
+        "pause processing job",
+        lambda: request.app.state.processing_view_service.pause(job_id),
+    )
+    _control_status(result.outcome, response)
+    return control_response(result)
+
+
+@router.post(
+    "/processing/jobs/{job_id:int}/resume",
+    response_model=ControlResponse,
+)
+async def resume_job(
+    job_id: Annotated[int, Path(gt=0)], request: Request, response: Response
+) -> ControlResponse:
+    result = await _database_call(
+        request,
+        "resume processing job",
+        lambda: request.app.state.processing_view_service.resume(job_id),
+    )
+    _control_status(result.outcome, response)
+    return control_response(result)
+
+
+@router.post(
+    "/processing/jobs/{job_id:int}/cancel",
+    response_model=ControlResponse,
+)
+async def cancel_job(
+    job_id: Annotated[int, Path(gt=0)], request: Request, response: Response
+) -> ControlResponse:
+    result = await _database_call(
+        request,
+        "cancel processing job",
+        lambda: request.app.state.processing_view_service.cancel(job_id),
+    )
+    _control_status(result.outcome, response)
+    return control_response(result)
+
+
+@router.post("/processing/jobs/cancel", response_model=BulkControlResponse)
+async def cancel_jobs(
+    body: JobIdsRequest, request: Request, response: Response
+) -> BulkControlResponse:
+    _validate_control_count(request, body.job_ids)
+    result = await _database_call(
+        request,
+        "cancel processing jobs",
+        lambda: request.app.state.processing_view_service.cancel_many(
+            tuple(body.job_ids)
+        ),
+    )
+    if any(item.outcome == "requested" for item in result.items):
+        response.status_code = status.HTTP_202_ACCEPTED
+    return bulk_control_response(result)
+
+
+@router.post("/processing/jobs/reorder", response_model=BulkControlResponse)
+async def reorder_jobs(
+    body: ReorderJobsRequest, request: Request
+) -> BulkControlResponse:
+    _validate_control_count(request, body.job_ids)
+    result = await _database_call(
+        request,
+        "reorder processing jobs",
+        lambda: request.app.state.processing_view_service.reorder(
+            tuple(body.job_ids), body.direction
+        ),
+    )
+    return bulk_control_response(result)
+
+
+@router.post("/processing/jobs/retry", response_model=BulkRetryResponse)
+async def retry_jobs(
+    body: JobIdsRequest, request: Request, response: Response
+) -> BulkRetryResponse:
+    _validate_control_count(request, body.job_ids)
+    results = await _database_call(
+        request,
+        "retry processing jobs",
+        lambda: request.app.state.processing_view_service.retry_many(
+            tuple(body.job_ids)
+        ),
+    )
+    if any(item.state in {"queued", "processing"} for item in results):
+        response.status_code = status.HTTP_202_ACCEPTED
+    return BulkRetryResponse(
+        items=[retry_response(item) for item in results],
+        server_time=datetime.now(timezone.utc),
+    )
+
+
 async def _database_call(request: Request, operation_name: str, operation):
     try:
         return await _run_catalog_call(request, operation)
@@ -217,3 +325,36 @@ def _database_error(operation: str, error: psycopg.Error) -> HTTPException:
             "message": "The requested operation could not be completed.",
         },
     )
+
+
+def _validate_control_count(request: Request, job_ids: list[int]) -> None:
+    maximum = request.app.state.prepare_max_recordings * 3
+    if len(job_ids) > maximum:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "processing_selection_too_large",
+                "message": f"Select no more than {maximum} processing jobs.",
+            },
+        )
+
+
+def _control_status(outcome: str, response: Response) -> None:
+    if outcome == "not_found":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "processing_job_not_found",
+                "message": "The requested processing job was not found.",
+            },
+        )
+    if outcome in {"conflict", "already_finalizing"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "processing_control_conflict",
+                "message": "The processing job state changed before this control could apply.",
+            },
+        )
+    if outcome == "requested":
+        response.status_code = status.HTTP_202_ACCEPTED

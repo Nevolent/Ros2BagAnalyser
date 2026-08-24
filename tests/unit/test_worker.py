@@ -12,6 +12,7 @@ from rosbag_analyser.artifact_store import (
 )
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
 from rosbag_analyser.imu_series import IMU_SERIES_DEFINITIONS
+from rosbag_analyser.job_control import JobCanceled
 from rosbag_analyser.persistence.processing_repository import JobRecord
 from rosbag_analyser.processors.front_preview import (
     FrontPreviewProcessingError,
@@ -114,8 +115,8 @@ class FakeImuResolver:
 class SuccessfulProcessor:
     profile = V0_PREVIEW_PROFILE
 
-    def process(self, descriptor, output_path: Path) -> FrontPreviewResult:
-        del descriptor
+    def process(self, descriptor, output_path: Path, *, control=None) -> FrontPreviewResult:
+        del descriptor, control
         output_path.write_bytes(b"temporary-preview")
         return FrontPreviewResult(
             input_frame_count=4,
@@ -133,18 +134,29 @@ class SuccessfulProcessor:
 
 
 class FailingProcessor(SuccessfulProcessor):
-    def process(self, descriptor, output_path: Path) -> FrontPreviewResult:
-        del descriptor, output_path
+    def process(self, descriptor, output_path: Path, *, control=None) -> FrontPreviewResult:
+        del descriptor, output_path, control
         raise FrontPreviewProcessingError(
             "front_payload_invalid", "A front-camera image has an invalid payload."
         )
 
 
+class CancelingProcessor(SuccessfulProcessor):
+    def __init__(self, repository) -> None:
+        self.repository = repository
+
+    def process(self, descriptor, output_path: Path, *, control=None) -> FrontPreviewResult:
+        del descriptor, control
+        output_path.write_bytes(b"temporary-canceled-preview")
+        self.repository.control_state = "cancel_requested"
+        raise JobCanceled("synthetic cancellation")
+
+
 class SuccessfulTopdownProcessor:
     profile = V0_PREVIEW_PROFILE
 
-    def process(self, descriptor, output_path: Path) -> TopdownPreviewResult:
-        del descriptor
+    def process(self, descriptor, output_path: Path, *, control=None) -> TopdownPreviewResult:
+        del descriptor, control
         output_path.write_bytes(b"temporary-topdown-preview")
         return TopdownPreviewResult(
             input_frame_count=3,
@@ -161,8 +173,8 @@ class SuccessfulTopdownProcessor:
 
 
 class FailingTopdownProcessor(SuccessfulTopdownProcessor):
-    def process(self, descriptor, output_path: Path) -> TopdownPreviewResult:
-        del descriptor, output_path
+    def process(self, descriptor, output_path: Path, *, control=None) -> TopdownPreviewResult:
+        del descriptor, output_path, control
         raise TopdownPreviewProcessingError(
             "topdown_frame_count_mismatch",
             "The top-down video and timestamp row counts do not match.",
@@ -170,8 +182,8 @@ class FailingTopdownProcessor(SuccessfulTopdownProcessor):
 
 
 class SuccessfulImuProcessor:
-    def process(self, descriptor, output_path: Path) -> ImuSeriesResult:
-        del descriptor
+    def process(self, descriptor, output_path: Path, *, control=None) -> ImuSeriesResult:
+        del descriptor, control
         output_path.write_text(
             '{"schema_version":2,"samples":[["100000000",1.5,1.5,1.5,1.5,1.5,1.5],'
             '["300000000",null,null,null,null,null,null],'
@@ -198,8 +210,8 @@ class SuccessfulImuProcessor:
 
 
 class FailingImuProcessor(SuccessfulImuProcessor):
-    def process(self, descriptor, output_path: Path) -> ImuSeriesResult:
-        del descriptor, output_path
+    def process(self, descriptor, output_path: Path, *, control=None) -> ImuSeriesResult:
+        del descriptor, output_path, control
         raise ImuSeriesProcessingError(
             "imu_deserialization_failed", "An IMU message could not be decoded."
         )
@@ -290,6 +302,35 @@ class FakeArtifactStore:
 
     def clean_interrupted_workspaces(self, job_ids: tuple[int, ...]) -> None:
         self.cleaned_interrupted = job_ids
+
+
+class CancelingRepository(FakeRepository):
+    def __init__(self, job: JobRecord) -> None:
+        super().__init__(job)
+        self.control_state = "none"
+        self.cancel_cleanup_started = False
+        self.cancellation_completed = False
+
+    def worker_checkpoint(self, job_id: int, phase: str):
+        del phase
+        assert job_id == 5
+        return SimpleNamespace(state="running", control_state=self.control_state)
+
+    def acknowledge_pause(self, job_id: int):
+        raise AssertionError(f"Job {job_id} should not pause in this test.")
+
+    def enter_publishing(self, job_id: int):
+        raise AssertionError(f"Job {job_id} must not publish after cancellation.")
+
+    def begin_cancel_cleanup(self, job_id: int):
+        assert job_id == 5
+        self.cancel_cleanup_started = True
+        return SimpleNamespace(state="running", control_state="cancel_requested")
+
+    def complete_cancellation(self, job_id: int):
+        assert job_id == 5 and self.cancel_cleanup_started
+        self.cancellation_completed = True
+        return SimpleNamespace(state="canceled", control_state="none")
 
 
 def _worker(
@@ -551,6 +592,25 @@ def test_processing_failure_creates_no_ready_artifact_and_cleans_workspace(
     ]
     assert store.published_manifest is None
     assert not (tmp_path / "job-5-owned").exists()
+
+
+def test_worker_cancellation_cleans_only_owned_workspace_and_preserves_ready_output(
+    tmp_path: Path,
+) -> None:
+    repository = CancelingRepository(_job())
+    store = FakeArtifactStore(tmp_path)
+    prior_ready = tmp_path / "prior-ready.mp4"
+    prior_ready.write_bytes(b"validated-existing-output")
+
+    assert _worker(repository, CancelingProcessor(repository), store).run_once()
+
+    assert repository.cancel_cleanup_started
+    assert repository.cancellation_completed
+    assert repository.completed == []
+    assert repository.failures == []
+    assert store.published_manifest is None
+    assert not (tmp_path / "job-5-owned").exists()
+    assert prior_ready.read_bytes() == b"validated-existing-output"
 
 
 def test_source_identity_is_rechecked_after_output_validation_before_publish(

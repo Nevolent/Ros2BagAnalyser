@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import httpx
@@ -25,6 +26,8 @@ from rosbag_analyser.preparation import (
     RecordingAnalysis,
 )
 from rosbag_analyser.processing_view import (
+    BulkControlResult,
+    ControlResult,
     EstimateView,
     InvalidProcessingCursor,
     ProcessingJobView,
@@ -164,14 +167,18 @@ class FakeV1CatalogService:
 
 
 class FakePreparationService:
-    def prepare_selected(self, recording_ids: tuple[int, ...]) -> PrepareSelectedResult:
+    def prepare_selected(
+        self,
+        recording_ids: tuple[int, ...],
+        output_kinds=("front_preview", "topdown_preview", "imu_series"),
+    ) -> PrepareSelectedResult:
         return PrepareSelectedResult(
             recordings=tuple(
                 PrepareRecordingResult(
                     recording_id=recording_id,
                     outcome="accepted",
                     analysis_state="queued",
-                    outputs=(
+                    outputs=tuple(output for output in (
                         PrepareOutputResult(
                             "front_preview", "ready_reused", "ready", artifact_id=90
                         ),
@@ -181,7 +188,7 @@ class FakePreparationService:
                         PrepareOutputResult(
                             "imu_series", "active_reused", "queued", job_id=32
                         ),
-                    ),
+                    ) if output.kind in output_kinds),
                 )
                 for recording_id in recording_ids
             ),
@@ -201,6 +208,8 @@ def _job(state: str = "running") -> ProcessingJobView:
         finished_at=None,
         queued_age_ms=2000,
         elapsed_ms=2000 if state == "running" else None,
+        active_elapsed_ms=2000 if state == "running" else None,
+        paused_ms=0,
         runtime_ms=None,
         diagnostic=None,
         output_size_bytes=None,
@@ -208,6 +217,11 @@ def _job(state: str = "running") -> ProcessingJobView:
         estimate=EstimateView("available", 5000, 3000, "median_rate_v1", 3)
         if state == "running"
         else None,
+        queue_estimate=None,
+        control_state="none",
+        execution_phase="processing" if state == "running" else None,
+        control_revision=0,
+        allowed_controls=("pause", "cancel") if state == "running" else ("cancel",),
     )
 
 
@@ -220,6 +234,7 @@ class FakeProcessingService:
             queued_count=1,
             failed_count=0,
             succeeded_count=4,
+            canceled_count=0,
             current=_job(),
             queue=(_job("queued"),),
             recommended_poll_interval_ms=1000,
@@ -243,6 +258,41 @@ class FakeProcessingService:
             kind="imu_series",
             job_id=44,
         )
+
+    def pause(self, job_id: int) -> ControlResult:
+        if job_id == 404:
+            return ControlResult(job_id, "not_found", None)
+        return ControlResult(
+            job_id,
+            "requested",
+            replace(_job(), control_state="pause_requested", allowed_controls=("resume", "cancel")),
+        )
+
+    def resume(self, job_id: int) -> ControlResult:
+        return ControlResult(job_id, "resumed", _job())
+
+    def cancel(self, job_id: int) -> ControlResult:
+        if job_id == 409:
+            return ControlResult(job_id, "already_finalizing", _job())
+        return ControlResult(
+            job_id,
+            "requested",
+            replace(_job(), control_state="cancel_requested", allowed_controls=()),
+        )
+
+    def cancel_many(self, job_ids: tuple[int, ...]) -> BulkControlResult:
+        return BulkControlResult(
+            tuple(ControlResult(job_id, "canceled", None) for job_id in job_ids)
+        )
+
+    def reorder(self, job_ids: tuple[int, ...], direction: str) -> BulkControlResult:
+        del direction
+        return BulkControlResult(
+            tuple(ControlResult(job_id, "reordered", None) for job_id in job_ids)
+        )
+
+    def retry_many(self, job_ids: tuple[int, ...]) -> tuple[RetryResult, ...]:
+        return tuple(self.retry(job_id) for job_id in job_ids)
 
 
 @asynccontextmanager
@@ -357,6 +407,29 @@ async def test_prepare_enforces_configured_bound_and_preserves_request_order() -
     ]
 
 
+async def test_prepare_accepts_only_a_unique_nonempty_output_subset() -> None:
+    invalid_bodies = (
+        {"recording_ids": [12], "output_kinds": []},
+        {"recording_ids": [12], "output_kinds": ["imu_series", "imu_series"]},
+        {"recording_ids": [12], "output_kinds": ["unknown"]},
+    )
+    async with client_for() as client:
+        invalid = [
+            await client.post("/api/v1/recordings/prepare", json=body)
+            for body in invalid_bodies
+        ]
+        accepted = await client.post(
+            "/api/v1/recordings/prepare",
+            json={"recording_ids": [12], "output_kinds": ["imu_series"]},
+        )
+
+    assert all(response.status_code == 422 for response in invalid)
+    assert accepted.status_code == 202
+    assert [
+        item["kind"] for item in accepted.json()["recordings"][0]["outputs"]
+    ] == ["imu_series"]
+
+
 async def test_processing_views_retry_and_cursor_errors() -> None:
     async with client_for() as client:
         overview = await client.get("/api/v1/processing/overview")
@@ -377,6 +450,53 @@ async def test_processing_views_retry_and_cursor_errors() -> None:
     assert retry.status_code == 202
     assert unknown.status_code == 404
     assert conflict.status_code == 409
+
+
+async def test_processing_control_routes_are_strict_and_truthful() -> None:
+    async with client_for() as client:
+        pause = await client.post("/api/v1/processing/jobs/31/pause")
+        resume = await client.post("/api/v1/processing/jobs/31/resume")
+        cancel = await client.post("/api/v1/processing/jobs/31/cancel")
+        unknown = await client.post("/api/v1/processing/jobs/404/pause")
+        finalizing = await client.post("/api/v1/processing/jobs/409/cancel")
+        bulk_cancel = await client.post(
+            "/api/v1/processing/jobs/cancel", json={"job_ids": [31, 32]}
+        )
+        reorder = await client.post(
+            "/api/v1/processing/jobs/reorder",
+            json={"job_ids": [31, 32], "direction": "earlier"},
+        )
+        bulk_retry = await client.post(
+            "/api/v1/processing/jobs/retry", json={"job_ids": [44, 404]}
+        )
+        invalid = await client.post(
+            "/api/v1/processing/jobs/reorder",
+            json={"job_ids": [31, 31], "direction": "sideways"},
+        )
+
+    assert pause.status_code == 202
+    assert pause.json()["server_time"].endswith("Z")
+    assert pause.json()["job"]["control_state"] == "pause_requested"
+    assert resume.status_code == 200
+    assert cancel.status_code == 202
+    assert cancel.json()["job"]["allowed_controls"] == []
+    assert unknown.status_code == 404
+    assert finalizing.status_code == 409
+    assert bulk_cancel.status_code == 200
+    assert bulk_cancel.json()["server_time"].endswith("Z")
+    assert [item["requested_job_id"] for item in bulk_cancel.json()["items"]] == [
+        31,
+        32,
+    ]
+    assert reorder.status_code == 200
+    assert reorder.json()["server_time"].endswith("Z")
+    assert bulk_retry.status_code == 202
+    assert bulk_retry.json()["server_time"].endswith("Z")
+    assert [item["outcome"] for item in bulk_retry.json()["items"]] == [
+        "retry_queued",
+        "not_found",
+    ]
+    assert invalid.status_code == 422
 
 
 async def test_database_failure_does_not_leak_private_diagnostic() -> None:

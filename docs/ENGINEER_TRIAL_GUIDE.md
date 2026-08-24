@@ -15,19 +15,24 @@ screenshots of private infrastructure details, or recording filesystem paths.
 
 1. Open **Recordings** and browse the real folder tree or search the saved
    catalog. Loading the page does not scan the NAS.
-2. Select readable recordings and choose **Prepare selected**. One action asks
-   for the fixed front preview, top-down preview, and six-axis IMU bundle.
-3. Open **Processing** to see the one running job, FIFO queue, factual elapsed
-   time, approximate estimate when enough history exists, failures, and
-   completed history. There is no fabricated percentage.
+2. Select readable recordings and choose **Prepare selected**. In the dialog,
+   choose any non-empty subset of front preview, top-down preview, and the
+   six-axis IMU bundle. Analyzer is ready only when all three outputs are ready.
+3. Open **Processing** to see the one running job, authoritative queue, wall and
+   active elapsed time, approximate estimates when enough history exists,
+   failures, canceled work, and completed history. There is no fabricated
+   percentage. Allowed controls can pause/resume or cancel current work, move
+   queued work earlier/later, bulk-cancel queued work, and retry failures.
 4. Open a ready recording in **Analyzer**. Use the shared recording clock to
    review both cameras and choose among the six raw IMU axes. Views clear or
    hide outside measured coverage.
 
 Repeated preparation is safe: compatible ready output and active work are
-reused. One serial worker means later work may wait. Queue order is stable;
-refreshing or restarting the browser does not cancel it. A recording that is
-damaged, missing, or otherwise unavailable creates no artificial failed job.
+reused. One serial worker means later work may wait. Queue order and control
+requests are durable; refreshing the browser does not change them. A worker
+restart does not resume a paused process: it marks that attempt interrupted and
+requires explicit retry. A recording that is damaged, missing, or otherwise
+unavailable creates no artificial failed job.
 
 ## Source promise
 
@@ -41,9 +46,10 @@ directly.
 
 - This is a limited feedback trial, not a public or high-availability service.
 - It supports the three existing artifact kinds and configured ROS topics only.
-- Processing is serial; there is no priority, cancellation, automatic retry,
+- Processing is serial; there is no priority, automatic retry, fabricated
   percentage completion, upload, annotation, or application-managed account
-  system.
+  system. Pause and cancellation take effect at the next bounded safe
+  checkpoint rather than killing unrelated processes.
 - Estimates are approximate and can be unavailable or exceeded.
 - A source outage or low derived space can temporarily disable new preparation
   while the saved catalog and already-valid artifacts remain usable.

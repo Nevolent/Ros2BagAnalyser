@@ -21,6 +21,7 @@ from rosbag_analyser.front_preview import (
     FrontSourceDescriptor,
     IMAGE_MESSAGE_TYPE,
 )
+from rosbag_analyser.job_control import JobControlToken
 from rosbag_analyser.timeline import media_pts_digest_chunk, nanoseconds_to_media_pts
 
 
@@ -117,9 +118,15 @@ class FrontPreviewProcessor:
         self.image_decoder = image_decoder or deserialize_ros_image
 
     def process(
-        self, descriptor: FrontSourceDescriptor, output_path: Path
+        self,
+        descriptor: FrontSourceDescriptor,
+        output_path: Path,
+        *,
+        control: JobControlToken | None = None,
     ) -> FrontPreviewResult:
         timing = _load_timing_plan(descriptor, self.image_decoder)
+        if control is not None:
+            control.checkpoint("processing", force=True)
         messages = _iter_topic_messages(descriptor)
         pending_timestamp: int | None = None
         pending_image: DecodedImage | None = None
@@ -143,6 +150,8 @@ class FrontPreviewProcessor:
 
         try:
             for record_timestamp, serialized in messages:
+                if control is not None:
+                    control.checkpoint("processing")
                 input_frames += 1
                 image = _decode_image(self.image_decoder, serialized)
                 _validate_image(image)
@@ -231,6 +240,8 @@ class FrontPreviewProcessor:
                 container, stream = _open_output(
                     output_path, output_size, self.profile, time_base
                 )
+            if control is not None:
+                control.checkpoint("processing", force=True)
             header_timestamp_ns = _header_timestamp_ns(pending_image)
             elapsed_ns = timing.presentation_time_ns(header_timestamp_ns)
             media_pts = nanoseconds_to_media_pts(

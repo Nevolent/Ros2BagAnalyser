@@ -16,6 +16,7 @@ from av.video.frame import PictureType
 from rosbag_analyser.catalog.limits import is_postgres_bigint
 from rosbag_analyser.catalog.paths import SourceFileIdentity, source_file_identity
 from rosbag_analyser.config import PreviewProfile
+from rosbag_analyser.job_control import JobControlToken
 from rosbag_analyser.timeline import media_pts_digest_chunk, nanoseconds_to_media_pts
 from rosbag_analyser.topdown_preview import TopdownSourceDescriptor
 
@@ -55,7 +56,11 @@ class TopdownPreviewProcessor:
         self.profile = profile
 
     def process(
-        self, descriptor: TopdownSourceDescriptor, output_path: Path
+        self,
+        descriptor: TopdownSourceDescriptor,
+        output_path: Path,
+        *,
+        control: JobControlToken | None = None,
     ) -> TopdownPreviewResult:
         if descriptor.timestamps_identity.size_bytes > MAX_TIMESTAMP_CSV_BYTES:
             raise TopdownPreviewProcessingError(
@@ -98,7 +103,7 @@ class TopdownPreviewProcessor:
                     "timestamps",
                 )
                 result = self._convert(
-                    descriptor, video_file, timestamps_file, output_path
+                    descriptor, video_file, timestamps_file, output_path, control
                 )
                 self._validate_open_identity(
                     video_file.fileno(), descriptor.video_identity, "video"
@@ -123,6 +128,7 @@ class TopdownPreviewProcessor:
         video_file: object,
         timestamps_file: TextIO,
         output_path: Path,
+        control: JobControlToken | None,
     ) -> TopdownPreviewResult:
         timestamps = _iter_csv_timestamps(timestamps_file)
         input_frames = 0
@@ -166,6 +172,8 @@ class TopdownPreviewProcessor:
                 "max_pixels": str(MAX_VIDEO_PIXELS),
             }
             for frame in input_container.decode(video_stream):
+                if control is not None:
+                    control.checkpoint("processing")
                 input_frames += 1
                 try:
                     timestamp = next(timestamps)
@@ -223,6 +231,8 @@ class TopdownPreviewProcessor:
                 last_timestamp = timestamp
                 last_pts = pts
 
+            if control is not None:
+                control.checkpoint("processing", force=True)
             try:
                 next(timestamps)
             except StopIteration:

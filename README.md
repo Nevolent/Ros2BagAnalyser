@@ -28,10 +28,11 @@ and authorized its Git checkpoint and push.
 
 The newer 2026-08-23 static frontend in [`archive/`](archive/index.html) is the
 frozen visual/interaction source for Prompt 2A. The overhaul and its real
-processing controls are implemented and synthetically verified, with the
-working tree left uncommitted for user review. Gate 0 has not been supplied, no
-live VM or NAS change has been made, and no authoritative source content has
-been read.
+processing controls were reviewed and committed locally as `1c8871b`, followed
+by read-only CIFS deployment compatibility in `dd28c42`. Controlled VM
+preparation has created separate derived storage, local PostgreSQL roles, and a
+read-only application-facing source bind. No authoritative source content has
+been scanned or processed.
 
 ## V1 outcome
 
@@ -187,10 +188,10 @@ incomplete, so it cannot advance generation or mark saved recordings missing.
 ## Current implementation gate
 
 Building block 3 repository readiness is accepted as part of the working
-pre-overhaul baseline, but its live phases remain gated. Prompt 2A was
-implemented and synthetically verified on 2026-08-23 after the authorized
-baseline checkpoint; it is awaiting user review and remains uncommitted. Live
-deployment does not resume in parallel.
+pre-overhaul baseline. Prompt 2A and the CIFS deployment correction are locally
+committed and fully synthetically verified. Controlled live VM preparation is
+in progress; release installation, authoritative-source acceptance, private
+trial access, reboot persistence, and trial admission remain gated.
 
 The established V1 sequence remains:
 

@@ -2029,6 +2029,11 @@ Report:
 > is synthetic repository evidence, not user acceptance, authoritative-source
 > evidence, or permission to resume live Building block 3 work.
 
+> **Review acceptance — 2026-08-24:** The user reviewed and approved the local
+> Prompt 2A commit `1c8871b`, followed by read-only CIFS deployment compatibility
+> commit `dd28c42`. Controlled VM preparation is in progress; release
+> installation and authoritative-source acceptance remain pending.
+
 #### Implemented corrective boundary
 
 - The frozen reference hashes remain exactly

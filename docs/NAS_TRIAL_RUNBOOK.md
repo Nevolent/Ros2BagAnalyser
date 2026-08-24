@@ -127,9 +127,9 @@ sha256sum --check --strict INSTALLER-SHA256SUMS
 
 Expected results are a checksummed wheelhouse and one release archive with a
 sidecar checksum. `build-release` refuses dirty or untracked source. The current
-accepted project work is intentionally uncommitted, so creating the first real
-release is blocked until the user separately approves a commit or another
-reviewed clean source identity. Prompt 3 alone is not commit approval.
+accepted release-candidate source is the clean local chain ending at CIFS
+deployment commit `dd28c42`; the separate documentation status commit records
+its approval without changing application behavior.
 
 Archive installation rechecks the supplied checksum, rejects links, devices,
 escapes, oversized content, and unexpected roots, checks every release and

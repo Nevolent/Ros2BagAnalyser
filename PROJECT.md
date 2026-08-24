@@ -4,8 +4,9 @@
 and all three corrective slices accepted; Building block 3 repository readiness
 implemented, verified, and accepted as the working pre-overhaul baseline on
 2026-08-23; Prompt 2A big UI overhaul implemented and synthetically verified
-on 2026-08-23, pending user review; live Gate 0, VM commissioning, real-source
-acceptance, and trial admission not completed
+on 2026-08-23, reviewed and committed locally on 2026-08-24; controlled VM
+preparation in progress; release installation, real-source acceptance, and
+trial admission not completed
 
 **Target:** Limited-group engineering trial hosted in an internal NAS virtual
 machine
@@ -47,7 +48,8 @@ product delta is:
 - require state-by-state visual parity with the frozen authored reference,
   allowing only documented truthful-data and dynamic-media differences.
 
-The implementation remains uncommitted pending user review. Its live-VM,
+The implementation is committed locally as `1c8871b`, followed by read-only
+CIFS deployment compatibility in `dd28c42`. Release installation,
 authoritative-source, and visual screenshot acceptance remain gated. The
 complete safety, persistence, and acceptance contract is owned by Prompt 2A in
 `BUILDING_BLOCK_PROMPTS.md`.

@@ -20,10 +20,11 @@ the user accepted all preceding application and repository-readiness work as
 the working pre-overhaul baseline and authorized a Git checkpoint and push.
 Prompt 2A, the big UI overhaul and real processing-controls correction, was
 approved, invoked, implemented, and synthetically verified on 2026-08-23. It
-is uncommitted pending user review. A recordings-only visual correction was
-invoked on 2026-08-24 during that review. Gate 0, live VM commissioning,
-authoritative-source acceptance, and trial admission remain incomplete and
-paused through that review.
+was reviewed and committed locally as `1c8871b` on 2026-08-24, followed by
+read-only CIFS deployment compatibility in `dd28c42`. Controlled live VM
+preparation is in progress. Release installation, authoritative-source
+acceptance, private trial access, reboot persistence, and trial admission remain
+incomplete.
 
 V1 has three sequential building blocks:
 
@@ -640,9 +641,9 @@ already approved in Building block 1 or the V1 documents.
 
 ## 5A. Prompt 2A — Big UI overhaul and real processing controls
 
-**Status:** Implemented and synthetically verified on 2026-08-23; uncommitted
-pending user review; real-source, screenshot, and live commissioning acceptance
-remain gated
+**Status:** Implemented and synthetically verified on 2026-08-23; reviewed and
+committed locally as `1c8871b` on 2026-08-24; real-source, screenshot, and live
+commissioning acceptance remain gated
 
 ### Implemented boundary
 
@@ -678,18 +679,18 @@ remain gated
 Synthetic unit, API, worker, browser-runtime, deployment, migration, repository,
 queue-concurrency, and maximum-catalog checks are recorded in the Prompt 2A
 completion note in `BUILDING_BLOCK_PROMPTS.md`. The frozen archive hashes and
-zero archive diff are rechecked at handoff. No authoritative source was read,
-no VM/NAS/database deployment target was changed, and no new dependency was
-installed. Automated browser behavior was exercised, but screenshot comparison
-was unavailable in the local environment and remains explicit visual acceptance
-work. Resume Building block 3 only after Prompt 2A review and the existing Gate
-0/exact-command/rollback approvals.
+zero archive diff are rechecked at handoff. No authoritative source was read.
+Subsequent exact-command VM preparation provisioned separate derived storage,
+local PostgreSQL roles, dependencies, and a read-only application-facing CIFS
+bind; it has not installed the release or scanned source content. Automated
+browser behavior was exercised, but screenshot comparison remains explicit
+visual acceptance work.
 
 ## 6. Building block 3 — TrueNAS VM deployment and trial commissioning
 
 **Status:** Invoked on 2026-08-16; repository readiness implemented, locally
 verified, and accepted as part of the 2026-08-23 pre-overhaul baseline; external
-Gate 0 and live phases pending and paused through Prompt 2A review
+handoff remains incomplete; controlled live VM preparation in progress
 
 **Dependency:** Accepted backend and frontend, plus the administrator handoff in
 Gate 0 below

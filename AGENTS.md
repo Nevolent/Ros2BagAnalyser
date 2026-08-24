@@ -29,8 +29,11 @@ verified. On 2026-08-23 the user accepted all preceding application and
 repository-readiness work as the working pre-overhaul baseline and authorized
 its Git checkpoint and push. Prompt 2A, the big UI overhaul and real
 processing-controls correction, was implemented and synthetically verified on
-2026-08-23 and is uncommitted pending user review. Gate 0 and every live
-Building block 3 phase remain pending and paused through that review.
+2026-08-23, reviewed, and committed locally as `1c8871b` on 2026-08-24. The
+read-only CIFS deployment compatibility work was committed locally as
+`dd28c42`. Controlled Building block 3 VM preparation is in progress; release
+installation, authoritative-source processing, trial exposure, and final
+admission remain pending.
 
 V1 has three sequential blocks:
 
@@ -332,13 +335,12 @@ After implementation, report:
 
 ## Current instruction
 
-The accepted checkpoint preceding Prompt 2A remains the working baseline.
-Prompt 2A application and repository changes are implemented and synthetically
-verified but remain uncommitted pending user review. Preserve the accepted
+Prompt 2A commit `1c8871b` and CIFS deployment commit `dd28c42` are the accepted
+local release-candidate baseline. Preserve the accepted
 backend, processor, artifact, timing, safety, moved-path, local-operation, and
 deployment-readiness behavior except for Prompt 2A's approved product delta.
 Keep `archive/` unchanged as the frozen overhaul reference and exclude its
-mock/generated payloads from Git/runtime. Do not commit or resume Building
-block 3 without explicit user direction. Do not begin live VM mutation until
-Gate 0 and the exact command/rollback review are approved; do not read
-authoritative source content until the real-data annex is approved.
+mock/generated payloads from Git/runtime. Continue Building block 3 only through
+the user's exact-command approvals. Do not scan or process authoritative source
+content until the bounded read-only acceptance commands and before/after
+inventory are reviewed.

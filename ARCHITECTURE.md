@@ -3,8 +3,8 @@
 > **Status:** Approved V1 build contract; Building blocks 1 and 2
 > and their corrective slices accepted; Building block 3 repository readiness
 > implemented, verified, and accepted as the working baseline on 2026-08-23;
-> Prompt 2A big UI overhaul implemented and synthetically verified, pending
-> user review; live commissioning pending
+> Prompt 2A and read-only CIFS compatibility reviewed and committed locally on
+> 2026-08-24; controlled live commissioning in progress
 >
 > **Target:** Internal limited-group NAS trial
 >
@@ -59,7 +59,8 @@ Prompt 2A was approved, invoked, implemented, and synthetically verified on
 
 Prompt 2A in `BUILDING_BLOCK_PROMPTS.md` owns the detailed state machine,
 migration/API contracts, checkpoint semantics, failure rules, and visual test
-matrix. The implementation is uncommitted pending user review, and live-VM,
+matrix. The implementation is committed locally as `1c8871b`; its CIFS
+deployment compatibility follows as `dd28c42`. Release installation,
 authoritative-source, and screenshot acceptance remain separately gated.
 
 The 2026-08-24 Recordings review restores the separate Recorded table column

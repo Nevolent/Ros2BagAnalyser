@@ -53,7 +53,10 @@ rm -- "$archive_copy"
 (
   cd -- "$staging/release"
   sha256sum --check --strict RELEASE-CONTENTS.sha256
-  sha256sum --check --strict wheelhouse/SHA256SUMS
+)
+(
+  cd -- "$staging/release/wheelhouse"
+  sha256sum --check --strict SHA256SUMS
 )
 python3.10 "$staging/release/deploy/scripts/validate_wheelhouse.py" \
   "$staging/release/wheelhouse"

@@ -160,6 +160,9 @@ def test_release_scripts_fail_closed_and_do_not_run_migrations_on_startup() -> N
     assert "sha256sum --check --strict SHA256SUMS" in build
     assert "! -name RELEASE-CONTENTS.sha256" in build
     assert "validate_release_archive.py" in install
+    assert 'cd -- "$staging/release/wheelhouse"' in install
+    assert "sha256sum --check --strict SHA256SUMS" in install
+    assert "sha256sum --check --strict wheelhouse/SHA256SUMS" not in install
     assert "--system-site-packages" not in install
     assert "INSTALLER-SHA256SUMS" in build
     assert "--platform manylinux_2_28_x86_64" in wheelhouse

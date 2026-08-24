@@ -3,8 +3,8 @@
 apache2-utils
 ca-certificates
 curl
+cifs-utils
 ffmpeg
-nfs-common
 nginx
 nftables
 openssl

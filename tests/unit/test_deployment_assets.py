@@ -73,14 +73,18 @@ def test_runtime_units_are_loopback_mount_ordered_and_hardened() -> None:
     runner = read("scripts/run-service")
     assert 'PGPASSFILE="$database_credential"' in runner
     assert "CREDENTIALS_DIRECTORY" in runner
+    validator = read("scripts/validate-site")
+    assert '$1 != "/run/postgresql"' in validator
 
 
 def test_source_mount_is_read_only_and_derived_mount_is_distinct() -> None:
     source = read("systemd/rosbag-analyser-source.mount.template")
     derived = read("systemd/rosbag-analyser-derived.mount.template")
 
-    assert "Type=nfs4" in source
+    assert "Type=cifs" in source
     assert "Options=ro,nosuid,nodev,noexec,_netdev" in source
+    assert "credentials=/etc/rosbag-analyser/source.cifs-credentials" in source
+    assert "password=" not in source
     assert "Where=/srv/rosbag-analyser/source" in source
     assert "Where=/var/lib/rosbag-analyser/derived" in derived
     assert "Options=rw,nosuid,nodev" in derived
@@ -106,6 +110,8 @@ def test_proxy_is_same_origin_bounded_and_never_serves_derived_files() -> None:
         "location = /docs",
         "location = /openapi.json",
         "server 127.0.0.1:8000",
+        "(retry|pause|resume|cancel)",
+        "(cancel|reorder|retry)",
     ):
         assert requirement in proxy
     assert '"" 1;' not in proxy
@@ -120,6 +126,14 @@ def test_proxy_is_same_origin_bounded_and_never_serves_derived_files() -> None:
     assert "proxy_set_header If-Range $http_if_range" in headers
     assert "127.0.0.1:8000" in validator
     assert "must not serve derived storage directly" in validator
+
+
+def test_worker_drain_fails_closed_for_user_paused_work() -> None:
+    drain = read("scripts/drain-worker")
+
+    assert '"paused" || "$control_state" == "pause_requested"' in drain
+    assert "Resume it to drain normally" in drain
+    assert "this script changed nothing" in drain
 
 
 def test_firewall_defaults_to_drop_for_both_ip_families() -> None:
@@ -166,4 +180,4 @@ def test_release_contract_matches_accepted_processor_and_schema_identities() -> 
         "topdown_preview": TOPDOWN_PROCESSOR_VERSION,
     }
     assert contract["artifact_contracts"]["imu_series_schema"] == SERIES_SCHEMA_VERSION
-    assert contract["database_schema"].endswith("0001-through-0006")
+    assert contract["database_schema"].endswith("0001-through-0007")

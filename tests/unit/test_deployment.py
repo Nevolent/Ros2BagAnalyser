@@ -66,6 +66,23 @@ def test_deployment_settings_require_exact_fail_closed_values() -> None:
     assert settings.minimum_free_percent == 10
 
 
+def test_deployment_settings_accept_exact_cifs_source_share() -> None:
+    environment = _deployment_environment()
+    environment["ROS_BAG_ANALYSER_SOURCE_MOUNT_FSTYPE"] = "cifs"
+    environment["ROS_BAG_ANALYSER_SOURCE_MOUNT_SOURCE"] = (
+        "//nas.invalid/TO_Rosbag_databank"
+    )
+
+    settings = DeploymentSettings.from_environment(environment)
+
+    assert settings.source_mount == MountExpectation(
+        "cifs",
+        "//nas.invalid/TO_Rosbag_databank",
+        read_only=True,
+        required_options=frozenset({"ro", "nosuid", "nodev", "noexec"}),
+    )
+
+
 @pytest.mark.parametrize(
     ("name", "value", "message"),
     [
@@ -76,8 +93,8 @@ def test_deployment_settings_require_exact_fail_closed_values() -> None:
         ("ROS_BAG_ANALYSER_BIND_HOST", "::1", "127.0.0.1"),
         ("ROS_BAG_ANALYSER_BIND_PORT", "0", "port"),
         ("ROS_BAG_ANALYSER_BIND_PORT", "9000", "port 8000"),
-        ("ROS_BAG_ANALYSER_SOURCE_MOUNT_FSTYPE", "ext4", "NFS"),
-        ("ROS_BAG_ANALYSER_SOURCE_MOUNT_SOURCE", "broad-relative", "export identity"),
+        ("ROS_BAG_ANALYSER_SOURCE_MOUNT_FSTYPE", "ext4", "NFS or CIFS"),
+        ("ROS_BAG_ANALYSER_SOURCE_MOUNT_SOURCE", "broad-relative", "share identity"),
         ("ROS_BAG_ANALYSER_DERIVED_MOUNT_SOURCE", "relative-device", "device identity"),
         ("ROS_BAG_ANALYSER_DERIVED_MIN_FREE_BYTES", "0", "positive"),
         ("ROS_BAG_ANALYSER_DERIVED_MIN_FREE_PERCENT", "101", "percentage"),
@@ -107,11 +124,24 @@ def test_mountinfo_parser_decodes_paths_and_keeps_exact_identity() -> None:
         mount_point=Path("/srv/rosbag source"),
         filesystem_type="nfs4",
         source="nas.invalid:/fixed recordings",
-        options=frozenset({"ro", "nosuid", "nodev", "noexec", "vers=4.2"}),
+        options=frozenset({"ro", "nosuid", "nodev", "noexec"}),
         device="0:32",
     )
     assert mounts[1].mount_point == Path("/var/lib/rosbag-analyser/derived")
     assert "rw" in mounts[1].options
+
+
+def test_mountinfo_parser_uses_read_only_bind_options_not_rw_cifs_superblock() -> None:
+    document = (
+        "41 25 0:47 / /srv/rosbag-analyser/source "
+        "ro,nosuid,nodev,noexec,relatime - cifs //nas.invalid/recordings "
+        "rw,vers=3.1.1,cache=strict\n"
+    )
+
+    mount = parse_mountinfo(document)[0]
+
+    assert mount.options == frozenset({"ro", "nosuid", "nodev", "noexec", "relatime"})
+    assert "rw" not in mount.options
 
 
 def test_source_mount_validation_never_write_probes(
@@ -143,6 +173,47 @@ def test_source_mount_validation_never_write_probes(
     )
 
     assert guard.source_diagnostic() is None
+
+
+def test_cifs_source_mount_validation_requires_exact_read_only_identity(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    mount = MountInfo(
+        source,
+        "cifs",
+        "//nas.invalid/TO_Rosbag_databank",
+        frozenset({"ro", "nosuid", "nodev", "noexec", "vers=3.0"}),
+        "0:47",
+    )
+    guard = ProcessingAdmissionGuard(
+        source_root=source,
+        source_expectation=MountExpectation(
+            "cifs",
+            "//nas.invalid/TO_Rosbag_databank",
+            read_only=True,
+            required_options=frozenset({"ro", "nosuid", "nodev", "noexec"}),
+        ),
+        derived_guard=None,
+        mount_reader=lambda: (mount,),
+    )
+
+    assert guard.source_diagnostic() is None
+
+    writable = MountInfo(
+        source,
+        "cifs",
+        "//nas.invalid/TO_Rosbag_databank",
+        frozenset({"rw", "nosuid", "nodev", "noexec", "vers=3.0"}),
+        "0:47",
+    )
+    guard.mount_reader = lambda: (writable,)
+
+    assert guard.source_diagnostic() == SafeDiagnostic(
+        "source_mount_identity_invalid",
+        "The trusted read-only source mount is unavailable.",
+    )
 
 
 def test_wrong_or_writable_source_mount_fails_with_sanitized_diagnostic(

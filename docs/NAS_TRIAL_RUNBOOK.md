@@ -38,7 +38,7 @@ platform owner, backup/restore owner, certificate/access owner, capacity owner,
 incident contact, engineer-feedback owner, and project approver. It also records:
 
 - Ubuntu Server 22.04.x amd64, Python 3.10, ROS 2 Humble, PostgreSQL 14,
-  FFmpeg/ffprobe, Nginx, NFS client, and nftables package versions;
+  FFmpeg/ffprobe, Nginx, CIFS client, and nftables package versions;
 - VM identity, recovery point, vCPU/RAM/disk facts, UTC/time sync, stable MAC,
   IPv4 and IPv6 routes, Start on Boot, console policy, and shutdown budget;
 - exact source export/mount and server-side read-only evidence;
@@ -70,7 +70,7 @@ desktop installation.
 | FFmpeg/ffprobe with `libx264` | Approved Ubuntu repository; fixed H.264/yuv420p preview validation | Ubuntu build is GPL-enabled; retain package copyright/licence data |
 | PostgreSQL 14 client/server | Approved Ubuntu repository; six-table V1 metadata and custom dumps | PostgreSQL Licence plus packaged dependencies |
 | Nginx/OpenSSL/apache2-utils | Approved Ubuntu repository; TLS proxy and individual htpasswd fallback | Preserve package notices and site certificate policy |
-| nfs-common/nftables/curl | Approved Ubuntu repository; mount, firewall, drain/health tools | Preserve resolved package notices |
+| cifs-utils/nftables/curl | Approved Ubuntu repository; mount, firewall, drain/health tools | Preserve resolved package notices |
 | Python wheels | Approved Python repository copied into a checksummed wheelhouse | `LICENSES.json` records wheel metadata; PyAV is BSD-3-Clause and psycopg binary is LGPL-3.0-only |
 
 The wheelhouse also records the sanitized repository label, CPython version,
@@ -98,11 +98,11 @@ ss -lntup
 systemctl is-enabled systemd-timesyncd.service
 ```
 
-The administrator supplies saved TrueNAS export configuration proving exact
-path, dataset-versus-directory status, read-only mode, VM-only allow entry,
-NFS version/security, root mapping, bind/firewall scope, overlapping exports,
-and known consumers. No `touch`, `mkdir`, SQLite open, reindex, or repair command
-is a valid read-only test.
+The administrator supplies saved SMB share configuration proving the exact
+path, dataset-versus-directory status, read-only account/ACL, VM allow entry,
+SMB version/security, bind/firewall scope, overlapping shares, and known
+consumers. No `touch`, `mkdir`, SQLite open, reindex, or repair command is a
+valid read-only test.
 
 ## Build a release off the VM
 
@@ -234,9 +234,10 @@ seven days.
 
 ## Mounts and derived ownership
 
-The administrator first proves the server-side source export is exact and
-read-only. Install the reviewed client unit with
-`ro,nosuid,nodev,noexec,_netdev` and the approved NFS version. The empty local
+The administrator first proves the server-side source share and its account/ACL
+are exact and read-only. Install the reviewed CIFS client unit with
+`ro,nosuid,nodev,noexec,_netdev` and the approved SMB version. Keep credentials
+in the root-owned `source.cifs-credentials` file, never in the mount unit. The empty local
 mountpoint is root-owned and not used as a fallback. Start the mount, then use
 only metadata tools:
 
@@ -246,7 +247,7 @@ findmnt --mountpoint /srv/rosbag-analyser/source \
   --output TARGET,SOURCE,FSTYPE,OPTIONS,MAJ:MIN
 ```
 
-Expected: exact target, exact dedicated export, `nfs4`, and `ro,nosuid,nodev,noexec`.
+Expected: exact target, exact dedicated share, `cifs`, and `ro,nosuid,nodev,noexec`.
 Do not list the source directory before the real-data annex authorizes the
 before manifest.
 
@@ -295,6 +296,9 @@ sudo install -o root -g root -m 0600 \
   /protected/site/migration.pgpass /etc/rosbag-analyser/migration.pgpass
 sudo install -o root -g root -m 0600 \
   /protected/site/backup.pgpass /etc/rosbag-analyser/backup.pgpass
+sudo install -o root -g root -m 0600 \
+  /protected/site/source.cifs-credentials \
+  /etc/rosbag-analyser/source.cifs-credentials
 sudo install -o root -g root -m 0644 \
   /protected/site/srv-rosbag-analyser-source.mount \
   '/etc/systemd/system/srv-rosbag\x2danalyser-source.mount'
@@ -345,16 +349,16 @@ sudo nginx -t
 ```
 
 The template accepts only the approved hostname and GET/HEAD/POST, rejects
-cross-origin POST, bounds bodies and timeouts, rate-limits state changes,
-separates operator rescans from engineer preparation/retry, disables API docs,
-strips upstream Authorization and untrusted forwarding, disables proxy caching,
-and proxies media through the application so Range/If-Range/ETag identity checks
-remain authoritative.
+cross-origin POST, bounds bodies and timeouts, rate-limits preparation and
+processing-control state changes, separates operator rescans from engineer
+preparation/control/retry, disables API docs, strips upstream Authorization and
+untrusted forwarding, disables proxy caching, and proxies media through the
+application so Range/If-Range/ETag identity checks remain authoritative.
 
 Before applying nftables, save the current rules, prove the recovery console,
 schedule automatic rollback, and test the rollback command. Apply only the
 reviewed file. From approved and denied IPv4 and IPv6 vantage points, prove SSH
-admin and HTTPS trial allow rules plus denial of NFS, 8000, 5432, VNC, and all
+admin and HTTPS trial allow rules plus denial of inbound SMB, 8000, 5432, VNC, and all
 unlisted ingress. Keep the upstream firewall as defence in depth.
 
 Start locally first:
@@ -377,7 +381,11 @@ start and authenticated same-origin checks run.
 1. Record active release/schema, mounts, capacity, services, queue, running job,
    rollback class, maintenance owner, and approved window.
 2. Stop Nginx to close all engineer writes, then run `drain-worker`. Queued jobs
-   remain persistent; the command waits only for the running job.
+   remain persistent; the command waits only for the running job. It exits 2
+   without changing state when current work is `paused` or `pause_requested`.
+   Use the authenticated application control to explicitly resume and drain or
+   cancel that exact job, confirm the resulting authoritative state, then rerun
+   `drain-worker`; never rewrite the database state by hand.
 3. Install and fully preflight the candidate beside the active release.
 4. With `PGPASSFILE` pointing to the backup credential and the backup
    environment loaded, run `backup-database BACKUP_DIRECTORY RELEASE_ID`.
@@ -397,6 +405,12 @@ the post-migration schema or database-restore rollback. Never improvise a down
 migration. Database restore is coherent only with the selected derived rule:
 either a quiesced database-plus-volume snapshot, or explicit invalidation and
 regeneration of absent files.
+
+Schema 0007 is additive within the existing six domain tables, but introduces
+an owned queue-order sequence and lifecycle constraints that older code may not
+understand. Treat rollback from it as database-restore rollback unless the
+previous release has been explicitly tested against schema 0007. Take and
+verify the required pre-migration dump before applying it.
 
 ## Backup, restore, and rollback
 
@@ -431,12 +445,14 @@ derived-state rule, switch configuration atomically, then preflight and smoke.
 
 ## Interruption, outage, and capacity response
 
-- Planned maintenance stops new requests at Nginx, drains the running job, then
-  stops worker before API.
+- Planned maintenance stops new requests at Nginx, resolves any paused or
+  pause-requested current work explicitly, drains the running job, then stops
+  worker before API.
 - Host/emergency shutdown sends SIGTERM. The worker finishes only if the active
   synchronous call returns inside the measured guest/NAS budget; otherwise
-  systemd may force-stop it. Next startup marks only the abandoned running job
-  interrupted and cleans only its proven job workspace. Retry is explicit.
+  systemd may force-stop it. Next startup marks only the abandoned running job,
+  including paused work, interrupted and cleans only its proven job workspace.
+  Retry is explicit.
 - PostgreSQL or trusted-derived loss makes core readiness fail while liveness
   stays alive. Do not restart-loop the process.
 - Source loss disables source access, rescan, and new preparation while saved
@@ -444,7 +460,7 @@ derived-state rule, switch configuration atomically, then preflight and smoke.
 - Low derived space keeps core readiness and valid artifact delivery available,
   rejects new queue insertion, and pauses before worker claim. Expand storage
   through the infrastructure owner; do not delete ready output automatically.
-- Full-disk, wrong-mount, NFS-loss, database-loss, and forced-interruption drills
+- Full-disk, wrong-mount, CIFS-loss, database-loss, and forced-interruption drills
   use disposable substitutes until the exact live drill is separately approved.
 
 ## Explicit rescan and queue operations
@@ -455,9 +471,11 @@ identity through the same-origin HTTPS route, or the existing documented local
 operator path. A scan creates no jobs. If it is incomplete, the prior successful
 generation remains current.
 
-Use `/api/v1/processing/overview` for worker state and queue facts. A failed or
-interrupted job is retried only through its explicit retry route, which
-recomputes current identity. Never edit job rows manually.
+Use `/api/v1/processing/overview` for worker state, allowed controls, and queue
+facts. Pause/resume/cancel/reorder are explicit authenticated V1 operations and
+must be followed by an authoritative refresh. A failed or interrupted job is
+retried only through its explicit retry route, which recomputes current
+identity. Never edit job/control/order rows manually.
 
 ## Logs and support
 

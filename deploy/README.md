@@ -8,6 +8,14 @@ Repository Phase 1 was implemented and locally verified on 2026-08-16. Gate 0,
 clean immutable release creation, live VM installation, authoritative-source
 access, guest reboot, and trial admission remain incomplete.
 
+Prompt 2A updates the repository candidate through additive schema migration
+0007 and the approved processing-control routes. The Nginx template applies the
+existing mutation rate limit to pause/resume/cancel, bounded bulk
+cancel/reorder/retry, and preparation. `drain-worker` fails closed if current
+work is paused or pause-requested; the operator must explicitly resume or
+cancel that exact job before a planned upgrade. These repository changes are
+not evidence that any live guest was migrated.
+
 The deployment is intentionally split into four gates:
 
 1. complete `GATE0_HANDOFF.example.md` and the private site inventory;

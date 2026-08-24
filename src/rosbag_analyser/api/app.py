@@ -104,6 +104,7 @@ def create_app(
                     limits=config.catalog_scan_limits,
                 ),
                 catalog_repository,
+                source_admission_check=admission_guard.source_diagnostic,
             )
             processing_repository = ProcessingRepository(config.database_url)
             application.state.preparation_planner = preparation_planner

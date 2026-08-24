@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 import threading
@@ -35,9 +36,16 @@ class RescanResult:
 
 
 class CatalogService:
-    def __init__(self, scanner: CatalogScanner, repository: CatalogRepository) -> None:
+    def __init__(
+        self,
+        scanner: CatalogScanner,
+        repository: CatalogRepository,
+        *,
+        source_admission_check: Callable[[], SafeDiagnostic | None] | None = None,
+    ) -> None:
         self.scanner = scanner
         self.repository = repository
+        self.source_admission_check = source_admission_check
         self._rescan_lock = threading.Lock()
 
     def rescan(self) -> RescanResult:
@@ -49,7 +57,9 @@ class CatalogService:
                 "A catalog rescan is already in progress.",
             )
         try:
+            self._require_source_admission()
             snapshot = self.scanner.scan()
+            self._require_source_admission()
             summary = self.repository.apply_snapshot(snapshot)
             state = self.repository.get_catalog_state()
         finally:
@@ -72,6 +82,15 @@ class CatalogService:
             generation=summary.generation,
             completed_at=state.successful_completed_at,
         )
+
+    def _require_source_admission(self) -> None:
+        if self.source_admission_check is None:
+            return
+        diagnostic = self.source_admission_check()
+        if diagnostic is not None:
+            from .types import RootScanError
+
+            raise RootScanError(diagnostic.code, diagnostic.message)
 
     def list_recordings(self) -> tuple[CatalogRecording, ...]:
         return self.repository.list_recordings(include_missing=False)

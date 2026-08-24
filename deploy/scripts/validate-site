@@ -78,7 +78,7 @@ validate_pgpass() {
   local credential="$1"
   local expected_user="$2"
   awk -F: -v expected_user="$expected_user" '
-    NF != 5 || $1 != "localhost" || $2 != "5432" ||
+    NF != 5 || $1 != "/run/postgresql" || $2 != "5432" ||
     $3 != "rosbag_analyser" || $4 != expected_user || $5 == "" || NR != 1 { exit 1 }
     END { if (NR != 1) exit 1 }
   ' "$credential" || {

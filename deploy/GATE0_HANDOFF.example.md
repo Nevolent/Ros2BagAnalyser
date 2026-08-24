@@ -12,8 +12,8 @@ in this repository copy.
 | vCPU topology, fixed RAM, CPU mode, OS disk | PENDING | PENDING | PENDING |
 | Start on Boot, orderly shutdown budget, detached ISO, console/recovery path | PENDING | PENDING | PENDING |
 | Stable IPv4/IPv6 policy, admin path, engineer HTTPS path, DNS/NTP | PENDING | PENDING | PENDING |
-| Exact dedicated server-side read-only NFS export and VM-only allow entry | PENDING | PENDING | PENDING |
-| Dataset/directory status, parent/child exports, other consumers, root mapping | PENDING | PENDING | PENDING |
+| Exact server-side read-only SMB/CIFS share and VM/account allow entry | PENDING | PENDING | PENDING |
+| Dataset/directory status, share ACL, other consumers, read-only account | PENDING | PENDING | PENDING |
 | Separate derived disk/filesystem, UUID, capacity basis, threshold, growth owner | PENDING | PENDING | PENDING |
 | PostgreSQL ownership and least-privilege runtime/migration/backup credentials | PENDING | PENDING | PENDING |
 | Protected off-VM backup destination, encryption, RPO, retention, restore owner | PENDING | PENDING | PENDING |

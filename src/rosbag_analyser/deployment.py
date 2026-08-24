@@ -27,6 +27,9 @@ FILESYSTEM_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}$")
 NFS_SOURCE_PATTERN = re.compile(
     r"^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,252}|\[[0-9A-Fa-f:]+\]):/[^,\s]+$"
 )
+CIFS_SOURCE_PATTERN = re.compile(
+    r"^//[A-Za-z0-9][A-Za-z0-9._-]{0,252}/[A-Za-z0-9][A-Za-z0-9._$-]{0,254}$"
+)
 MOUNTINFO_ESCAPE = re.compile(r"\\([0-7]{3})")
 
 
@@ -118,14 +121,17 @@ class DeploymentSettings:
                 "The configured release identity is invalid."
             )
         source_type = _required(values, SOURCE_MOUNT_FSTYPE_ENV)
-        if source_type not in {"nfs", "nfs4"}:
+        if source_type not in {"nfs", "nfs4", "cifs"}:
             raise DeploymentConfigurationError(
-                "The deployment source filesystem must be NFS."
+                "The deployment source filesystem must be NFS or CIFS."
             )
         source_identity = _required(values, SOURCE_MOUNT_SOURCE_ENV)
-        if NFS_SOURCE_PATTERN.fullmatch(source_identity) is None:
+        source_pattern = (
+            CIFS_SOURCE_PATTERN if source_type == "cifs" else NFS_SOURCE_PATTERN
+        )
+        if source_pattern.fullmatch(source_identity) is None:
             raise DeploymentConfigurationError(
-                "The deployment source export identity is invalid."
+                "The deployment source share identity is invalid."
             )
         derived_type = _validated_filesystem(
             _required(values, DERIVED_MOUNT_FSTYPE_ENV)
@@ -187,13 +193,15 @@ def parse_mountinfo(document: str) -> tuple[MountInfo, ...]:
             if separator < 6 or len(fields) < separator + 4:
                 raise ValueError
             mount_options = fields[5].split(",")
-            super_options = fields[separator + 3].split(",")
             mounts.append(
                 MountInfo(
                     mount_point=Path(_decode_mountinfo(fields[4])),
                     filesystem_type=fields[separator + 1],
                     source=_decode_mountinfo(fields[separator + 2]),
-                    options=frozenset(mount_options + super_options),
+                    # Per-mount VFS options govern this exact path. A read-only
+                    # bind may legitimately sit above a read-write CIFS
+                    # superblock, whose separate options must not override it.
+                    options=frozenset(mount_options),
                     device=fields[2],
                 )
             )

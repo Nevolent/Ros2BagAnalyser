@@ -60,7 +60,13 @@ def main() -> None:
                 if response.status != 206 or len(response.read(2)) != 1:
                     raise SystemExit("Identity-bound byte-range delivery failed.")
     after = request_json(arguments.base_url, "/api/v1/processing/overview")
-    fields = ("running_count", "queued_count", "failed_count", "succeeded_count")
+    fields = (
+        "running_count",
+        "queued_count",
+        "failed_count",
+        "succeeded_count",
+        "canceled_count",
+    )
     if any(before.get(field) != after.get(field) for field in fields):
         raise SystemExit("Smoke checks changed processing state unexpectedly.")
     print("Local liveness, readiness, saved catalog, and zero-implicit-work checks passed.")

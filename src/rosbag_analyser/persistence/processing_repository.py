@@ -290,6 +290,44 @@ class ProcessingRepository:
             ).fetchone()
         return None if row is None else _artifact_from_row(row)
 
+    def get_current_artifact_for_delivery(
+        self,
+        recording_id: int,
+        kind: str,
+        artifact_id: int,
+        planner_identity: str,
+    ) -> ArtifactRecord | None:
+        """Return only an artifact owned by the current persisted output target."""
+        if kind not in PROCESSING_KINDS:
+            raise ValueError("The artifact kind is unsupported.")
+        with open_connection(self.database_url) as connection:
+            connection.execute(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+            )
+            row = connection.execute(
+                """
+                SELECT artifact.id, artifact.recording_id, artifact.kind,
+                       artifact.cache_identity, artifact.output_relative_path,
+                       artifact.mime_type, artifact.size_bytes,
+                       artifact.coverage_start_ns, artifact.coverage_end_ns,
+                       artifact.manifest, artifact.created_at
+                FROM artifacts AS artifact
+                JOIN preparation_targets AS target
+                  ON target.recording_id = artifact.recording_id
+                 AND target.kind = artifact.kind
+                 AND target.cache_identity = artifact.cache_identity
+                JOIN catalog_state AS catalog ON catalog.singleton = TRUE
+                WHERE artifact.id = %s
+                  AND artifact.recording_id = %s
+                  AND artifact.kind = %s
+                  AND target.scan_generation = catalog.successful_generation
+                  AND target.planner_identity = %s
+                  AND target.target_state = 'available'
+                """,
+                (artifact_id, recording_id, kind, planner_identity),
+            ).fetchone()
+        return None if row is None else _artifact_from_row(row)
+
     def get_current_state(
         self, recording_id: int, kind: str, cache_identity: str
     ) -> ProcessingState:

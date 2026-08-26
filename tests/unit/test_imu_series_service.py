@@ -20,6 +20,7 @@ from rosbag_analyser.persistence.processing_repository import (
 
 
 TOPIC = "/sensors/imu"
+PLANNER_IDENTITY = "f" * 64
 
 
 class FakeRepository:
@@ -30,6 +31,7 @@ class FakeRepository:
         self.latest_failed_job: JobRecord | None = None
         self.request_count = 0
         self.invalid_artifact_ids: list[int | None] = []
+        self.delivery_requests: list[tuple[int, str, int, str]] = []
 
     def get_source(self, recording_id: int) -> ProcessingSourceRecord | None:
         return self.source if recording_id == self.source.id else None
@@ -52,6 +54,27 @@ class FakeRepository:
             active_job=self.active_job,
             latest_failed_job=self.latest_failed_job,
         )
+
+    def get_current_artifact_for_delivery(
+        self,
+        recording_id: int,
+        kind: str,
+        artifact_id: int,
+        planner_identity: str,
+    ) -> ArtifactRecord | None:
+        self.delivery_requests.append(
+            (recording_id, kind, artifact_id, planner_identity)
+        )
+        artifact = self.artifact
+        if (
+            artifact is None
+            or artifact.recording_id != recording_id
+            or artifact.kind != kind
+            or artifact.id != artifact_id
+            or planner_identity != PLANNER_IDENTITY
+        ):
+            return None
+        return artifact
 
     def request_job(
         self,
@@ -84,8 +107,15 @@ class FakeRepository:
 
 
 class FakeArtifactStore:
+    def __init__(self) -> None:
+        self.opened = object()
+
     def validate_series_artifact(self, *args: object) -> None:
         del args
+
+    def open_series(self, *args: object) -> object:
+        del args
+        return self.opened
 
 
 class MissingArtifactStore(FakeArtifactStore):
@@ -199,6 +229,7 @@ def test_missing_or_unsupported_prerequisites_are_unavailable_without_job(
         _resolver(archive, repository),
         repository,  # type: ignore[arg-type]
         FakeArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     damaged = service.request(11)
@@ -248,6 +279,7 @@ def test_unsupported_component_is_unavailable_without_a_job(tmp_path: Path) -> N
         _resolver(archive, repository, component="orientation.x"),
         repository,  # type: ignore[arg-type]
         FakeArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     unavailable = service.request(11)
@@ -268,6 +300,7 @@ def test_request_queues_then_reuses_ready_artifact(tmp_path: Path) -> None:
         resolver,
         repository,  # type: ignore[arg-type]
         FakeArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     queued = service.request(11)
@@ -282,6 +315,33 @@ def test_request_queues_then_reuses_ready_artifact(tmp_path: Path) -> None:
     assert ready.state == "ready"
     assert ready.artifact == repository.artifact
     assert repository.request_count == 1
+
+
+def test_series_delivery_uses_persisted_target_without_resolving_source(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    metadata, database = _write_source(archive)
+    repository = FakeRepository(_source(metadata, database))
+    repository.artifact = _artifact("c" * 64)
+    repository.source = None  # type: ignore[assignment]
+    store = FakeArtifactStore()
+    service = ImuSeriesService(
+        _resolver(archive, repository),
+        repository,  # type: ignore[arg-type]
+        store,  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
+    )
+
+    resolved = service.resolve_series(11, 12)
+
+    assert resolved is not None
+    assert resolved[0] is store.opened
+    assert resolved[1] is repository.artifact
+    assert repository.delivery_requests == [
+        (11, "imu_series", 12, PLANNER_IDENTITY)
+    ]
 
 
 def test_invalid_ready_series_requires_explicit_replacement_request(
@@ -299,6 +359,7 @@ def test_invalid_ready_series_requires_explicit_replacement_request(
         resolver,
         repository,  # type: ignore[arg-type]
         MissingArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     observed = service.get_state(11)

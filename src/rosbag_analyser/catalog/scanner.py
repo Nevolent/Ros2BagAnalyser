@@ -457,9 +457,12 @@ def _aggregate_ros_health(
 def _complete_source_size(
     components: tuple[SourceComponentResult, ...]
 ) -> int | None:
-    if any(component.size_bytes is None for component in components):
-        return None
-    return sum(component.size_bytes or 0 for component in components)
+    known_sizes = tuple(
+        component.size_bytes
+        for component in components
+        if component.size_bytes is not None
+    )
+    return None if not known_sizes else sum(known_sizes)
 
 
 def _is_catalog_persistable(recording: RecordingScanResult) -> bool:

@@ -153,3 +153,58 @@ def test_private_cache_anchors_preserve_identity_across_a_path_move(
     assert [item.cache_identity for item in after_move] == [
         item.cache_identity for item in original
     ]
+
+
+def _replace_preparation_identities(recording, transform):
+    facts = recording.preparation_facts
+    assert facts is not None
+
+    def changed(identity):
+        return None if identity is None else transform(identity)
+
+    return replace(
+        recording,
+        preparation_facts=replace(
+            facts,
+            metadata_identity=changed(facts.metadata_identity),
+            database_identity=changed(facts.database_identity),
+            video_identity=changed(facts.video_identity),
+            timestamps_identity=changed(facts.timestamps_identity),
+        ),
+    )
+
+
+def test_cache_identity_survives_network_device_and_inode_reassignment(
+    tmp_path: Path,
+) -> None:
+    recording = _scanned_recording(tmp_path)
+    reassigned = _replace_preparation_identities(
+        recording,
+        lambda identity: replace(
+            identity,
+            device_id=identity.device_id + 10,
+            inode=identity.inode + 100,
+        ),
+    )
+
+    original_targets = _planner().plan_recording(11, recording)
+    reassigned_targets = _planner().plan_recording(11, reassigned)
+
+    assert [item.cache_identity for item in reassigned_targets] == [
+        item.cache_identity for item in original_targets
+    ]
+
+
+def test_cache_identity_changes_when_source_ctime_changes(tmp_path: Path) -> None:
+    recording = _scanned_recording(tmp_path)
+    changed = _replace_preparation_identities(
+        recording,
+        lambda identity: replace(identity, ctime_ns=identity.ctime_ns + 1),
+    )
+
+    original_targets = _planner().plan_recording(11, recording)
+    changed_targets = _planner().plan_recording(11, changed)
+
+    assert [item.cache_identity for item in changed_targets] != [
+        item.cache_identity for item in original_targets
+    ]

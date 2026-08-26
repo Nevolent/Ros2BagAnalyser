@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from datetime import timezone
 from email.utils import formatdate, parsedate_to_datetime
 import os
@@ -43,9 +44,9 @@ class RangeFileResponse(Response):
             del self.headers["content-length"]
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        del receive
         descriptor = self._take_validated_descriptor()
         file = os.fdopen(descriptor, "rb", closefd=True)
+        disconnect_task = asyncio.create_task(_wait_for_disconnect(receive))
         try:
             file_size = self.stat_result.st_size
             request_headers = Headers(scope=scope)
@@ -94,7 +95,12 @@ class RangeFileResponse(Response):
             await self._run_io(file.seek, start)
             remaining = end - start
             while remaining:
+                await asyncio.sleep(0)
+                if disconnect_task.done():
+                    break
                 chunk = await self._run_io(file.read, min(CHUNK_SIZE, remaining))
+                if disconnect_task.done():
+                    break
                 if not chunk:
                     raise RuntimeError("Validated media ended before its recorded size.")
                 remaining -= len(chunk)
@@ -106,6 +112,10 @@ class RangeFileResponse(Response):
                     }
                 )
         finally:
+            if not disconnect_task.done():
+                disconnect_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await disconnect_task
             if not file.closed:
                 await self._run_io(file.close)
 
@@ -190,3 +200,10 @@ def _if_range_matches(
 
 async def _empty_receive() -> dict[str, str]:
     return {"type": "http.request"}
+
+
+async def _wait_for_disconnect(receive: Receive) -> None:
+    while True:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            return

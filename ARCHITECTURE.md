@@ -930,12 +930,24 @@ rows and files. Top-down and IMU identities remain reusable. A replacement is
 published only after its exact media PTS sequence validates against the
 processor result.
 
-The move-reconciliation migration does not version or weaken processor cache
-identity. Source resolution uses the current path, while the existing identity
-document uses the stable private anchors. Relevant file device, inode, size,
-mtime, topic, profile, processor, and timing facts still participate, so a copy
-or modified source is a cache miss even when its catalog fingerprint resembles a
-move.
+The move-reconciliation migration keeps current source resolution separate from
+the stable private path and recording anchors used by processor cache identity.
+
+The subsequently approved `portable-stat-v1` source-cache policy makes the
+persisted scan-to-worker identity portable across read-only CIFS client
+contexts. Its per-file identity contains file type, size, nanosecond mtime, and
+nanosecond ctime; relevant parsed metadata, topic, profile, processor, timing,
+and stable private anchors remain in the kind-specific identity document.
+Device and inode are excluded only from this persisted cache hash because a
+CIFS client can report a different pair for unchanged source data between the
+catalog scan and worker execution. A source fact or configuration change is
+still a cache miss.
+
+This does not weaken live source access. Resolvers and processors capture the
+full device, inode, mode, size, mtime, and ctime identity and compare it before,
+during, and after every open/read operation. A replacement or mutation during a
+processing attempt therefore still fails safely, and original source remains
+read-only.
 
 ## 20. Verification strategy
 

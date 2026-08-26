@@ -1068,6 +1068,30 @@ created; that awaits separate commit/clean-source approval. Static systemd and
 firewall contracts passed, but actual guest `systemd-analyze`, `nft --check`,
 network vantage-point, shutdown-budget, and reboot evidence belong after Gate 0.
 
+### Approved CIFS-stable cache-identity corrective slice — 2026-08-26
+
+Read-only VM diagnosis of six failed real jobs across two recordings showed
+that all front, top-down, and IMU resolvers found valid inputs, but their
+scan-time cache hashes differed from the worker's freshly computed hashes.
+Those jobs failed in 99–136 milliseconds with `*_inputs_changed`, before any
+decoder work. The API process, worker process, and direct host stat calls agreed
+on the current file identity, pointing to a persisted cross-process CIFS
+identity mismatch rather than damaged bag content.
+
+The corrective slice adds the versioned `portable-stat-v1` cache policy. It
+keeps file type, size, nanosecond mtime and ctime in persisted per-file hashes,
+while device and inode remain mandatory in the full live descriptor checks
+around every source read. The policy version also participates in each planner
+identity, so deployment requires one explicit successful rescan before new work
+is requested; stale queued or failed identities are not rerun blindly.
+
+Focused planner, resolver, worker, and scanner verification passed 61 tests.
+The complete default Python suite passed 358 tests with 38 environment-gated
+skips, and the JavaScript syntax/runtime/conformance suite passed all 39 tests.
+No VM, NAS, database, service, job, or source state was changed while preparing
+this repository correction. Live deployment, explicit rescan, job request, and
+a bounded source before/after inventory remain separate reviewed operations.
+
 ### Completion gate
 
 Building block 3 is complete only when:

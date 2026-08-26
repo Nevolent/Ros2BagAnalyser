@@ -23,6 +23,9 @@ from rosbag_analyser.topdown_preview import (
 )
 
 
+PLANNER_IDENTITY = "e" * 64
+
+
 class FakeRepository:
     def __init__(self, source: ProcessingSourceRecord) -> None:
         self.source = source
@@ -31,6 +34,7 @@ class FakeRepository:
         self.latest_failed_job: JobRecord | None = None
         self.request_count = 0
         self.invalid_artifact_ids: list[int | None] = []
+        self.delivery_requests: list[tuple[int, str, int, str]] = []
 
     def get_source(self, recording_id: int) -> ProcessingSourceRecord | None:
         return self.source if recording_id == self.source.id else None
@@ -46,6 +50,27 @@ class FakeRepository:
             else None
         )
         return ProcessingState(artifact, self.active_job, self.latest_failed_job)
+
+    def get_current_artifact_for_delivery(
+        self,
+        recording_id: int,
+        kind: str,
+        artifact_id: int,
+        planner_identity: str,
+    ) -> ArtifactRecord | None:
+        self.delivery_requests.append(
+            (recording_id, kind, artifact_id, planner_identity)
+        )
+        artifact = self.artifact
+        if (
+            artifact is None
+            or artifact.recording_id != recording_id
+            or artifact.kind != kind
+            or artifact.id != artifact_id
+            or planner_identity != PLANNER_IDENTITY
+        ):
+            return None
+        return artifact
 
     def request_job(
         self,
@@ -78,8 +103,15 @@ class FakeRepository:
 
 
 class FakeArtifactStore:
+    def __init__(self) -> None:
+        self.opened = object()
+
     def validate_media(self, *args: object) -> None:
         del args
+
+    def open_media(self, *args: object) -> object:
+        del args
+        return self.opened
 
 
 class MissingArtifactStore(FakeArtifactStore):
@@ -195,6 +227,7 @@ def test_damaged_or_missing_prerequisites_are_unavailable_without_job(
         _resolver(archive, repository),
         repository,  # type: ignore[arg-type]
         FakeArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     damaged = service.request(11)
@@ -222,7 +255,10 @@ def test_request_reuses_ready_output_and_queues_only_when_needed(
     resolution = resolver.resolve(11)
     assert resolution.descriptor is not None
     service = TopdownPreviewService(
-        resolver, repository, FakeArtifactStore()  # type: ignore[arg-type]
+        resolver,
+        repository,  # type: ignore[arg-type]
+        FakeArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     queued = service.request(11)
@@ -237,6 +273,33 @@ def test_request_reuses_ready_output_and_queues_only_when_needed(
     assert repository.request_count == 1
 
 
+def test_media_delivery_uses_persisted_target_without_resolving_source(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    metadata, video, timestamps = _write_source(archive)
+    repository = FakeRepository(_source(metadata, video, timestamps))
+    repository.artifact = _artifact("b" * 64)
+    repository.source = None  # type: ignore[assignment]
+    store = FakeArtifactStore()
+    service = TopdownPreviewService(
+        _resolver(archive, repository),
+        repository,  # type: ignore[arg-type]
+        store,  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
+    )
+
+    resolved = service.resolve_media(11, 3)
+
+    assert resolved is not None
+    assert resolved[0] is store.opened
+    assert resolved[1] is repository.artifact
+    assert repository.delivery_requests == [
+        (11, "topdown_preview", 3, PLANNER_IDENTITY)
+    ]
+
+
 def test_invalid_ready_artifact_requires_explicit_replacement_request(
     tmp_path: Path,
 ) -> None:
@@ -249,7 +312,10 @@ def test_invalid_ready_artifact_requires_explicit_replacement_request(
     assert resolution.descriptor is not None
     repository.artifact = _artifact(resolution.descriptor.cache_identity)
     service = TopdownPreviewService(
-        resolver, repository, MissingArtifactStore()  # type: ignore[arg-type]
+        resolver,
+        repository,  # type: ignore[arg-type]
+        MissingArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     failed = service.get_state(11)

@@ -127,6 +127,11 @@ It must:
 - preserve table data when a rescan fails; and
 - allow readable compatible recordings to be selected for preparation.
 
+Source size is the sum of every safely inventoried component whose byte size is
+known. A missing optional companion such as top-down media does not erase the
+known ROS bag size; the value is unavailable only when no component size is
+known.
+
 The visible source-health vocabulary is:
 
 - **Readable** — the catalog has the trusted metadata and ROS prerequisites

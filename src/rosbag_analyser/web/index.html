@@ -74,12 +74,13 @@
             <nav class="folder-tree" id="folder-tree" aria-label="Browse recording folders"></nav>
           </aside>
 
-          <div class="recordings-page" id="main-content">
+          <div class="recordings-page" id="main-content" aria-busy="true">
             <header class="recordings-header">
               <div class="recordings-title-line">
                 <h1>Recordings</h1>
                 <div class="scan-status"><p><span id="last-scanned">Loading saved catalog…</span></p><button class="rescan-button" id="rescan-archive" type="button" aria-label="Rescan archive" title="Rescan archive"><svg aria-hidden="true"><use href="#icon-refresh"></use></svg><span aria-hidden="true">Rescan archive</span></button></div>
               </div>
+              <button class="clear-filter-button recordings-clear-filters" type="button" id="clear-filter-menu" hidden aria-label="Clear recording filters" title="Clear filters"><svg aria-hidden="true"><use href="#icon-x"></use></svg><span>Clear filters</span></button>
             </header>
 
             <div class="recordings-content">
@@ -96,8 +97,7 @@
                     <button class="recording-filter-trigger" id="analysis-filter-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="analysis-filter-menu"><span class="recording-filter-label">Analysis:</span><span class="recording-filter-value" id="analysis-filter-value">All</span><svg aria-hidden="true"><use href="#icon-chevron"></use></svg></button>
                     <div class="recording-filter-menu" id="analysis-filter-menu" role="listbox" aria-label="Analysis" hidden><button type="button" role="option" data-filter-value="all" aria-selected="true">All</button><button type="button" role="option" data-filter-value="ready" aria-selected="false">Ready</button><button type="button" role="option" data-filter-value="processing" aria-selected="false">Processing</button><button type="button" role="option" data-filter-value="queued" aria-selected="false">Queued</button><button type="button" role="option" data-filter-value="not_planned" aria-selected="false">Not planned</button><button type="button" role="option" data-filter-value="failed" aria-selected="false">Failed</button></div>
                   </div>
-                  <button class="prepare-selected-button" type="button" id="prepare-selected" disabled aria-hidden="true" tabindex="-1"><span class="prepare-selected-button__label">Prepare Selected</span></button>
-                  <button class="clear-filter-button" type="button" id="clear-filter-menu" hidden>Clear filters</button>
+                  <button class="prepare-selected-button" type="button" id="prepare-selected" disabled aria-hidden="true" tabindex="-1"><span class="prepare-selected-button__label">Prepare selected</span></button>
                 </div>
               </section>
 
@@ -109,7 +109,7 @@
                     <thead><tr><th class="selection-column" scope="col"><input id="select-all-recordings" type="checkbox" aria-label="Select all visible recordings"></th><th scope="col"><button class="table-sort" type="button" data-sort="name" aria-sort="none">Name</button></th><th scope="col"><button class="table-sort" type="button" data-sort="recorded" aria-sort="descending">Recorded</button></th><th scope="col"><button class="table-sort" type="button" data-sort="duration" aria-sort="none">Duration</button></th><th scope="col"><button class="table-sort" type="button" data-sort="size" aria-sort="none">Size</button></th><th scope="col"><button class="table-sort" type="button" data-sort="health" aria-sort="none" aria-label="Sort by ROS health">Health</button></th><th scope="col"><button class="table-sort" type="button" data-sort="analysis" aria-sort="none" aria-label="Sort by analysis status">Analysis</button></th></tr></thead>
                     <tbody id="recording-rows"></tbody>
                   </table>
-                  <div class="table-empty-state" id="recording-loading"><strong>Loading saved catalog…</strong><span>No scan or processing work is started automatically.</span></div>
+                  <div class="catalog-loading-status sr-only" id="recording-loading" role="status"><strong>Loading saved catalog…</strong><span>No scan or processing work is started automatically.</span></div>
                   <div class="table-empty-state" id="recording-empty" hidden><strong>No recordings are catalogued</strong><span>Use Rescan archive to inspect the configured read-only source.</span></div>
                   <div class="table-empty-state" id="recording-filter-empty" hidden><strong>No matching recordings</strong><span>Try clearing a filter or using a different search.</span><button type="button" id="clear-filters">Clear filters</button></div>
                   <div class="table-empty-state" id="recording-failure" hidden><strong>Could not load the saved catalog</strong><span id="recording-failure-text"></span><button type="button" id="recording-retry">Retry loading catalog</button></div>
@@ -166,7 +166,7 @@
                 <section class="metadata-section" aria-labelledby="recording-info-title"><h2 id="recording-info-title">Recording info</h2><p id="detail-error" class="metadata-diagnostic" hidden></p><dl class="metadata-properties"><div><dt>Name</dt><dd id="detail-name">—</dd></div><div><dt>Recorded</dt><dd id="detail-recorded">—</dd></div><div><dt>Duration</dt><dd id="detail-duration">—</dd></div><div><dt>Source size</dt><dd id="detail-size">—</dd></div><div><dt>Storage</dt><dd id="detail-storage">—</dd></div><div><dt>Messages</dt><dd id="detail-messages">—</dd></div><div><dt>Topics</dt><dd id="detail-topics">—</dd></div><div><dt>ROS database</dt><dd id="detail-health">—</dd></div></dl></section>
                 <section class="metadata-section" aria-labelledby="analysis-outputs-title"><h2 id="analysis-outputs-title">Analysis outputs</h2><div class="metadata-items" id="output-rows"></div></section>
                 <section class="metadata-section" aria-labelledby="source-components-title"><h2 id="source-components-title">Source components <span class="sr-only" id="component-count">0</span></h2><div class="metadata-items" id="component-rows"></div></section>
-                <section id="analyzer-action" class="analyzer-action" hidden></section>
+                <div id="analyzer-action" class="analyzer-action" hidden></div>
               </div></div>
             </div>
           </aside>

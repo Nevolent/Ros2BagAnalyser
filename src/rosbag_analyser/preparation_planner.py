@@ -5,7 +5,10 @@ import hashlib
 import json
 
 from rosbag_analyser.catalog.metadata import ParsedMetadata, TopicFact
-from rosbag_analyser.catalog.paths import SourceFileIdentity
+from rosbag_analyser.catalog.paths import (
+    SOURCE_CACHE_IDENTITY_POLICY,
+    SourceFileIdentity,
+)
 from rosbag_analyser.catalog.types import (
     RecordingScanResult,
     SafeDiagnostic,
@@ -90,6 +93,7 @@ class PreparationPlanner:
                 {
                     "kind": FRONT_PREVIEW_KIND,
                     "processor_version": FRONT_PROCESSOR_VERSION,
+                    "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
                     "timing_policy": FRONT_TIMING_POLICY,
                     "topic": front_topic,
                     "message_type": IMAGE_MESSAGE_TYPE,
@@ -102,6 +106,7 @@ class PreparationPlanner:
                 {
                     "kind": TOPDOWN_PREVIEW_KIND,
                     "processor_version": TOPDOWN_PROCESSOR_VERSION,
+                    "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
                     "timestamp_policy": "csv_unix_timestamp",
                     "profile": profile.identity_values(),
                     "encoder": encoder_identity,
@@ -111,6 +116,7 @@ class PreparationPlanner:
                 {
                     "kind": IMU_SERIES_KIND,
                     "processor_version": IMU_PROCESSOR_VERSION,
+                    "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
                     "series_schema_version": SERIES_SCHEMA_VERSION,
                     "topic": imu_topic,
                     "message_type": IMU_MESSAGE_TYPE,

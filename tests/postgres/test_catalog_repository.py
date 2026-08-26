@@ -329,6 +329,73 @@ def test_migration_contains_exactly_six_v1_domain_tables(postgres_url: str) -> N
 
 
 @pytest.mark.postgres
+def test_artifact_delivery_requires_current_generation_target_and_planner(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    _make_targets_available(postgres_url, recording_id)
+    repository = ProcessingRepository(postgres_url)
+    requested = repository.request_job(
+        recording_id,
+        "front_preview",
+        TARGET_IDENTITIES["front_preview"],
+    )
+    assert requested.job is not None
+    running = repository.claim_next_job()
+    assert running is not None
+    assert repository.enter_publishing(running.id).execution_phase == "publishing"
+    artifact = repository.complete_job(
+        running.id,
+        ArtifactWrite(
+            recording_id=recording_id,
+            kind="front_preview",
+            cache_identity=TARGET_IDENTITIES["front_preview"],
+            output_relative_path="front_preview/current/preview.mp4",
+            mime_type="video/mp4",
+            size_bytes=321,
+            coverage_start_ns=0,
+            coverage_end_ns=1,
+            manifest={"cache_identity": TARGET_IDENTITIES["front_preview"]},
+        ),
+    )
+
+    current = repository.get_current_artifact_for_delivery(
+        recording_id,
+        "front_preview",
+        artifact.id,
+        PLANNER_IDENTITIES["front_preview"],
+    )
+    stale_planner = repository.get_current_artifact_for_delivery(
+        recording_id,
+        "front_preview",
+        artifact.id,
+        "9" * 64,
+    )
+
+    assert current == artifact
+    assert stale_planner is None
+
+    with open_connection(postgres_url) as connection:
+        connection.execute(
+            """
+            UPDATE catalog_state
+            SET successful_generation = successful_generation + 1
+            WHERE singleton = TRUE
+            """
+        )
+
+    stale_generation = repository.get_current_artifact_for_delivery(
+        recording_id,
+        "front_preview",
+        artifact.id,
+        PLANNER_IDENTITIES["front_preview"],
+    )
+    assert stale_generation is None
+
+
+@pytest.mark.postgres
 def test_front_topdown_and_imu_kinds_are_allowed_and_isolated(
     postgres_url: str,
 ) -> None:
@@ -637,6 +704,46 @@ def test_changed_snapshot_updates_existing_row_in_place(postgres_url: str) -> No
         ).fetchone()["count"]
         assert recording_count == 1
         assert component_count == 4
+
+
+@pytest.mark.postgres
+def test_catalog_reads_recover_known_component_size_without_rescan(
+    postgres_url: str,
+) -> None:
+    repository = CatalogRepository(postgres_url)
+    repository.apply_snapshot(_snapshot())
+    recording_id = repository.list_recordings()[0].id
+    with open_connection(postgres_url) as connection:
+        connection.execute(
+            "UPDATE recordings SET total_source_size_bytes = NULL WHERE id = %s",
+            (recording_id,),
+        )
+        connection.execute(
+            """
+            UPDATE source_components SET size_bytes = NULL
+            WHERE recording_id = %s
+              AND role IN ('topdown_video', 'topdown_timestamps')
+            """,
+            (recording_id,),
+        )
+
+    listed = repository.list_recordings()[0]
+    detail = repository.get_recording(recording_id)
+
+    assert listed.total_source_size_bytes == 20
+    assert detail is not None
+    assert detail.recording.total_source_size_bytes == 20
+
+    with open_connection(postgres_url) as connection:
+        connection.execute(
+            "UPDATE source_components SET size_bytes = NULL WHERE recording_id = %s",
+            (recording_id,),
+        )
+
+    assert repository.list_recordings()[0].total_source_size_bytes is None
+    no_known_size = repository.get_recording(recording_id)
+    assert no_known_size is not None
+    assert no_known_size.recording.total_source_size_bytes is None
 
 
 @pytest.mark.postgres

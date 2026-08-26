@@ -230,6 +230,7 @@ class FakeDocument {
     this.element("input", "folder-search", recordings);
     this.element("button", "collapse-folders", recordings);
     this.element("div", "recordings-page", recordings, "recordings-page");
+    this.element("section", "", recordings, "table-filter-bar");
     ["last-scanned", "recording-loading", "recording-empty", "recording-filter-empty", "recording-failure", "recording-failure-text", "page-buttons", "page-status", "selected-count", "selection-context"].forEach((id) => this.element("div", id, recordings));
     ["rescan-archive", "recording-retry", "prepare-selected", "previous-page", "next-page", "clear-filters", "clear-filter-menu"].forEach((id) => this.element("button", id, recordings));
     this.element("tbody", "recording-rows", recordings);
@@ -480,12 +481,11 @@ test("startup reads the saved catalog once and renders hostile values as text", 
   const rowLinks = harness.document.querySelector("#recording-rows").children.map((row) => row.querySelector("a"));
   assert.equal(rowLinks.some((link) => link.textContent === "run <script>alert(1)</script>"), true);
   assert.match(harness.document.querySelector("#folder-tree").children.at(-1).children[0].querySelector(".folder-label").textContent, /Site <north>/);
+  assert.equal(harness.document.querySelectorAll(".folder-item--sample").length, 0);
   assert.equal(harness.calls.some((call) => call.url.includes("rescan") || call.url.includes("prepare")), false);
-  assert.equal(vm.runInContext("recordingDisplayName('2025_11_04_figure8')", harness.context), "Figure 8");
-  assert.equal(vm.runInContext("recordingDisplayName('unexpected_name')", harness.context), "unexpected_name");
 });
 
-test("recording rows show a readable name, exact identity context, and the truthful Recorded column", async () => {
+test("recording rows show the exact source name and the truthful Recorded column", async () => {
   const recording = {
     ...catalogFixture().recordings[0],
     name: "2025_11_04_figure8",
@@ -497,11 +497,28 @@ test("recording rows show a readable name, exact identity context, and the truth
   })));
   await flush();
   const row = harness.document.querySelector("#recording-rows").children[0];
-  assert.equal(row.querySelector(".recording-link").textContent, "Figure 8");
-  assert.equal(row.querySelector(".cell-sublabel").textContent, "2025_11_04_figure8");
+  assert.equal(row.querySelector(".recording-link").textContent, "2025_11_04_figure8");
+  assert.equal(row.querySelector(".cell-sublabel"), null);
   assert.equal(row.children.length, 7);
   assert.equal(row.querySelector(".date-cell").querySelector("time").children.length, 2);
-  assert.match(row.querySelector(".recording-link").getAttribute("aria-label"), /Exact source name 2025_11_04_figure8\. Recorded /);
+  assert.match(row.querySelector(".recording-link").getAttribute("aria-label"), /^2025_11_04_figure8\. Recorded /);
+});
+
+test("recording status tooltips always open to the left without changing table layout", async () => {
+  const harness = createHarness();
+  harness.window.innerWidth = 1200;
+  harness.window.innerHeight = 800;
+  await flush();
+  const indicator = harness.document.querySelector("#recording-rows").querySelector(".status-indicator");
+  const tooltip = indicator.querySelector(".status-tooltip");
+  indicator.rectLeft = 800;
+  indicator.rectWidth = 30;
+  indicator.rectHeight = 30;
+  tooltip.rectWidth = 240;
+  tooltip.rectHeight = 100;
+  indicator.dispatch("pointerenter");
+  assert.equal(tooltip.style.left, "550px");
+  assert.ok(Number.parseFloat(tooltip.style.left) + tooltip.rectWidth < indicator.rectLeft);
 });
 
 test("recording filters use attached custom menus and update the catalog state", async () => {
@@ -530,6 +547,8 @@ test("folder selection, filtering, pagination, and visible selection use stable 
   harness.document.querySelector("#select-all-recordings").checked = true;
   harness.document.querySelector("#select-all-recordings").dispatch("change");
   assert.equal(harness.document.querySelector("#selected-count").textContent, "20");
+  assert.equal(harness.document.querySelector(".table-filter-bar").classList.contains("has-selection"), true);
+  assert.equal(harness.document.querySelector("#prepare-selected").getAttribute("aria-hidden"), "false");
   vm.runInContext("catalogState.page = 2; renderRecordingTable()", harness.context);
   assert.equal(harness.document.querySelector("#recording-rows").children.length, 1);
   assert.equal(harness.document.querySelector("#selected-count").textContent, "20");
@@ -561,7 +580,27 @@ test("collapsed folder shortcut follows the active Recordings route", async () =
   assert.equal(sidebar.classList.contains("has-folder-slot"), true);
 });
 
-test("failed explicit rescan retains rows, folder choice, and selection", async () => {
+test("successful explicit rescan reloads and reports the saved catalog", async () => {
+  let catalogLoads = 0;
+  const harness = createHarness("/", async (url) => {
+    if (url === "/api/v1/catalog") {
+      catalogLoads += 1;
+      return makeResponse(catalogFixture());
+    }
+    if (url === "/api/v1/catalog/rescan") return makeResponse({
+      scan: { generation: 44, completed_at: "2026-08-26T21:30:20Z", duration_ms: 300, counts: { recordings: 6, readable: 5, damaged: 1, missing: 0, unsupported: 0, uninspectable: 0 } },
+      diagnostics: [],
+    });
+    throw new Error(url);
+  });
+  await flush();
+  await vm.runInContext("rescanCatalog()", harness.context);
+  assert.equal(catalogLoads, 2);
+  assert.match(harness.document.querySelector("#last-scanned").textContent, /Last scanned/);
+  assert.equal(harness.document.querySelector("#rescan-archive").disabled, false);
+});
+
+test("failed explicit rescan retains rows, folder choice, selection, and safe reason", async () => {
   let scans = 0;
   const harness = createHarness("/", async (url) => {
     if (url === "/api/v1/catalog") return makeResponse(catalogFixture());
@@ -577,6 +616,7 @@ test("failed explicit rescan retains rows, folder choice, and selection", async 
   assert.equal(scans, 1);
   assert.equal(harness.document.querySelector("#recording-rows").children.length, 2);
   assert.equal(harness.document.querySelector("#selected-count").textContent, "1");
+  assert.match(harness.document.querySelector("#last-scanned").textContent, /The server could not be reached/);
   assert.equal(harness.document.querySelector("#catalog-notice"), null);
 });
 
@@ -674,7 +714,7 @@ test("Processing preserves authoritative queue positions, server estimates, offl
   assert.match(harness.document.querySelector("#processing-notice").textContent, /offline/);
 });
 
-test("Processing keeps an informative current-job card while idle", async () => {
+test("Processing shows truthful empty current and queue states while idle", async () => {
   const harness = createHarness("/processing", async (url) => {
     if (url === "/api/v1/processing/overview") return makeResponse(overviewFixture({
       current: null,
@@ -689,8 +729,13 @@ test("Processing keeps an informative current-job card while idle", async () => 
   assert.equal(host.hidden, false);
   assert.equal(host.querySelector(".current-job--empty") !== null, true);
   assert.match(host.textContent, /Nothing is processing currently/);
-  assert.match(host.textContent, /queue is empty/);
+  assert.match(host.textContent, /The queue is empty/);
   assert.equal(host.querySelector('[role="progressbar"]'), null);
+  assert.equal(harness.document.querySelector("#queue-rows").children.length, 0);
+  assert.equal(harness.document.querySelector("#queue-empty").hidden, false);
+  assert.equal(harness.document.querySelector("#processing-queue-count").textContent, "0");
+  assert.equal(harness.document.querySelector("#processing-failed-count").textContent, "1");
+  assert.equal(harness.document.querySelector("#processing-history-count").textContent, "2");
 });
 
 test("Processing controls use authoritative mutations, selection actions, and cancellation confirmation", async () => {
@@ -724,6 +769,25 @@ test("Processing controls use authoritative mutations, selection actions, and ca
   assert.equal(harness.calls.filter((call) => call.url.endsWith("/32/cancel") && call.options.method === "POST").length, 1);
   assert.equal(harness.document.querySelector("#queue-rows").children.length, 0);
   assert.equal(harness.document.querySelector("#processing-queue-count").textContent, "0");
+});
+
+test("empty Processing pages render truthful empty failures and history", async () => {
+  const harness = createHarness("/processing", async (url) => {
+    if (url === "/api/v1/processing/overview") return makeResponse(overviewFixture({ current: null, running_count: 0, queued_count: 0, failed_count: 0, succeeded_count: 0, queue: [] }));
+    if (url.startsWith("/api/v1/processing/jobs?view=failed")) return makeResponse({ items: [], next_cursor: null });
+    if (url.startsWith("/api/v1/processing/jobs?view=history")) return makeResponse({ items: [], next_cursor: null });
+    throw new Error(url);
+  });
+  await flush();
+  await vm.runInContext("setProcessingTab('failed')", harness.context);
+  await flush();
+  assert.equal(harness.document.querySelector("#failure-rows").children.length, 0);
+  assert.equal(harness.document.querySelector("#failures-empty").hidden, false);
+  await vm.runInContext("setProcessingTab('history')", harness.context);
+  await flush();
+  assert.equal(harness.document.querySelector("#history-rows").children.length, 0);
+  assert.equal(harness.document.querySelector("#history-empty").hidden, false);
+  assert.equal(harness.document.querySelector("#history-description").textContent, "Showing 0 completed jobs");
 });
 
 test("Recordings distinguish a partially prepared output set", async () => {
@@ -918,6 +982,43 @@ test("recording details uses the reference's ordered height and graph-width anim
   assert.equal(telemetry.style.width, "");
 });
 
+test("recording details resize redraws each distinct graph size at native pixel density", async () => {
+  const rows = [["1000000000", 1, 2, 3, 4, 5, 6], ["9000000000", 2, 3, 4, 5, 6, 7]];
+  const imu = imuFixture(rows);
+  const harness = createHarness("/recordings/7", async (url) => {
+    if (url === "/api/v1/recordings/7") return makeResponse(detailFixture());
+    if (url === "/api/recordings/7/imu-series") return makeResponse({ state: "ready", diagnostic: null, artifact: imu.artifact });
+    if (url === imu.artifact.data_url) return makeResponse(imu.payload);
+    throw new Error(url);
+  });
+  await flush();
+  const plot = harness.document.querySelector("#imu-plot");
+  const canvas = harness.document.querySelector("#imu-canvas");
+  const clearCount = () => canvas.context.operations.filter(([operation]) => operation === "clearRect").length;
+  const initialClearCount = clearCount();
+
+  assert.equal(canvas.style.width, "100%");
+  assert.equal(canvas.style.height, "100%");
+  harness.window.devicePixelRatio = 2.5;
+  for (const width of [560, 640, 720, 800, 900.4]) {
+    plot.rectWidth = width;
+    vm.runInContext("reviewController.telemetry.resizeObserver.callback()", harness.context);
+    const frameId = [...harness.frames.keys()].at(-1);
+    harness.frames.get(frameId)(1000);
+    harness.frames.delete(frameId);
+  }
+
+  assert.equal(clearCount(), initialClearCount + 5);
+  assert.equal(vm.runInContext("reviewController.telemetry.plotWidth", harness.context), 830.4);
+  assert.equal(canvas.width, 2251);
+
+  vm.runInContext("reviewController.telemetry.resizeObserver.callback()", harness.context);
+  const duplicateFrameId = [...harness.frames.keys()].at(-1);
+  harness.frames.get(duplicateFrameId)(1000);
+  harness.frames.delete(duplicateFrameId);
+  assert.equal(clearCount(), initialClearCount + 5);
+});
+
 test("video drift correction keeps one seek in flight and retries only after its timeout", async () => {
   const rows = [["1000000000", 1, 2, 3, 4, 5, 6], ["9000000000", 2, 3, 4, 5, 6, 7]];
   const imu = imuFixture(rows);
@@ -947,6 +1048,94 @@ test("video drift correction keeps one seek in flight and retries only after its
   assert.equal(video.currentTimeAssignments.length, 2);
   vm.runInContext("applyGlobalTime(5.7)", harness.context);
   assert.deepEqual(video.currentTimeAssignments, [4, 4.5, 4.7]);
+});
+
+test("explicit graph scrubbing coalesces decoder seeks and applies the latest target", async () => {
+  const rows = [["1000000000", 1, 2, 3, 4, 5, 6], ["9000000000", 2, 3, 4, 5, 6, 7]];
+  const imu = imuFixture(rows);
+  const harness = createHarness("/recordings/7", async (url) => {
+    if (url === "/api/v1/recordings/7") return makeResponse(detailFixture());
+    if (url === "/api/recordings/7/imu-series") return makeResponse({ state: "ready", diagnostic: null, artifact: imu.artifact });
+    if (url === imu.artifact.data_url) return makeResponse(imu.payload);
+    throw new Error(url);
+  });
+  await flush();
+  const video = harness.document.querySelector("#front-video");
+  video.holdCurrentTimeAssignments = true;
+  video.currentTimeAssignments.length = 0;
+
+  vm.runInContext("applyGlobalTime(5, true)", harness.context);
+  vm.runInContext("applyGlobalTime(6, true)", harness.context);
+  vm.runInContext("applyGlobalTime(7, true)", harness.context);
+  assert.deepEqual(video.currentTimeAssignments, [4]);
+
+  video._currentTime = 4;
+  video.dispatch("seeked");
+  assert.deepEqual(video.currentTimeAssignments, [4, 6]);
+});
+
+test("transient play rejection after scrubbing retries without hiding valid media", async () => {
+  const rows = [["1000000000", 1, 2, 3, 4, 5, 6], ["9000000000", 2, 3, 4, 5, 6, 7]];
+  const imu = imuFixture(rows);
+  const harness = createHarness("/recordings/7", async (url) => {
+    if (url === "/api/v1/recordings/7") return makeResponse(detailFixture());
+    if (url === "/api/recordings/7/imu-series") return makeResponse({ state: "ready", diagnostic: null, artifact: imu.artifact });
+    if (url === imu.artifact.data_url) return makeResponse(imu.payload);
+    throw new Error(url);
+  });
+  await flush();
+  const video = harness.document.querySelector("#front-video");
+  vm.runInContext("seekGlobalTime(5)", harness.context);
+  video._currentTime = 4;
+  video.dispatch("seeked");
+  let attempts = 0;
+  video.play = () => {
+    attempts += 1;
+    video.paused = true;
+    return attempts === 1 ? Promise.reject(new Error("AbortError")) : Promise.resolve();
+  };
+
+  harness.document.querySelector("#timeline-play").dispatch("click");
+  await flush();
+  assert.equal(attempts, 1);
+  assert.equal(vm.runInContext("reviewController.players.front.mediaFailed", harness.context), false);
+  assert.equal(video.hidden, false);
+
+  harness.setNow(2601);
+  vm.runInContext("applyGlobalTime(reviewController.clock.globalTime)", harness.context);
+  await flush();
+  assert.equal(attempts, 2);
+  assert.equal(vm.runInContext("reviewController.players.front.mediaFailed", harness.context), false);
+});
+
+test("a stalled play promise is invalidated and retried after the bounded timeout", async () => {
+  const rows = [["1000000000", 1, 2, 3, 4, 5, 6], ["9000000000", 2, 3, 4, 5, 6, 7]];
+  const imu = imuFixture(rows);
+  const harness = createHarness("/recordings/7", async (url) => {
+    if (url === "/api/v1/recordings/7") return makeResponse(detailFixture());
+    if (url === "/api/recordings/7/imu-series") return makeResponse({ state: "ready", diagnostic: null, artifact: imu.artifact });
+    if (url === imu.artifact.data_url) return makeResponse(imu.payload);
+    throw new Error(url);
+  });
+  await flush();
+  const video = harness.document.querySelector("#front-video");
+  vm.runInContext("seekGlobalTime(5)", harness.context);
+  video._currentTime = 4;
+  video.dispatch("seeked");
+  let attempts = 0;
+  video.play = () => {
+    attempts += 1;
+    video.paused = false;
+    return attempts === 1 ? new Promise(() => {}) : Promise.resolve();
+  };
+
+  harness.document.querySelector("#timeline-play").dispatch("click");
+  assert.equal(attempts, 1);
+  harness.setNow(2601);
+  vm.runInContext("applyGlobalTime(reviewController.clock.globalTime)", harness.context);
+  await flush();
+  assert.equal(attempts, 2);
+  assert.equal(vm.runInContext("reviewController.players.front.mediaFailed", harness.context), false);
 });
 
 test("buffering suppresses automatic correction and canplay performs one catch-up seek", async () => {
@@ -1011,12 +1200,95 @@ test("route changes abort stale catalog work and clean processing timers", async
   resolveCatalog();
   await flush();
   assert.equal(harness.window.location.pathname, "/processing");
-  assert.equal(harness.document.querySelector("#recording-rows").children.length, 0);
+  assert.equal(harness.document.querySelector("#recording-rows").children.length, 7);
+  assert.equal(harness.document.querySelector("#recording-rows").children.every((row) => row.classList.contains("skeleton-table-row")), true);
   vm.runInContext("navigate('/')", harness.context);
   assert.equal(harness.timers.size, 0);
   await flush();
   assert.equal(harness.calls.filter((call) => call.url === "/api/v1/catalog").length, 2);
   assert.equal(harness.document.querySelector("#recording-rows").children.length, 2);
+});
+
+test("route-sized skeletons reserve catalog, Processing, and Analyzer geometry until real responses arrive", async () => {
+  let resolveCatalog;
+  const catalogGate = new Promise((resolve) => { resolveCatalog = resolve; });
+  const catalogHarness = createHarness("/", async (url) => {
+    if (url === "/api/v1/catalog") { await catalogGate; return makeResponse(catalogFixture()); }
+    throw new Error(url);
+  });
+  assert.equal(catalogHarness.document.querySelector("#recordings-view").classList.contains("is-skeleton-loading"), true);
+  assert.equal(catalogHarness.document.querySelector("#recordings-page").getAttribute("aria-busy"), "true");
+  assert.equal(catalogHarness.document.querySelector("#recording-rows").children.length, 7);
+  assert.equal(catalogHarness.document.querySelector("#folder-tree").children.length, 6);
+  resolveCatalog();
+  await flush();
+  assert.equal(catalogHarness.document.querySelector("#recordings-view").classList.contains("is-skeleton-loading"), false);
+  assert.equal(catalogHarness.document.querySelector("#recording-rows").children.length, 2);
+
+  let resolveProcessing;
+  const processingGate = new Promise((resolve) => { resolveProcessing = resolve; });
+  const processingHarness = createHarness("/processing", async (url) => {
+    if (url === "/api/v1/processing/overview") { await processingGate; return makeResponse(overviewFixture()); }
+    throw new Error(url);
+  });
+  assert.equal(processingHarness.document.querySelector("#processing-view").getAttribute("aria-busy"), "true");
+  assert.equal(processingHarness.document.querySelector("#current-job-host").querySelector(".current-job--skeleton") !== null, true);
+  assert.equal(processingHarness.document.querySelector("#queue-rows").children.length, 5);
+  resolveProcessing();
+  await flush();
+  assert.equal(processingHarness.document.querySelector("#processing-view").getAttribute("aria-busy"), "false");
+  assert.equal(processingHarness.document.querySelector("#current-job-host").querySelector(".current-job--skeleton"), null);
+
+  const unavailableDetail = detailFixture();
+  unavailableDetail.analysis_state = "not_planned";
+  unavailableDetail.outputs = unavailableDetail.outputs.map((output) => ({ ...output, state: "not_requested", artifact: null }));
+  let resolveDetail;
+  const detailGate = new Promise((resolve) => { resolveDetail = resolve; });
+  const analyzerHarness = createHarness("/recordings/7", async (url) => {
+    if (url === "/api/v1/recordings/7") { await detailGate; return makeResponse(unavailableDetail); }
+    throw new Error(url);
+  });
+  assert.equal(analyzerHarness.document.querySelector("#analyzer-view").classList.contains("is-skeleton-loading"), true);
+  assert.equal(analyzerHarness.document.querySelector("#recording-details-panel").getAttribute("aria-busy"), "true");
+  assert.equal(analyzerHarness.document.querySelector("#output-rows").children.length, 3);
+  assert.equal(analyzerHarness.document.querySelector("#component-rows").children.length, 4);
+  assert.equal(analyzerHarness.document.querySelector("#front-preview-pane").classList.contains("is-skeleton-loading"), true);
+  assert.equal(analyzerHarness.document.querySelector("#imu-series-pane").classList.contains("is-skeleton-loading"), true);
+  assert.equal(analyzerHarness.document.querySelector("#front-message-title").textContent, "Loading recording details");
+  assert.equal(analyzerHarness.document.querySelector("#topdown-message-title").textContent, "Loading recording details");
+  assert.equal(analyzerHarness.document.querySelector("#imu-message-title").textContent, "Loading recording details");
+  assert.equal(analyzerHarness.document.querySelector("#front-status").textContent, "");
+  assert.equal(analyzerHarness.document.querySelector("#topdown-status").textContent, "");
+  assert.equal(analyzerHarness.document.querySelector("#imu-status").textContent, "");
+  assert.equal(analyzerHarness.document.querySelector("#front-state-badge").hidden, true);
+  assert.equal(analyzerHarness.document.querySelector("#topdown-state-badge").hidden, true);
+  assert.equal(analyzerHarness.document.querySelector("#imu-state-badge").hidden, true);
+  resolveDetail();
+  await flush();
+  assert.equal(analyzerHarness.document.querySelector("#analyzer-view").classList.contains("is-skeleton-loading"), false);
+  assert.equal(analyzerHarness.document.querySelector("#output-rows").children.length, 3);
+  assert.equal(analyzerHarness.document.querySelector("#output-rows").children.every((row) => !row.classList.contains("metadata-item--skeleton")), true);
+});
+
+test("initial request failures replace skeletons with truthful retryable states", async () => {
+  const catalogHarness = createHarness("/", async () => { throw new Error("catalog offline"); });
+  await flush();
+  assert.equal(catalogHarness.document.querySelector("#recordings-view").classList.contains("is-skeleton-loading"), false);
+  assert.equal(catalogHarness.document.querySelector("#recording-rows").children.length, 0);
+  assert.equal(catalogHarness.document.querySelector("#recording-failure").hidden, false);
+
+  const processingHarness = createHarness("/processing", async () => { throw new Error("processing offline"); });
+  await flush();
+  assert.equal(processingHarness.document.querySelector("#processing-view").classList.contains("is-skeleton-loading"), false);
+  assert.match(processingHarness.document.querySelector("#current-job-host").textContent, /Processing status unavailable/);
+  assert.equal(processingHarness.document.querySelector("#queue-empty").textContent, "The processing queue could not be loaded.");
+
+  const analyzerHarness = createHarness("/recordings/7", async () => { throw new Error("detail offline"); });
+  await flush();
+  assert.equal(analyzerHarness.document.querySelector("#analyzer-view").classList.contains("is-skeleton-loading"), false);
+  assert.equal(analyzerHarness.document.querySelector("#front-preview-pane").classList.contains("is-skeleton-loading"), false);
+  assert.equal(analyzerHarness.document.querySelector("#imu-series-pane").classList.contains("is-skeleton-loading"), false);
+  assert.equal(analyzerHarness.document.querySelector("#detail-error").hidden, false);
 });
 
 test("static runtime contains no mock arrays, static preview sources, fake progress interval, or unsafe markup sink", () => {

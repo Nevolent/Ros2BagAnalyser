@@ -145,7 +145,7 @@ def test_metadata_replacement_after_inventory_is_rejected_without_hiding_compani
     assert (recording_root / "changing.avi").is_file()
 
 
-def test_missing_companion_makes_total_size_unknown(tmp_path: Path) -> None:
+def test_missing_companion_keeps_known_source_size(tmp_path: Path) -> None:
     archive = tmp_path / "archive"
     archive.mkdir()
     create_recording(archive, "missing-video", include_video=False)
@@ -153,7 +153,12 @@ def test_missing_companion_makes_total_size_unknown(tmp_path: Path) -> None:
     recording = CatalogScanner(archive).scan().recordings[0]
 
     assert recording.ros_health is RosHealth.READABLE
-    assert recording.total_source_size_bytes is None
+    known_size = sum(
+        component.size_bytes or 0
+        for component in recording.components
+        if component.size_bytes is not None
+    )
+    assert recording.total_source_size_bytes == known_size
     video = next(
         item for item in recording.components if item.role is SourceRole.TOPDOWN_VIDEO
     )

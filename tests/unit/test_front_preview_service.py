@@ -23,6 +23,7 @@ from rosbag_analyser.persistence.processing_repository import (
 
 
 TOPIC = "/camera/image_raw"
+PLANNER_IDENTITY = "d" * 64
 
 
 class FakeRepository:
@@ -33,6 +34,7 @@ class FakeRepository:
         self.latest_failed_job: JobRecord | None = None
         self.request_count = 0
         self.invalid_artifact_ids: list[int | None] = []
+        self.delivery_requests: list[tuple[int, str, int, str]] = []
 
     def get_source(self, recording_id: int) -> ProcessingSourceRecord | None:
         return self.source if recording_id == self.source.id else None
@@ -51,6 +53,27 @@ class FakeRepository:
             active_job=self.active_job,
             latest_failed_job=self.latest_failed_job,
         )
+
+    def get_current_artifact_for_delivery(
+        self,
+        recording_id: int,
+        kind: str,
+        artifact_id: int,
+        planner_identity: str,
+    ) -> ArtifactRecord | None:
+        self.delivery_requests.append(
+            (recording_id, kind, artifact_id, planner_identity)
+        )
+        artifact = self.artifact
+        if (
+            artifact is None
+            or artifact.recording_id != recording_id
+            or artifact.kind != kind
+            or artifact.id != artifact_id
+            or planner_identity != PLANNER_IDENTITY
+        ):
+            return None
+        return artifact
 
     def get_active_job(self, recording_id: int, kind: str, cache_identity: str):
         del recording_id, kind, cache_identity
@@ -93,6 +116,9 @@ class FakeRepository:
 
 
 class FakeArtifactStore:
+    def __init__(self) -> None:
+        self.opened = object()
+
     def validate_media(
         self,
         relative_path: str,
@@ -101,6 +127,10 @@ class FakeArtifactStore:
         expected_manifest: dict[str, object],
     ) -> None:
         del relative_path, expected_size, cache_identity, expected_manifest
+
+    def open_media(self, *args: object) -> object:
+        del args
+        return self.opened
 
 
 class MissingArtifactStore(FakeArtifactStore):
@@ -249,6 +279,7 @@ def test_matching_ready_artifact_is_reused_without_a_job(tmp_path: Path) -> None
         resolver,
         repository,  # type: ignore[arg-type]
         FakeArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     state = service.request(11)
@@ -256,6 +287,45 @@ def test_matching_ready_artifact_is_reused_without_a_job(tmp_path: Path) -> None
     assert state.state == "ready"
     assert state.artifact == repository.artifact
     assert repository.request_count == 0
+
+
+def test_media_delivery_uses_persisted_target_without_resolving_source(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    metadata, database = _write_source(archive)
+    repository = FakeRepository(_source(metadata, database))
+    repository.artifact = ArtifactRecord(
+        id=3,
+        recording_id=11,
+        kind="front_preview",
+        cache_identity="a" * 64,
+        output_relative_path="rosbag-analyser/artifacts/front_preview/preview.mp4",
+        mime_type="video/mp4",
+        size_bytes=123,
+        coverage_start_ns=100,
+        coverage_end_ns=200,
+        manifest={"cache_identity": "a" * 64},
+        created_at=datetime.now(timezone.utc),
+    )
+    repository.source = None  # type: ignore[assignment]
+    store = FakeArtifactStore()
+    service = FrontPreviewService(
+        _resolver(archive, repository),
+        repository,  # type: ignore[arg-type]
+        store,  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
+    )
+
+    resolved = service.resolve_media(11, 3)
+
+    assert resolved is not None
+    assert resolved[0] is store.opened
+    assert resolved[1] is repository.artifact
+    assert repository.delivery_requests == [
+        (11, "front_preview", 3, PLANNER_IDENTITY)
+    ]
 
 
 def test_poll_state_tracks_processing_failure_and_ready_artifact(
@@ -286,6 +356,7 @@ def test_poll_state_tracks_processing_failure_and_ready_artifact(
         resolver,
         repository,  # type: ignore[arg-type]
         FakeArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     assert service.get_state(11).state == "processing"
@@ -354,6 +425,7 @@ def test_missing_ready_file_is_retired_and_retry_job_is_queued(
         resolver,
         repository,  # type: ignore[arg-type]
         MissingArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     state = service.request(11)
@@ -374,6 +446,7 @@ def test_damaged_recording_is_unavailable_and_creates_no_job(tmp_path: Path) -> 
         _resolver(archive, repository),
         repository,  # type: ignore[arg-type]
         FakeArtifactStore(),  # type: ignore[arg-type]
+        PLANNER_IDENTITY,
     )
 
     state = service.request(11)

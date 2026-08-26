@@ -308,15 +308,29 @@ class CatalogRepository:
         with open_connection(self.database_url) as connection:
             rows = connection.execute(
                 """
-                SELECT id, archive_relative_path, display_name,
-                       start_time_ns, duration_ns,
-                       total_source_size_bytes, storage_format, metadata_version,
-                       message_count, topic_count, ros_health,
-                       diagnostic_code, diagnostic_message,
-                       source_present, last_seen_generation
-                FROM recordings
-                WHERE source_present = TRUE OR %s
-                ORDER BY start_time_ns DESC NULLS LAST, display_name, id
+                SELECT recording.id, recording.archive_relative_path,
+                       recording.display_name, recording.start_time_ns,
+                       recording.duration_ns,
+                       COALESCE(
+                           recording.total_source_size_bytes,
+                           component_size.known_size_bytes
+                       ) AS total_source_size_bytes,
+                       recording.storage_format, recording.metadata_version,
+                       recording.message_count, recording.topic_count,
+                       recording.ros_health, recording.diagnostic_code,
+                       recording.diagnostic_message, recording.source_present,
+                       recording.last_seen_generation
+                FROM recordings AS recording
+                LEFT JOIN (
+                    SELECT recording_id, SUM(size_bytes)::BIGINT AS known_size_bytes
+                    FROM source_components
+                    WHERE size_bytes IS NOT NULL
+                    GROUP BY recording_id
+                ) AS component_size
+                  ON component_size.recording_id = recording.id
+                WHERE recording.source_present = TRUE OR %s
+                ORDER BY recording.start_time_ns DESC NULLS LAST,
+                         recording.display_name, recording.id
                 LIMIT %s
                 """,
                 (include_missing, limit),
@@ -328,14 +342,27 @@ class CatalogRepository:
             connection.isolation_level = IsolationLevel.REPEATABLE_READ
             row = connection.execute(
                 """
-                SELECT id, archive_relative_path, display_name,
-                       start_time_ns, duration_ns,
-                       total_source_size_bytes, storage_format, metadata_version,
-                       message_count, topic_count, ros_health,
-                       diagnostic_code, diagnostic_message,
-                       source_present, last_seen_generation
-                FROM recordings
-                WHERE id = %s
+                SELECT recording.id, recording.archive_relative_path,
+                       recording.display_name, recording.start_time_ns,
+                       recording.duration_ns,
+                       COALESCE(
+                           recording.total_source_size_bytes,
+                           component_size.known_size_bytes
+                       ) AS total_source_size_bytes,
+                       recording.storage_format, recording.metadata_version,
+                       recording.message_count, recording.topic_count,
+                       recording.ros_health, recording.diagnostic_code,
+                       recording.diagnostic_message, recording.source_present,
+                       recording.last_seen_generation
+                FROM recordings AS recording
+                LEFT JOIN (
+                    SELECT recording_id, SUM(size_bytes)::BIGINT AS known_size_bytes
+                    FROM source_components
+                    WHERE size_bytes IS NOT NULL
+                    GROUP BY recording_id
+                ) AS component_size
+                  ON component_size.recording_id = recording.id
+                WHERE recording.id = %s
                 """,
                 (recording_id,),
             ).fetchone()

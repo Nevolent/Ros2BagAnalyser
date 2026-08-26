@@ -16,8 +16,10 @@ from rosbag_analyser.artifact_store import (
 )
 from rosbag_analyser.catalog.metadata import MetadataError, TopicFact, parse_metadata_file
 from rosbag_analyser.catalog.paths import (
+    SOURCE_CACHE_IDENTITY_POLICY,
     SourceFileIdentity,
     UnsafeSourcePath,
+    cache_source_identity_values,
     filesystem_text_from_safe,
     safe_filesystem_text,
     source_file_identity,
@@ -241,10 +243,12 @@ class FrontPreviewService:
         resolver: FrontSourceResolver,
         repository: ProcessingRepository,
         artifact_store: ArtifactStore,
+        planner_identity: str,
     ) -> None:
         self.resolver = resolver
         self.repository = repository
         self.artifact_store = artifact_store
+        self.planner_identity = planner_identity
 
     def get_state(self, recording_id: int) -> PreviewDisplay:
         resolution = self.resolver.resolve(recording_id)
@@ -349,23 +353,24 @@ class FrontPreviewService:
     def resolve_media(
         self, recording_id: int, artifact_id: int
     ) -> tuple[OpenedMedia, ArtifactRecord] | None:
-        state = self.get_state(recording_id)
-        if (
-            state.state != "ready"
-            or state.artifact is None
-            or state.artifact.id != artifact_id
-        ):
+        artifact = self.repository.get_current_artifact_for_delivery(
+            recording_id,
+            FRONT_PREVIEW_KIND,
+            artifact_id,
+            self.planner_identity,
+        )
+        if artifact is None:
             return None
         try:
             opened = self.artifact_store.open_media(
-                state.artifact.output_relative_path,
-                state.artifact.size_bytes,
-                state.artifact.cache_identity,
-                state.artifact.manifest,
+                artifact.output_relative_path,
+                artifact.size_bytes,
+                artifact.cache_identity,
+                artifact.manifest,
             )
         except ArtifactStoreError:
             return None
-        return opened, state.artifact
+        return opened, artifact
 
 
 def encoder_identity() -> str:
@@ -396,6 +401,7 @@ def _cache_identity(
     document = {
         "artifact_kind": FRONT_PREVIEW_KIND,
         "processor_version": PROCESSOR_VERSION,
+        "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
         "timing_policy": FRONT_TIMING_POLICY,
         "recording": {
             "id": record.identity_recording_id,
@@ -403,8 +409,8 @@ def _cache_identity(
             "bag_start_ns": record.start_time_ns,
             "bag_duration_ns": record.duration_ns,
         },
-        "metadata": _identity_values(metadata_identity),
-        "database": _identity_values(database_identity),
+        "metadata": cache_source_identity_values(metadata_identity),
+        "database": cache_source_identity_values(database_identity),
         "topic": {
             "configured_name": configured_topic,
             "name": topic.name,
@@ -419,16 +425,6 @@ def _cache_identity(
         document, sort_keys=True, separators=(",", ":"), ensure_ascii=True
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
-
-
-def _identity_values(identity: SourceFileIdentity) -> dict[str, int]:
-    return {
-        "device_id": identity.device_id,
-        "inode": identity.inode,
-        "mode": identity.mode,
-        "size_bytes": identity.size_bytes,
-        "mtime_ns": identity.mtime_ns,
-    }
 
 
 def _resolve_declared_database(

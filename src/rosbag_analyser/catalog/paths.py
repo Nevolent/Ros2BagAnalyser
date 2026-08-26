@@ -15,6 +15,7 @@ DEFAULT_MAX_CATALOG_DIRECTORIES = 10_000
 DEFAULT_MAX_RECORDING_DIRECTORIES = 5_000
 DEFAULT_MAX_DIRECTORY_ENTRIES = 2_000
 DEFAULT_MAX_RECORDING_ENTRIES = 256
+SOURCE_CACHE_IDENTITY_POLICY = "portable-stat-v1"
 
 
 class UnsafeSourcePath(ValueError):
@@ -31,6 +32,7 @@ class SourceFileIdentity:
     mode: int
     size_bytes: int
     mtime_ns: int
+    ctime_ns: int
 
 
 @dataclass(frozen=True)
@@ -390,4 +392,21 @@ def source_file_identity(details: os.stat_result) -> SourceFileIdentity:
         mode=details.st_mode,
         size_bytes=details.st_size,
         mtime_ns=details.st_mtime_ns,
+        ctime_ns=details.st_ctime_ns,
     )
+
+
+def cache_source_identity_values(identity: SourceFileIdentity) -> dict[str, int]:
+    """Return source facts stable across read-only network remounts.
+
+    Device and inode remain part of the live descriptor identity used before,
+    during, and after a source read. They are deliberately excluded from the
+    persisted cache document because CIFS may assign a different inode to an
+    otherwise unchanged file between the catalog scan and worker execution.
+    """
+    return {
+        "file_type": stat.S_IFMT(identity.mode),
+        "size_bytes": identity.size_bytes,
+        "mtime_ns": identity.mtime_ns,
+        "ctime_ns": identity.ctime_ns,
+    }

@@ -38,6 +38,7 @@ const catalogElements = {
 };
 
 const processingElements = {
+  view: byId("processing-view"),
   notice: byId("processing-notice"),
   lastUpdate: byId("processing-last-update"),
   refresh: byId("refresh-processing"),
@@ -107,6 +108,8 @@ const toastElements = {
 };
 
 const detailElements = {
+  view: byId("analyzer-view"),
+  panel: byId("recording-details-panel"),
   name: byId("detail-name"),
   recorded: byId("detail-recorded"),
   duration: byId("detail-duration"),
@@ -186,10 +189,14 @@ const MINIMUM_POLL_MS = 1000;
 const MAXIMUM_POLL_MS = 30000;
 const VIDEO_DRIFT_TOLERANCE_SECONDS = 0.1;
 const VIDEO_SEEK_RETRY_MS = 1500;
+const VIDEO_PLAY_RETRY_MS = 1500;
+const VIDEO_EXPLICIT_SEEK_EPSILON_SECONDS = 0.001;
 const GRAPH_SEEK_STEP_SECONDS = 0.1;
 const GRAPH_SEEK_PAGE_SECONDS = 5;
 const RECORDING_DETAILS_RESIZE_DURATION = 360;
 const RECORDING_DETAILS_GRAPH_DURATION = 520;
+const INTERFACE_SCALE = 1.25;
+const interfacePixels = (value) => value * INTERFACE_SCALE;
 
 let routeGeneration = 0;
 let routeController = null;
@@ -211,8 +218,7 @@ let folderPanelAnimations = [];
 const transientPanelAnimations = new WeakMap();
 let recordingDetailsTransitionVersion = 0;
 let recordingDetailsLayoutAnimations = [];
-let toolIndicatorAnimation = null;
-let clearFilterAnimation = null;
+let recordingDetailsGraphFrame = null;
 let clearFilterShouldShow = false;
 let tableHeightAnimation = null;
 
@@ -267,6 +273,140 @@ function node(tag, text, className) {
   return element;
 }
 
+function skeletonLine(className = "") {
+  const line = node("span", null, `skeleton-line ${className}`.trim());
+  line.setAttribute("aria-hidden", "true");
+  return line;
+}
+
+function createCatalogSkeletonRow(index) {
+  const row = node("tr", null, "skeleton-table-row");
+  row.setAttribute("aria-hidden", "true");
+  const widths = ["skeleton-check", index % 2 ? "skeleton-name-short" : "skeleton-name", "skeleton-date", "skeleton-value", "skeleton-value-short", "skeleton-status", "skeleton-status"];
+  widths.forEach((width) => {
+    const cell = document.createElement("td");
+    cell.append(skeletonLine(width));
+    row.append(cell);
+  });
+  return row;
+}
+
+function setCatalogLoading(loading) {
+  byId("recordings-view").classList.toggle("is-skeleton-loading", loading);
+  catalogElements.page.setAttribute("aria-busy", String(loading));
+  catalogElements.loading.hidden = !loading;
+  [catalogElements.folderSearch, catalogElements.search, catalogElements.rescan, catalogElements.selectAll, catalogElements.previous, catalogElements.next,
+    ...catalogElements.filterControls.map((control) => control.querySelector(".recording-filter-trigger")),
+    ...document.querySelectorAll(".table-sort")].filter(Boolean).forEach((control) => { control.disabled = loading; });
+}
+
+function renderCatalogSkeleton() {
+  setCatalogLoading(true);
+  catalogElements.failure.hidden = true;
+  catalogElements.empty.hidden = true;
+  catalogElements.filterEmpty.hidden = true;
+  catalogElements.rows.replaceChildren(...Array.from({ length: 7 }, (_, index) => createCatalogSkeletonRow(index)));
+  catalogElements.folderTree.replaceChildren(...Array.from({ length: 6 }, (_, index) => {
+    const item = node("div", null, `folder-skeleton folder-skeleton--${(index % 3) + 1}`);
+    item.setAttribute("aria-hidden", "true");
+    item.append(skeletonLine("skeleton-folder-icon"), skeletonLine("skeleton-folder-name"), skeletonLine("skeleton-folder-count"));
+    return item;
+  }));
+}
+
+function createProcessingSkeletonRow(columnCount, index) {
+  const row = node("tr", null, "skeleton-table-row processing-skeleton-row");
+  row.setAttribute("aria-hidden", "true");
+  Array.from({ length: columnCount }, (_, column) => {
+    const cell = document.createElement("td");
+    const shape = column === 0 && columnCount > 4
+      ? "skeleton-check"
+      : column === columnCount - 1
+        ? "skeleton-action"
+        : (index + column) % 3 === 0 ? "skeleton-value-short" : "skeleton-value";
+    cell.append(skeletonLine(shape));
+    row.append(cell);
+    return cell;
+  });
+  return row;
+}
+
+function renderProcessingSkeleton() {
+  processingElements.view.classList.add("is-skeleton-loading");
+  processingElements.view.setAttribute("aria-busy", "true");
+  processingElements.currentHost.replaceChildren();
+  const article = node("article", null, "panel current-job current-job--skeleton");
+  article.setAttribute("aria-hidden", "true");
+  const body = node("div", null, "current-job-body");
+  const identity = node("div", null, "current-job-main skeleton-current-copy");
+  identity.append(skeletonLine("skeleton-current-title"), skeletonLine("skeleton-current-name"));
+  const progress = node("div", null, "current-job-progress skeleton-current-progress");
+  progress.append(skeletonLine("skeleton-progress"), skeletonLine("skeleton-current-meta"));
+  const actions = node("div", null, "current-job-side");
+  actions.append(skeletonLine("skeleton-current-action"));
+  body.append(identity, progress, actions);
+  article.append(body);
+  processingElements.currentHost.append(article);
+  processingElements.queueRows.replaceChildren(...Array.from({ length: 5 }, (_, index) => createProcessingSkeletonRow(6, index)));
+  processingElements.queueEmpty.hidden = true;
+  ["processing-queue-count", "processing-failed-count", "processing-history-count"].forEach((id) => {
+    byId(id).textContent = "";
+    byId(id).classList.add("skeleton-count");
+  });
+}
+
+function finishProcessingSkeleton() {
+  processingElements.view.classList.remove("is-skeleton-loading");
+  processingElements.view.setAttribute("aria-busy", "false");
+  ["processing-queue-count", "processing-failed-count", "processing-history-count"].forEach((id) => byId(id).classList.remove("skeleton-count"));
+}
+
+function renderProcessingUnavailable() {
+  finishProcessingSkeleton();
+  ["processing-queue-count", "processing-failed-count", "processing-history-count"].forEach((id) => { byId(id).textContent = "—"; });
+  processingElements.currentHost.replaceChildren();
+  const article = node("article", null, "panel current-job current-job--empty");
+  article.setAttribute("aria-label", "Processing status unavailable");
+  const empty = node("div", null, "current-job-empty-state");
+  empty.append(node("h2", "Processing status unavailable"), node("p", "Refresh to try loading the saved processing state again."));
+  article.append(empty);
+  processingElements.currentHost.append(article);
+  processingElements.queueRows.replaceChildren();
+  processingElements.queueEmpty.textContent = "The processing queue could not be loaded.";
+  processingElements.queueEmpty.hidden = false;
+}
+
+function renderProcessingPageSkeleton(view) {
+  const rows = view === "failed" ? processingElements.failureRows : processingElements.historyRows;
+  const empty = view === "failed" ? processingElements.failuresEmpty : processingElements.historyEmpty;
+  const panel = byId(view === "failed" ? "processing-failures-panel" : "processing-history-panel");
+  panel.setAttribute("aria-busy", "true");
+  rows.replaceChildren(...Array.from({ length: 5 }, (_, index) => createProcessingSkeletonRow(4, index)));
+  empty.hidden = true;
+  if (view === "history") {
+    processingElements.historyDescription.textContent = "Loading completed jobs…";
+    processingElements.historyMore.hidden = true;
+  }
+}
+
+function createMetadataSkeletonItems(count) {
+  return Array.from({ length: count }, (_, index) => {
+    const item = node("article", null, "metadata-item metadata-item--skeleton");
+    item.setAttribute("aria-hidden", "true");
+    const copy = node("div");
+    copy.append(skeletonLine(index % 2 ? "skeleton-metadata-title-short" : "skeleton-metadata-title"), skeletonLine("skeleton-metadata-copy"));
+    const facts = node("div");
+    facts.append(skeletonLine("skeleton-metadata-size"), skeletonLine("skeleton-metadata-state"));
+    item.append(copy, facts);
+    return item;
+  });
+}
+
+function setAnalyzerLoading(loading) {
+  detailElements.view.classList.toggle("is-skeleton-loading", loading);
+  detailElements.panel.setAttribute("aria-busy", String(loading));
+}
+
 function icon(name, className = "") {
   const namespace = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(namespace, "svg");
@@ -300,11 +440,11 @@ function setTransientPanelOpen(panel, open) {
     return;
   }
   const animation = panel.animate(open ? [
-    { opacity: 0, transform: "translate3d(0, -4px, 0)" },
+    { opacity: 0, transform: `translate3d(0, ${interfacePixels(-4)}px, 0)` },
     { opacity: 1, transform: "translate3d(0, 0, 0)" },
   ] : [
     { opacity: 1, transform: "translate3d(0, 0, 0)" },
-    { opacity: 0, transform: "translate3d(0, -2px, 0)" },
+    { opacity: 0, transform: `translate3d(0, ${interfacePixels(-2)}px, 0)` },
   ], {
     duration: open ? 150 : 100,
     easing: open ? "cubic-bezier(.16, 1, .3, 1)" : "cubic-bezier(.4, 0, 1, 1)",
@@ -386,16 +526,7 @@ function navigate(path, { replace = false } = {}) {
   activateRoute(route, { focus: true });
 }
 
-function setActiveView(view, { previousView = null } = {}) {
-  const indicator = document.querySelector(".tool-list-indicator");
-  const canAnimateIndicator = previousView !== null && previousView !== view
-    && !reduceMotionQuery.matches
-    && indicator
-    && typeof indicator.animate === "function"
-    && typeof window.getComputedStyle === "function";
-  const previousTransform = canAnimateIndicator ? window.getComputedStyle(indicator).transform : "";
-  toolIndicatorAnimation?.cancel();
-  if (canAnimateIndicator) indicator.style.transition = "none";
+function setActiveView(view) {
   viewPanels.forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== view; });
   navLinks.forEach((link) => {
     const active = link.dataset.nav === view;
@@ -403,22 +534,12 @@ function setActiveView(view, { previousView = null } = {}) {
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
-  if (canAnimateIndicator) {
-    const nextTransform = window.getComputedStyle(indicator).transform;
-    indicator.style.transition = "";
-    toolIndicatorAnimation = indicator.animate([
-      { transform: previousTransform },
-      { transform: nextTransform },
-    ], { duration: 280, easing: "cubic-bezier(.16, 1, .3, 1)" });
-    toolIndicatorAnimation.finished.then(() => { toolIndicatorAnimation = null; }).catch(() => {});
-  }
   syncFolderReveal();
   const label = view === "recordings" ? "Recordings" : view === "processing" ? "Processing" : "Analyzer";
   document.title = `${label} — Tectrace`;
 }
 
 function activateRoute(route, { focus = false } = {}) {
-  const previousView = currentRoute?.view || null;
   routeGeneration += 1;
   currentRoute = route;
   if (routeController) routeController.abort();
@@ -429,7 +550,7 @@ function activateRoute(route, { focus = false } = {}) {
     if (dialog?.open) dialog.close();
   });
   pendingCancellation = null;
-  setActiveView(route.view, { previousView });
+  setActiveView(route.view);
   if (focus) window.requestAnimationFrame(() => {
     viewPanels.find((panel) => panel.dataset.viewPanel === route.view)?.focus();
   });
@@ -437,6 +558,8 @@ function activateRoute(route, { focus = false } = {}) {
     if (catalogState.data) renderCatalog();
     else loadCatalog({ initial: true });
   } else if (route.view === "processing") {
+    if (processingState.overview) renderProcessingOverview();
+    else renderProcessingSkeleton();
     loadProcessing({ manual: true });
   } else {
     analyzerNav.href = `/recordings/${route.recordingId}`;
@@ -473,23 +596,6 @@ function recordedDateParts(value) {
       }).format(date),
     };
   } catch { return null; }
-}
-
-function recordingDisplayName(value) {
-  const name = String(value || "");
-  const match = name.match(/^(\d{4})_(\d{2})_(\d{2})_(.+)$/);
-  if (!match) return name;
-  const [year, month, day] = match.slice(1, 4).map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return name;
-  const readable = match[4]
-    .replaceAll("_", " ")
-    .replace(/([A-Za-z])(\d)/g, "$1 $2")
-    .replace(/(\d)([A-Za-z])/g, "$1 $2")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!readable) return name;
-  return readable.split(" ").map((word) => word.charAt(0).toLocaleUpperCase() + word.slice(1)).join(" ");
 }
 
 function formatDurationNanoseconds(value) {
@@ -596,8 +702,7 @@ async function loadCatalog({ initial = false, retained = false } = {}) {
   catalogState.loading = true;
   catalogState.loadingGeneration = routeGeneration;
   if (initial) {
-    catalogElements.loading.hidden = false;
-    catalogElements.failure.hidden = true;
+    renderCatalogSkeleton();
   }
   const generation = routeGeneration;
   try {
@@ -615,7 +720,9 @@ async function loadCatalog({ initial = false, retained = false } = {}) {
     if (catalogState.data || retained) {
       renderCatalog();
     } else {
-      catalogElements.loading.hidden = true;
+      setCatalogLoading(false);
+      catalogElements.rows.replaceChildren();
+      catalogElements.folderTree.replaceChildren();
       catalogElements.failure.hidden = false;
       catalogElements.failureText.textContent = error.message;
     }
@@ -632,7 +739,7 @@ async function loadCatalog({ initial = false, retained = false } = {}) {
 function renderCatalog() {
   const document = catalogState.data;
   if (!document) return;
-  catalogElements.loading.hidden = true;
+  setCatalogLoading(false);
   catalogElements.failure.hidden = true;
   const completed = document.scan.completed_at;
   catalogElements.lastScanned.textContent = completed
@@ -756,7 +863,7 @@ function filteredRecordings() {
   const query = catalogState.query;
   const path = catalogState.folderPath;
   const rows = catalogState.data.recordings.filter((recording) => {
-    const matchesQuery = !query || `${recordingDisplayName(recording.name)} ${recording.name} ${recording.folder_path}`.toLocaleLowerCase().includes(query);
+    const matchesQuery = !query || `${recording.name} ${recording.folder_path}`.toLocaleLowerCase().includes(query);
     const matchesFolder = !path || recording.folder_path === path || recording.folder_path.startsWith(`${path}/`);
     const matchesAnalysis = catalogState.analysis === "all" || recording.analysis_state === catalogState.analysis;
     const matchesHealth = catalogState.health === "all" || recording.presentation_health === catalogState.health;
@@ -770,7 +877,7 @@ function filteredRecordings() {
   return rows.sort((left, right) => {
     const key = catalogState.sort.key;
     let compared = 0;
-    if (key === "name") compared = recordingDisplayName(left.name).localeCompare(recordingDisplayName(right.name));
+    if (key === "name") compared = left.name.localeCompare(right.name);
     else if (key === "recorded") compared = compareIntegerStrings(left.start_time_ns, right.start_time_ns);
     else if (key === "duration") compared = compareIntegerStrings(left.duration_ns, right.duration_ns);
     else if (key === "size") compared = compareIntegerStrings(left.total_source_size_bytes, right.total_source_size_bytes);
@@ -801,14 +908,11 @@ function statusIndicator(label, className, details, iconName) {
     const viewportWidth = window.innerWidth || document.documentElement?.clientWidth || 0;
     const viewportHeight = window.innerHeight || document.documentElement?.clientHeight || 0;
     if (!viewportWidth || !viewportHeight) return;
-    const gap = 8;
-    const edge = 8;
-    const width = bounds.width || 238;
+    const gap = interfacePixels(8);
+    const edge = interfacePixels(8);
+    const width = bounds.width || interfacePixels(238);
     const height = bounds.height || 0;
-    const roomOnRight = viewportWidth - anchor.right;
-    const left = roomOnRight >= width + gap
-      ? anchor.right + gap
-      : Math.max(edge, anchor.left - width - gap);
+    const left = Math.max(edge, anchor.left - width - gap);
     const top = Math.max(edge, Math.min(viewportHeight - height - edge, anchor.top + (anchor.height - height) / 2));
     tooltip.style.left = `${Math.min(left, viewportWidth - width - edge)}px`;
     tooltip.style.top = `${top}px`;
@@ -851,14 +955,12 @@ function createRecordingRow(recording) {
 
   const nameCell = document.createElement("td");
   const copy = node("span", null, "recording-copy");
-  const link = node("a", recordingDisplayName(recording.name), "recording-link");
+  const link = node("a", recording.name, "recording-link");
   link.href = `/recordings/${recording.id}`;
   link.dataset.route = "";
   link.title = recording.name;
-  link.setAttribute("aria-label", `${recordingDisplayName(recording.name)}. Exact source name ${recording.name}. Recorded ${formatRecorded(recording.start_time_ns)}.`);
-  const sublabel = node("span", recording.name, "cell-sublabel");
-  sublabel.title = recording.name;
-  copy.append(link, sublabel);
+  link.setAttribute("aria-label", `${recording.name}. Recorded ${formatRecorded(recording.start_time_ns)}.`);
+  copy.append(link);
   nameCell.append(copy);
   row.append(selection, nameCell);
   const recordedCell = node("td", null, "date-cell");
@@ -936,28 +1038,7 @@ function renderPagination(totalPages) {
 function setClearFilterVisible(visible) {
   if (visible === clearFilterShouldShow) return;
   clearFilterShouldShow = visible;
-  clearFilterAnimation?.cancel();
-  if (visible) catalogElements.clearFilters.hidden = false;
-  if (reduceMotionQuery.matches || typeof catalogElements.clearFilters.animate !== "function") {
-    catalogElements.clearFilters.hidden = !visible;
-    return;
-  }
-  const width = catalogElements.clearFilters.scrollWidth;
-  const animation = catalogElements.clearFilters.animate(visible ? [
-    { width: "0px", opacity: 0, paddingInline: "0px" },
-    { width: `${width}px`, opacity: 1, paddingInline: "7px" },
-  ] : [
-    { width: `${width}px`, opacity: 1, paddingInline: "7px" },
-    { width: "0px", opacity: 0, paddingInline: "0px" },
-  ], {
-    duration: visible ? 180 : 140,
-    easing: "cubic-bezier(.22, 1, .36, 1)",
-  });
-  clearFilterAnimation = animation;
-  animation.finished.then(() => {
-    if (!clearFilterShouldShow) catalogElements.clearFilters.hidden = true;
-    if (clearFilterAnimation === animation) clearFilterAnimation = null;
-  }).catch(() => {});
+  catalogElements.clearFilters.hidden = !visible;
 }
 
 function renderRecordingTableWithHeightTransition() {
@@ -986,14 +1067,12 @@ function updateSelectionState() {
   catalogElements.selectAll.checked = visible.length > 0 && checked === visible.length;
   catalogElements.selectAll.indeterminate = checked > 0 && checked < visible.length;
   catalogElements.selectedCount.textContent = String(catalogState.selectedIds.size);
+  document.querySelector(".table-filter-bar")?.classList.toggle("has-selection", catalogState.selectedIds.size > 0);
   catalogElements.selectionContext.hidden = catalogState.selectedIds.size === 0;
   catalogElements.prepare.disabled = catalogState.selectedIds.size === 0 || catalogState.loading;
-  const filterBar = catalogElements.prepare.closest(".table-filter-bar");
-  filterBar?.classList.toggle("has-selection", catalogState.selectedIds.size > 0);
   catalogElements.prepare.setAttribute("aria-hidden", String(catalogState.selectedIds.size === 0));
   catalogElements.prepare.tabIndex = catalogState.selectedIds.size === 0 ? -1 : 0;
   const filtersActive = Boolean(catalogState.query || catalogState.folderPath || catalogState.analysis !== "all" || catalogState.health !== "all");
-  filterBar?.classList.toggle("has-active-filters", filtersActive);
   setClearFilterVisible(filtersActive);
 }
 
@@ -1022,8 +1101,8 @@ async function rescanCatalog() {
   } catch (error) {
     if (error?.name !== "AbortError") {
       if (catalogState.data) renderCatalog();
-      catalogElements.lastScanned.textContent = "Rescan failed · previous catalog retained";
-      announce("Archive scan failed. The previous catalog is still visible.");
+      catalogElements.lastScanned.textContent = `Rescan failed: ${error.message} · previous catalog retained`;
+      announce(`Archive scan failed. ${error.message} The previous catalog is still visible.`);
     }
   } finally {
     catalogElements.rescan.disabled = false;
@@ -1075,7 +1154,7 @@ function updatePreparationDialog() {
   const kinds = selectedOutputKinds();
   preparationElements.summary.textContent = `${recordings.length} recording${recordings.length === 1 ? "" : "s"} selected`;
   preparationElements.recordings.replaceChildren(...recordings.map((recording) => {
-    const item = node("span", recordingDisplayName(recording.name));
+    const item = node("span", recording.name);
     item.title = recording.name;
     return item;
   }));
@@ -1171,7 +1250,11 @@ function setProcessingTab(tab) {
   ["queue", "failures", "history"].forEach((name) => {
     byId(`processing-${name}-panel`).hidden = name !== (tab === "failed" ? "failures" : tab);
   });
-  if (tab !== "queue") loadProcessingPage(tab, { append: false });
+  if (tab !== "queue") {
+    if (!processingState.pages[tab]) renderProcessingPageSkeleton(tab);
+    else renderProcessingPage(tab);
+    loadProcessingPage(tab, { append: false });
+  }
   else renderQueue();
   syncProcessingTabIndicator();
 }
@@ -1210,6 +1293,8 @@ function validateOverview(document) {
 
 async function loadProcessing({ manual = false } = {}) {
   if (currentRoute?.view !== "processing" || processingState.pollController) return;
+  const initialLoad = !processingState.overview;
+  if (initialLoad && !processingElements.view.classList.contains("is-skeleton-loading")) renderProcessingSkeleton();
   if (manual) processingElements.refresh.disabled = true;
   const serial = ++processingState.requestSerial;
   const controller = new AbortController();
@@ -1221,13 +1306,16 @@ async function loadProcessing({ manual = false } = {}) {
     overview.queued_count = overview.queue.length;
     processingState.overview = overview;
     processingState.pollFailures = 0;
+    finishProcessingSkeleton();
     renderProcessingOverview();
     showNotice(processingElements.notice, overview.worker_online ? "" : "Worker offline. Queued work is paused until the serial worker returns.", overview.worker_online ? "" : "warning");
     if (processingState.tab !== "queue") await loadProcessingPage(processingState.tab, { append: false });
   } catch (error) {
     if (error?.name !== "AbortError") {
       processingState.pollFailures += 1;
-      showNotice(processingElements.notice, `${error.message} Previously loaded processing facts are retained.`, "error");
+      const retained = processingState.overview ? " Previously loaded processing facts are retained." : " No processing facts are available yet.";
+      showNotice(processingElements.notice, `${error.message}${retained}`, "error");
+      if (initialLoad && !processingState.overview) renderProcessingUnavailable();
     }
   } finally {
     if (processingState.pollController === controller) {
@@ -1287,9 +1375,11 @@ function finishControls(jobIds, action, button) {
 function renderProcessingOverview() {
   const overview = processingState.overview;
   if (!overview) return;
-  byId("processing-queue-count").textContent = String(overview.queued_count);
-  byId("processing-failed-count").textContent = String(overview.failed_count);
-  byId("processing-history-count").textContent = String(overview.succeeded_count);
+  finishProcessingSkeleton();
+  processingElements.queueEmpty.textContent = "The processing queue is empty.";
+  byId("processing-queue-count").textContent = String(overview.queued_count ?? overview.queue.length);
+  byId("processing-failed-count").textContent = String(overview.failed_count ?? 0);
+  byId("processing-history-count").textContent = String(overview.succeeded_count ?? 0);
   processingElements.lastUpdate.textContent = `Updated ${formatDateTime(overview.server_time)}`;
   renderCurrentJob();
   renderQueue();
@@ -1342,7 +1432,7 @@ function renderCurrentJob() {
   const exact = processingLink(job, job.recording_name);
   exact.className = "recording-reference";
   exact.title = job.recording_name;
-  exact.setAttribute("aria-label", `Open ${recordingDisplayName(job.recording_name)} in Analyzer`);
+  exact.setAttribute("aria-label", `Open ${job.recording_name} in Analyzer`);
   copy.append(titleLine, exact);
   main.append(copy);
   const meta = node("dl", null, "current-job-meta");
@@ -1371,7 +1461,7 @@ function renderCurrentJob() {
     button.type = "button";
     button.disabled = controlIsBusy(job.id, control);
     button.append(icon(control === "pause" ? "pause" : control === "resume" ? "play" : "x"), node("span", humanize(control)));
-    button.setAttribute("aria-label", `${humanize(control)} ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${recordingDisplayName(job.recording_name)}`);
+    button.setAttribute("aria-label", `${humanize(control)} ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
     button.addEventListener("click", () => {
       if (control === "cancel") requestCancellation([job], button);
       else controlJob(job.id, control, button);
@@ -1444,7 +1534,7 @@ function renderQueue() {
     checkbox.type = "checkbox";
     checkbox.className = "queue-row-select";
     checkbox.checked = processingState.selectedQueueIds.has(job.id);
-    checkbox.setAttribute("aria-label", `Select ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${recordingDisplayName(job.recording_name)}`);
+    checkbox.setAttribute("aria-label", `Select ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) processingState.selectedQueueIds.add(job.id);
       else processingState.selectedQueueIds.delete(job.id);
@@ -1453,7 +1543,7 @@ function renderQueue() {
     });
     selectionCell.append(checkbox);
     const recording = node("td", null, "queue-recording");
-    const link = processingLink(job, recordingDisplayName(job.recording_name));
+    const link = processingLink(job, job.recording_name);
     link.title = job.recording_name;
     recording.append(link, node("span", job.recording_name, "cell-sublabel"));
     const ready = node("td", null, "queue-estimate");
@@ -1475,8 +1565,9 @@ function renderQueue() {
       button.type = "button";
       button.disabled = controlIsBusy(job.id, control);
       button.title = label;
-      button.setAttribute("aria-label", `${label} ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${recordingDisplayName(job.recording_name)}`);
+      button.setAttribute("aria-label", `${label} ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
       button.append(icon(iconName));
+      if (control === "cancel") button.append(node("span", "Cancel"));
       button.addEventListener("click", () => {
         if (control === "cancel") requestCancellation([job], button);
         else reorderJobs([job.id], control === "move_earlier" ? "earlier" : "later", button);
@@ -1504,16 +1595,19 @@ function updateQueueSelectionState() {
   processingElements.queueSelectAll.indeterminate = selected.length > 0 && selected.length < queue.length;
   const selectedIds = new Set(selected.map((job) => job.id));
   const canMoveEarlier = selected.some((job) => {
+    if (!(job.allowed_controls || []).includes("move_earlier")) return false;
     const index = queue.findIndex((candidate) => candidate.id === job.id);
     return index > 0 && !selectedIds.has(queue[index - 1].id);
   });
   const canMoveLater = selected.some((job) => {
+    if (!(job.allowed_controls || []).includes("move_later")) return false;
     const index = queue.findIndex((candidate) => candidate.id === job.id);
     return index >= 0 && index < queue.length - 1 && !selectedIds.has(queue[index + 1].id);
   });
   processingElements.moveEarlier.disabled = !canMoveEarlier || selected.some((job) => controlIsBusy(job.id, "move_earlier"));
   processingElements.moveLater.disabled = !canMoveLater || selected.some((job) => controlIsBusy(job.id, "move_later"));
-  processingElements.cancelSelected.disabled = selected.length === 0 || selected.some((job) => controlIsBusy(job.id, "cancel"));
+  processingElements.cancelSelected.disabled = selected.length === 0
+    || selected.some((job) => !(job.allowed_controls || []).includes("cancel") || controlIsBusy(job.id, "cancel"));
   processingElements.cancelSelected.querySelector("span").textContent = selected.length > 0 ? `Cancel ${selected.length} selected` : "Cancel selected";
 }
 
@@ -1544,7 +1638,18 @@ async function loadProcessingPage(view, { append = false } = {}) {
     }
     renderProcessingPage(view);
   } catch (error) {
-    if (error?.name !== "AbortError") showNotice(processingElements.notice, `${error.message} The prior job page has been retained.`, "error");
+    if (error?.name !== "AbortError") {
+      showNotice(processingElements.notice, `${error.message} The prior job page has been retained.`, "error");
+      if (!previous) {
+        const rows = view === "failed" ? processingElements.failureRows : processingElements.historyRows;
+        const empty = view === "failed" ? processingElements.failuresEmpty : processingElements.historyEmpty;
+        const panel = byId(view === "failed" ? "processing-failures-panel" : "processing-history-panel");
+        panel.setAttribute("aria-busy", "false");
+        rows.replaceChildren();
+        empty.textContent = view === "failed" ? "Failures could not be loaded." : "Processing history could not be loaded.";
+        empty.hidden = false;
+      }
+    }
   } finally {
     if (processingState.pageController === controller) processingState.pageController = null;
   }
@@ -1552,16 +1657,21 @@ async function loadProcessingPage(view, { append = false } = {}) {
 
 function renderProcessingPage(view) {
   const page = processingState.pages[view] || { items: [], next_cursor: null };
+  const items = page.items;
+  const panel = byId(view === "failed" ? "processing-failures-panel" : "processing-history-panel");
+  panel.setAttribute("aria-busy", "false");
   if (view === "failed") {
-    const availableIds = new Set(page.items.map((item) => item.id));
+    processingElements.failuresEmpty.textContent = "There are no current actionable failures.";
+    const availableIds = new Set(items.map((item) => item.id));
     processingState.selectedFailureIds.forEach((id) => { if (!availableIds.has(id)) processingState.selectedFailureIds.delete(id); });
-    processingElements.failureRows.replaceChildren(...page.items.map(createFailureRow));
-    processingElements.failuresEmpty.hidden = page.items.length !== 0;
+    processingElements.failureRows.replaceChildren(...items.map(createFailureRow));
+    processingElements.failuresEmpty.hidden = items.length !== 0;
     updateFailureSelectionState();
   } else {
-    processingElements.historyRows.replaceChildren(...page.items.map(createHistoryRow));
-    processingElements.historyEmpty.hidden = page.items.length !== 0;
-    processingElements.historyDescription.textContent = `Showing ${page.items.length} completed jobs`;
+    processingElements.historyEmpty.textContent = "No completed processing history is available.";
+    processingElements.historyRows.replaceChildren(...items.map(createHistoryRow));
+    processingElements.historyEmpty.hidden = items.length !== 0;
+    processingElements.historyDescription.textContent = `Showing ${items.length} completed jobs`;
     processingElements.historyMore.hidden = !page.next_cursor;
   }
 }
@@ -1575,7 +1685,7 @@ function createFailureRow(job) {
   checkbox.type = "checkbox";
   checkbox.className = "failure-row-select";
   checkbox.checked = processingState.selectedFailureIds.has(job.id);
-  checkbox.setAttribute("aria-label", `Select failed ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${recordingDisplayName(job.recording_name)}`);
+  checkbox.setAttribute("aria-label", `Select failed ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
   checkbox.addEventListener("change", () => {
     if (checkbox.checked) processingState.selectedFailureIds.add(job.id);
     else processingState.selectedFailureIds.delete(job.id);
@@ -1584,7 +1694,7 @@ function createFailureRow(job) {
   });
   selectionCell.append(checkbox);
   const recording = node("td", null, "processing-recording");
-  const link = processingLink(job, recordingDisplayName(job.recording_name));
+  const link = processingLink(job, job.recording_name);
   link.title = job.recording_name;
   recording.append(link, node("span", OUTPUT_LABELS[job.kind] || humanize(job.kind), "cell-sublabel"));
   const problem = node("td", null, "failure-reason");
@@ -1598,7 +1708,7 @@ function createFailureRow(job) {
   retry.type = "button";
   retry.disabled = controlIsBusy(job.id, "retry");
   retry.title = "Retry";
-  retry.setAttribute("aria-label", `Retry ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${recordingDisplayName(job.recording_name)}`);
+  retry.setAttribute("aria-label", `Retry ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
   retry.append(icon("refresh"));
   retry.addEventListener("click", () => retryJob(job, retry));
   host.append(retry);
@@ -1610,7 +1720,7 @@ function createFailureRow(job) {
 function createHistoryRow(job) {
   const row = document.createElement("tr");
   const recording = node("td", null, "processing-recording");
-  recording.append(processingLink(job, recordingDisplayName(job.recording_name)), node("span", OUTPUT_LABELS[job.kind] || humanize(job.kind), "cell-sublabel"));
+  recording.append(processingLink(job, job.recording_name), node("span", OUTPUT_LABELS[job.kind] || humanize(job.kind), "cell-sublabel"));
   const completed = formatHistoryCompletion(job.finished_at);
   const completedCell = node("td", null, "history-completed");
   const completedTime = document.createElement("time");
@@ -1627,7 +1737,7 @@ function createHistoryRow(job) {
   );
   row.tabIndex = 0;
   row.setAttribute("role", "link");
-  row.setAttribute("aria-label", `Open ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${recordingDisplayName(job.recording_name)}`);
+  row.setAttribute("aria-label", `Open ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
   row.addEventListener("click", () => navigate(`/recordings/${job.recording_id}`));
   row.addEventListener("keydown", (event) => {
     if (!["Enter", " "].includes(event.key)) return;
@@ -1856,11 +1966,12 @@ async function retrySelectedFailures() {
 }
 
 function resetAnalyzer(message = "Loading recording details…") {
-  detailElements.name.textContent = "—";
-  [detailElements.recorded, detailElements.duration, detailElements.size, detailElements.storage, detailElements.messages, detailElements.topics, detailElements.health].forEach((item) => { item.textContent = "—"; });
+  setAnalyzerLoading(true);
+  detailElements.name.textContent = "";
+  [detailElements.recorded, detailElements.duration, detailElements.size, detailElements.storage, detailElements.messages, detailElements.topics, detailElements.health].forEach((item) => { item.textContent = ""; });
   detailElements.error.hidden = true;
-  detailElements.components.replaceChildren();
-  detailElements.outputs.replaceChildren();
+  detailElements.components.replaceChildren(...createMetadataSkeletonItems(4));
+  detailElements.outputs.replaceChildren(...createMetadataSkeletonItems(3));
   detailElements.componentCount.textContent = "0";
   detailElements.action.hidden = true;
   resetPreview("front", message, "Loading", "loading");
@@ -1880,6 +1991,7 @@ async function loadRecordingDetail(recordingId) {
     announce(`${detail.name} loaded.`);
   } catch (error) {
     if (error?.name === "AbortError") return;
+    setAnalyzerLoading(false);
     detailElements.error.textContent = error.message;
     detailElements.error.hidden = false;
     resetPreview("front", "Recording details are unavailable.", "Unavailable", "failed");
@@ -1898,6 +2010,7 @@ function validateDetail(detail, recordingId) {
 }
 
 function renderDetail(detail) {
+  setAnalyzerLoading(false);
   detailElements.name.textContent = detail.name;
   detailElements.recorded.textContent = formatRecorded(detail.start_time_ns);
   detailElements.duration.textContent = formatDurationNanoseconds(detail.duration_ns);
@@ -2001,7 +2114,7 @@ function previewElements(kind) {
 function setStateBadge(element, label, state) {
   element.textContent = label;
   element.className = `state-badge ${state || ""}`.trim();
-  element.hidden = ["ready", "not_requested", "unavailable", "failed"].includes(state);
+  element.hidden = ["loading", "ready", "not_requested", "unavailable", "failed"].includes(state);
 }
 
 function resetVideo(video) {
@@ -2015,14 +2128,22 @@ function resetPreview(kind, message, badge = "Not planned", state = "not_request
   const elements = previewElements(kind);
   removePlayer(kind);
   resetVideo(elements.video);
+  elements.pane.classList.toggle("is-skeleton-loading", state === "loading");
   elements.pane.setAttribute("aria-busy", String(state === "loading"));
   elements.message.hidden = false;
-  elements.messageTitle.textContent = badge;
-  elements.status.textContent = message;
+  elements.messageTitle.textContent = state === "loading" ? "Loading recording details" : badge;
+  elements.status.textContent = state === "loading" ? "" : message;
   elements.action.hidden = true;
   elements.coverage.hidden = true;
   elements.retry.hidden = true;
   setStateBadge(elements.badge, badge, state);
+}
+
+function finishPreviewLoading(kind) {
+  const elements = previewElements(kind);
+  if (!reviewController?.players[kind] || elements.video.readyState < 1) return;
+  elements.pane.classList.remove("is-skeleton-loading");
+  elements.pane.setAttribute("aria-busy", "false");
 }
 
 function outputStateAction(elements, state) {
@@ -2070,12 +2191,16 @@ function attachReadyVideo(kind, recordingId, artifact) {
   }
   const coverageStart = Number(BigInt(artifact.coverage_start_ns)) / 1e9;
   const coverageEnd = Number(BigInt(artifact.coverage_end_ns)) / 1e9;
+  elements.pane.classList.add("is-skeleton-loading");
+  elements.pane.setAttribute("aria-busy", "true");
   elements.video.src = artifact.url;
   elements.video.hidden = false;
   elements.message.hidden = true;
   setStateBadge(elements.badge, "Ready", "ready");
   elements.retry.onclick = () => {
     resetVideo(elements.video);
+    elements.pane.classList.add("is-skeleton-loading");
+    elements.pane.setAttribute("aria-busy", "true");
     elements.video.src = artifact.url;
     elements.video.hidden = false;
     elements.message.hidden = true;
@@ -2084,12 +2209,15 @@ function attachReadyVideo(kind, recordingId, artifact) {
     const player = reviewController?.players[kind];
     if (player) player.mediaFailed = false;
     setStateBadge(elements.badge, "Ready", "ready");
+    finishPreviewLoading(kind);
   };
   reviewController.players[kind] = {
     video: elements.video, coverageStart, coverageEnd, coverageMessage: elements.coverage,
     mediaRetry: elements.retry, mediaFailed: false, insideCoverage: false, playAttempt: 0, playPending: false,
-    buffering: false, seekPending: false, seekRequestedAt: null, seekTarget: null,
+    playRequestedAt: null, playRetryAt: 0, buffering: false, seekPending: false,
+    seekRequestedAt: null, seekTarget: null, queuedSeekTarget: null,
   };
+  finishPreviewLoading(kind);
   updateTransportAvailability();
   applyGlobalTime(reviewController.clock.globalTime, true);
 }
@@ -2100,10 +2228,11 @@ function formatSignedSeconds(value) {
 
 function resetImu(message, badge = "Not planned", state = "not_requested") {
   removeImuGraph();
+  imuElements.pane.classList.toggle("is-skeleton-loading", state === "loading");
   imuElements.pane.setAttribute("aria-busy", String(state === "loading"));
   imuElements.message.hidden = false;
-  imuElements.messageTitle.textContent = badge;
-  imuElements.status.textContent = message;
+  imuElements.messageTitle.textContent = state === "loading" ? "Loading recording details" : badge;
+  imuElements.status.textContent = state === "loading" ? "" : message;
   imuElements.action.hidden = true;
   imuElements.graph.hidden = true;
   imuElements.warnings.replaceChildren();
@@ -2136,6 +2265,7 @@ async function loadReadyImu(recordingId, v1Artifact) {
     return;
   }
   imuElements.pane.setAttribute("aria-busy", "true");
+  imuElements.pane.classList.add("is-skeleton-loading");
   imuElements.messageTitle.textContent = "Loading telemetry";
   imuElements.status.textContent = "Loading and validating the six-channel IMU bundle…";
   try {
@@ -2155,7 +2285,10 @@ async function loadReadyImu(recordingId, v1Artifact) {
     imuElements.action.hidden = false;
     imuElements.action.onclick = () => loadReadyImu(recordingId, v1Artifact);
   } finally {
-    imuElements.pane.setAttribute("aria-busy", "false");
+    if (currentRoute?.recordingId === recordingId) {
+      imuElements.pane.setAttribute("aria-busy", "false");
+      imuElements.pane.classList.remove("is-skeleton-loading");
+    }
   }
 }
 
@@ -2174,6 +2307,7 @@ function renderImuGraph(artifact, parsed) {
     plotLeft: 0, plotTop: 30, plotWidth: 1, plotHeight: 1,
     renderedMinimum: 0, renderedMaximum: 1,
     resizeObserver: null, lastCursorTransform: null, lastReadoutKey: null,
+    traceWidth: 0, traceHeight: 0, tracePixelRatio: 0,
     viewStart: 0, viewEnd: reviewController.durationSeconds,
   };
   reviewController.telemetry = telemetry;
@@ -2184,7 +2318,7 @@ function renderImuGraph(artifact, parsed) {
     resizeFrame = window.requestAnimationFrame(() => {
       resizeFrame = null;
       if (reviewController?.telemetry === telemetry) {
-        drawImuTrace(telemetry);
+        resizeImuTrace(telemetry);
         updateImuAtGlobalTime(reviewController.clock.globalTime);
       }
     });
@@ -2277,29 +2411,51 @@ function visibleImuSegment(segment, start, end) {
   return visible;
 }
 
-function drawImuTrace(telemetry) {
+function measureImuPlot(telemetry) {
   const rect = telemetry.plot.getBoundingClientRect();
-  const width = Math.max(1, Math.floor(rect.width));
-  const height = Math.max(160, Math.floor(rect.height));
-  const ratio = Math.min(window.devicePixelRatio || 1, 2);
-  telemetry.canvas.width = Math.floor(width * ratio);
-  telemetry.canvas.height = Math.floor(height * ratio);
-  telemetry.canvas.style.width = `${width}px`;
-  telemetry.canvas.style.height = `${height}px`;
-  const context = telemetry.canvas.getContext("2d");
-  context.setTransform(ratio, 0, 0, ratio, 0, 0);
-  context.clearRect(0, 0, width, height);
-
-  const left = 28;
-  const right = 28;
-  const top = 30;
-  const bottom = 30;
+  const width = Math.max(interfacePixels(1), rect.width);
+  const height = Math.max(interfacePixels(160), rect.height);
+  const left = interfacePixels(28);
+  const right = interfacePixels(28);
+  const top = interfacePixels(30);
+  const bottom = interfacePixels(30);
   const plotWidth = Math.max(1, width - left - right);
   const plotHeight = Math.max(1, height - top - bottom);
   telemetry.plotLeft = left;
   telemetry.plotTop = top;
   telemetry.plotWidth = plotWidth;
   telemetry.plotHeight = plotHeight;
+  return { width, height, left, top, plotWidth, plotHeight };
+}
+
+function tracePixelRatio() {
+  const ratio = Number(window.devicePixelRatio) || 1;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+}
+
+function resizeImuTrace(telemetry, { force = false } = {}) {
+  const dimensions = measureImuPlot(telemetry);
+  const ratio = tracePixelRatio();
+  if (!force
+      && telemetry.traceWidth === dimensions.width
+      && telemetry.traceHeight === dimensions.height
+      && telemetry.tracePixelRatio === ratio) return false;
+  drawImuTrace(telemetry, dimensions, ratio);
+  return true;
+}
+
+function drawImuTrace(telemetry, dimensions = measureImuPlot(telemetry), ratio = tracePixelRatio()) {
+  const { width, height, left, top, plotWidth, plotHeight } = dimensions;
+  telemetry.traceWidth = width;
+  telemetry.traceHeight = height;
+  telemetry.tracePixelRatio = ratio;
+  telemetry.canvas.width = Math.max(1, Math.ceil(width * ratio));
+  telemetry.canvas.height = Math.max(1, Math.ceil(height * ratio));
+  telemetry.canvas.style.width = "100%";
+  telemetry.canvas.style.height = "100%";
+  const context = telemetry.canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, width, height);
 
   let minimum = telemetry.minimumValue;
   let maximum = telemetry.maximumValue;
@@ -2319,21 +2475,21 @@ function drawImuTrace(telemetry) {
   const mutedColor = chartColor("--chart-text-dim", "#787878");
   const accentColor = chartColor("--chart-accent", "#f4f4f5");
 
-  context.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+  context.font = `${interfacePixels(9)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
   [...new Set([maximum, 0, minimum])].forEach((value) => {
     const lineY = y(value);
     const interiorZero = value === 0 && value !== minimum && value !== maximum;
     context.beginPath();
-    context.moveTo(left, lineY + 0.5);
-    context.lineTo(left + plotWidth, lineY + 0.5);
+    context.moveTo(left, lineY + interfacePixels(0.5));
+    context.lineTo(left + plotWidth, lineY + interfacePixels(0.5));
     context.strokeStyle = interiorZero ? strongLineColor : lineColor;
-    context.lineWidth = interiorZero ? 1.75 : 1;
+    context.lineWidth = interfacePixels(interiorZero ? 1.75 : 1);
     context.stroke();
     if (value !== 0) {
       context.fillStyle = mutedColor;
       context.textAlign = "left";
       context.textBaseline = "bottom";
-      context.fillText(value.toFixed(2), left, lineY - 4);
+      context.fillText(value.toFixed(2), left, lineY - interfacePixels(4));
     }
   });
 
@@ -2348,7 +2504,7 @@ function drawImuTrace(telemetry) {
       context.fillStyle = accentColor;
       context.globalAlpha = 0.88;
       context.beginPath();
-      context.arc(x(visible[0].timeSeconds), y(visible[0].value), 1.75, 0, Math.PI * 2);
+      context.arc(x(visible[0].timeSeconds), y(visible[0].value), interfacePixels(1.75), 0, Math.PI * 2);
       context.fill();
       context.globalAlpha = 1;
       return;
@@ -2370,7 +2526,7 @@ function drawImuTrace(telemetry) {
     tracePath();
     context.strokeStyle = accentColor;
     context.globalAlpha = 0.88;
-    context.lineWidth = 1.05;
+    context.lineWidth = interfacePixels(1.05);
     context.lineJoin = "round";
     context.lineCap = "round";
     context.stroke();
@@ -2379,10 +2535,10 @@ function drawImuTrace(telemetry) {
   context.restore();
 
   context.fillStyle = mutedColor;
-  context.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+  context.font = `${interfacePixels(9)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
   context.textAlign = "right";
   context.textBaseline = "top";
-  context.fillText(graphTimestamp(telemetry.viewEnd), left + plotWidth, top + plotHeight + 10);
+  context.fillText(graphTimestamp(telemetry.viewEnd), left + plotWidth, top + plotHeight + interfacePixels(10));
 }
 
 function updateImuAtGlobalTime(globalTime) {
@@ -2412,7 +2568,7 @@ function updateImuAtGlobalTime(globalTime) {
   const valueRange = Math.max(0.001, telemetry.renderedMaximum - telemetry.renderedMinimum);
   const markerY = ((telemetry.renderedMaximum - sample.value) / valueRange) * telemetry.plotHeight;
   telemetry.cursorMarker.hidden = reviewController.clock.playing && activeImuGesture?.type !== "scrub";
-  telemetry.cursorMarker.style.transform = `translate3d(-50%, ${markerY - 3.5}px, 0)`;
+  telemetry.cursorMarker.style.transform = `translate3d(-50%, ${markerY - interfacePixels(3.5)}px, 0)`;
   updateImuReadout(telemetry, `sample-${sample.timeNs}-${telemetry.selectedSeriesId}`, `${sample.value.toFixed(4)} ${telemetry.units}`, "");
 }
 
@@ -2539,29 +2695,73 @@ function resetTimeline() {
 function pausePlayer(player) {
   player.playAttempt += 1;
   player.playPending = false;
+  player.playRequestedAt = null;
+  player.playRetryAt = 0;
   player.video.pause();
 }
 
-function clearPlayerSeek(player) {
+function clearPlayerSeek(player, { discardQueued = false } = {}) {
   player.seekPending = false;
   player.seekRequestedAt = null;
   player.seekTarget = null;
+  if (discardQueued) player.queuedSeekTarget = null;
 }
 
 function requestPlayerTime(player, desired, explicit = false) {
   if (player.video.readyState < 1) return false;
   const target = Number.isFinite(player.video.duration) ? Math.min(desired, player.video.duration) : desired;
-  if (!explicit && Math.abs(player.video.currentTime - target) <= VIDEO_DRIFT_TOLERANCE_SECONDS) return false;
+  const tolerance = explicit ? VIDEO_EXPLICIT_SEEK_EPSILON_SECONDS : VIDEO_DRIFT_TOLERANCE_SECONDS;
+  const inFlight = player.seekPending || player.video.seeking;
+  if (!inFlight && Math.abs(player.video.currentTime - target) <= tolerance) return false;
   if (!explicit && player.buffering) return false;
-  if (!explicit && (player.seekPending || player.video.seeking)) {
+  if (inFlight) {
+    if (explicit) player.queuedSeekTarget = target;
     const pendingFor = player.seekRequestedAt === null ? 0 : performance.now() - player.seekRequestedAt;
     if (pendingFor < VIDEO_SEEK_RETRY_MS) return false;
   }
+  const requestedTarget = player.queuedSeekTarget ?? target;
+  player.queuedSeekTarget = null;
   player.seekPending = true;
   player.seekRequestedAt = performance.now();
-  player.seekTarget = target;
-  player.video.currentTime = target;
+  player.seekTarget = requestedTarget;
+  player.video.currentTime = requestedTarget;
   return true;
+}
+
+function requestPlayerPlayback(player, controller) {
+  if (!controller.clock.playing || player.mediaFailed || !player.insideCoverage) return;
+  const now = performance.now();
+  if (player.playPending) {
+    const pendingFor = player.playRequestedAt === null ? 0 : now - player.playRequestedAt;
+    if (pendingFor < VIDEO_PLAY_RETRY_MS) return;
+    player.playAttempt += 1;
+    player.playPending = false;
+    player.playRequestedAt = null;
+    player.video.pause();
+  }
+  if (!player.video.paused || now < player.playRetryAt) return;
+  const attempt = ++player.playAttempt;
+  player.playPending = true;
+  player.playRequestedAt = now;
+  let playResult;
+  try {
+    playResult = player.video.play();
+  } catch {
+    playResult = Promise.reject(new Error("Media playback could not start."));
+  }
+  Promise.resolve(playResult).then(() => {
+    if (player.playAttempt !== attempt) return;
+    player.playPending = false;
+    player.playRequestedAt = null;
+    player.playRetryAt = 0;
+  }).catch(() => {
+    if (player.playAttempt !== attempt) return;
+    if (reviewController === controller) {
+      player.playPending = false;
+      player.playRequestedAt = null;
+      player.playRetryAt = performance.now() + VIDEO_PLAY_RETRY_MS;
+    }
+  });
 }
 
 function removePlayer(kind) {
@@ -2612,7 +2812,7 @@ function applyGlobalTime(value, forceSeek = false) {
     const inside = controller.clock.globalTime >= player.coverageStart && controller.clock.globalTime <= player.coverageEnd;
     if (!inside) {
       if (!player.video.paused || player.playPending) pausePlayer(player);
-      clearPlayerSeek(player);
+      clearPlayerSeek(player, { discardQueued: true });
       player.video.hidden = true;
       player.coverageMessage.hidden = false;
       player.insideCoverage = false;
@@ -2624,13 +2824,8 @@ function applyGlobalTime(value, forceSeek = false) {
     player.video.hidden = false;
     const desired = controller.clock.globalTime - player.coverageStart;
     requestPlayerTime(player, desired, forceSeek || entered);
-    if (controller.clock.playing && player.video.paused && !player.playPending) {
-      const attempt = ++player.playAttempt;
-      player.playPending = true;
-      player.video.play().then(() => { if (player.playAttempt === attempt) player.playPending = false; }).catch(() => {
-        if (player.playAttempt === attempt && reviewController === controller) showMediaFailure(kind);
-      });
-    } else if (!controller.clock.playing && (!player.video.paused || player.playPending)) pausePlayer(player);
+    if (controller.clock.playing) requestPlayerPlayback(player, controller);
+    else if (!player.video.paused || player.playPending) pausePlayer(player);
   });
   updateImuAtGlobalTime(controller.clock.globalTime);
 }
@@ -2746,7 +2941,7 @@ function endImuSeek(event) {
     const start = Math.min(activeImuGesture.start, value ?? activeImuGesture.current);
     const end = Math.max(activeImuGesture.start, value ?? activeImuGesture.current);
     const telemetry = reviewController.telemetry;
-    const minimumSelection = (telemetry.viewEnd - telemetry.viewStart) * (8 / Math.max(1, telemetry.plotWidth));
+    const minimumSelection = (telemetry.viewEnd - telemetry.viewStart) * (interfacePixels(8) / Math.max(interfacePixels(1), telemetry.plotWidth));
     if (end - start >= minimumSelection) setGraphWindow(start, end, { announceChange: true });
     finishImuGesture(event);
     event.preventDefault();
@@ -2785,15 +2980,16 @@ function updateImuSelection(start, end) {
   const selectionLeft = telemetry.plotLeft + first * telemetry.plotWidth;
   const selectionRight = telemetry.plotLeft + last * telemetry.plotWidth;
   imuElements.selection.style.left = `${selectionLeft}px`;
-  imuElements.selection.style.width = `${Math.max(1, selectionRight - selectionLeft)}px`;
+  imuElements.selection.style.width = `${Math.max(interfacePixels(1), selectionRight - selectionLeft)}px`;
   imuElements.selectionStart.textContent = graphTimestamp(Math.min(start, end));
   imuElements.selectionEnd.textContent = graphTimestamp(Math.max(start, end));
   imuElements.selection.hidden = false;
   const plotRight = telemetry.plotLeft + telemetry.plotWidth;
   const startWidth = imuElements.selectionStart.offsetWidth || 0;
   const endWidth = imuElements.selectionEnd.offsetWidth || 0;
-  const startX = Math.max(telemetry.plotLeft + 5, Math.min(plotRight - startWidth - 5, selectionLeft + 5));
-  const endX = Math.max(telemetry.plotLeft + endWidth + 5, Math.min(plotRight - 5, selectionRight - 5));
+  const labelGap = interfacePixels(5);
+  const startX = Math.max(telemetry.plotLeft + labelGap, Math.min(plotRight - startWidth - labelGap, selectionLeft + labelGap));
+  const endX = Math.max(telemetry.plotLeft + endWidth + labelGap, Math.min(plotRight - labelGap, selectionRight - labelGap));
   imuElements.selectionStart.style.left = `${startX - selectionLeft}px`;
   imuElements.selectionEnd.style.left = `${endX - selectionLeft}px`;
 }
@@ -2839,10 +3035,12 @@ function showMediaFailure(kind) {
   if (!player) return;
   player.mediaFailed = true;
   player.buffering = false;
-  clearPlayerSeek(player);
+  clearPlayerSeek(player, { discardQueued: true });
   pausePlayer(player);
   player.video.hidden = true;
   const elements = previewElements(kind);
+  elements.pane.classList.remove("is-skeleton-loading");
+  elements.pane.setAttribute("aria-busy", "false");
   player.coverageMessage.hidden = true;
   elements.messageTitle.textContent = "Media unavailable";
   elements.status.textContent = "Preview media could not be loaded.";
@@ -3099,6 +3297,8 @@ function setRecordingDetailsCollapsed(collapsed, { returnFocus = true } = {}) {
 
   recordingDetailsLayoutAnimations.forEach((animation) => animation.cancel());
   recordingDetailsLayoutAnimations = [];
+  if (recordingDetailsGraphFrame !== null) window.cancelAnimationFrame(recordingDetailsGraphFrame);
+  recordingDetailsGraphFrame = null;
   detailsPanel.style.height = "";
   telemetryPanel.style.width = "";
 
@@ -3117,6 +3317,8 @@ function setRecordingDetailsCollapsed(collapsed, { returnFocus = true } = {}) {
 
   const finishLayout = () => window.requestAnimationFrame(() => {
     if (recordingDetailsTransitionVersion !== transitionVersion) return;
+    if (recordingDetailsGraphFrame !== null) window.cancelAnimationFrame(recordingDetailsGraphFrame);
+    recordingDetailsGraphFrame = null;
     analyzerView.classList.toggle("is-details-collapsed", collapsed);
     detailsPanel.style.height = "";
     telemetryPanel.style.width = "";
@@ -3124,7 +3326,7 @@ function setRecordingDetailsCollapsed(collapsed, { returnFocus = true } = {}) {
     recordingDetailsLayoutAnimations.forEach((animation) => animation.cancel());
     recordingDetailsLayoutAnimations = [];
     if (reviewController?.telemetry) {
-      drawImuTrace(reviewController.telemetry);
+      resizeImuTrace(reviewController.telemetry, { force: true });
       updateImuAtGlobalTime(reviewController.clock.globalTime);
     }
     if (returnFocus) toggle.focus();
@@ -3136,6 +3338,18 @@ function setRecordingDetailsCollapsed(collapsed, { returnFocus = true } = {}) {
     finishLayout();
   } else {
     document.documentElement?.classList.add("is-recording-details-transition");
+    const transitionTelemetry = reviewController?.telemetry;
+    const redrawTransitionGraph = () => {
+      if (recordingDetailsTransitionVersion !== transitionVersion
+          || reviewController?.telemetry !== transitionTelemetry) {
+        recordingDetailsGraphFrame = null;
+        return;
+      }
+      resizeImuTrace(transitionTelemetry);
+      updateImuAtGlobalTime(reviewController.clock.globalTime);
+      recordingDetailsGraphFrame = window.requestAnimationFrame(redrawTransitionGraph);
+    };
+    if (transitionTelemetry) recordingDetailsGraphFrame = window.requestAnimationFrame(redrawTransitionGraph);
     const runPhase = async (element, property, from, to, duration) => {
       const animation = element.animate([
         { [property]: `${from}px` },
@@ -3306,7 +3520,10 @@ byId("collapse-recording-details").addEventListener("click", () => {
   setRecordingDetailsCollapsed(!byId("analyzer-view").classList.contains("is-details-collapsed"));
 });
 [["front", previewElements("front")], ["topdown", previewElements("topdown")]].forEach(([kind, elements]) => {
-  elements.video.addEventListener("loadedmetadata", () => { if (reviewController?.players[kind]) applyGlobalTime(reviewController.clock.globalTime, true); });
+  elements.video.addEventListener("loadedmetadata", () => {
+    if (reviewController?.players[kind]) applyGlobalTime(reviewController.clock.globalTime, true);
+    finishPreviewLoading(kind);
+  });
   elements.video.addEventListener("seeking", () => {
     const player = reviewController?.players[kind];
     if (!player) return;
@@ -3315,7 +3532,14 @@ byId("collapse-recording-details").addEventListener("click", () => {
   });
   elements.video.addEventListener("seeked", () => {
     const player = reviewController?.players[kind];
-    if (player) clearPlayerSeek(player);
+    if (!player) return;
+    const queuedTarget = player.queuedSeekTarget;
+    clearPlayerSeek(player, { discardQueued: true });
+    if (queuedTarget !== null && Math.abs(player.video.currentTime - queuedTarget) > VIDEO_EXPLICIT_SEEK_EPSILON_SECONDS) {
+      requestPlayerTime(player, queuedTarget, true);
+      return;
+    }
+    if (reviewController?.clock.playing) applyGlobalTime(reviewController.clock.globalTime);
   });
   ["waiting", "stalled"].forEach((eventName) => elements.video.addEventListener(eventName, () => {
     const player = reviewController?.players[kind];
@@ -3325,9 +3549,17 @@ byId("collapse-recording-details").addEventListener("click", () => {
     const player = reviewController?.players[kind];
     if (!player) return;
     player.buffering = false;
+    player.playRetryAt = 0;
+    if (eventName === "playing") {
+      player.playPending = false;
+      player.playRequestedAt = null;
+    }
+    finishPreviewLoading(kind);
     applyGlobalTime(reviewController.clock.globalTime);
   }));
-  elements.video.addEventListener("error", () => showMediaFailure(kind));
+  elements.video.addEventListener("error", () => {
+    showMediaFailure(kind);
+  });
 });
 
 setFolderPanel(true, { returnFocus: false });

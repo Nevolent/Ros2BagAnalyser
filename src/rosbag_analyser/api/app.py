@@ -123,6 +123,7 @@ def create_app(
                 ),
                 processing_repository,
                 artifact_store,
+                preparation_planner.planner_identity(FRONT_PREVIEW_KIND),
             )
             topdown_artifact_store = ArtifactStore(
                 config.derived_root,
@@ -139,6 +140,7 @@ def create_app(
                 ),
                 processing_repository,
                 topdown_artifact_store,
+                preparation_planner.planner_identity(TOPDOWN_PREVIEW_KIND),
             )
             imu_artifact_store = ArtifactStore(
                 config.derived_root,
@@ -155,6 +157,7 @@ def create_app(
                 ),
                 processing_repository,
                 imu_artifact_store,
+                preparation_planner.planner_identity(IMU_SERIES_KIND),
             )
             application.state.preparation_service = PreparationService(
                 catalog_repository,

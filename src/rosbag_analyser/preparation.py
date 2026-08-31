@@ -362,11 +362,12 @@ class PreparationService:
             for item in schedule.outputs
         )
         analysis_state = _aggregate_state(tuple(item.state for item in outputs))
-        outcome = (
-            "unavailable"
-            if outputs and all(item.outcome == "unavailable" for item in outputs)
-            else "accepted"
-        )
+        if outputs and all(item.outcome == "unavailable" for item in outputs):
+            outcome = "unavailable"
+        elif outputs and all(item.outcome == "request_failed" for item in outputs):
+            outcome = "request_failed"
+        else:
+            outcome = "accepted"
         return PrepareRecordingResult(
             schedule.recording_id,
             outcome,

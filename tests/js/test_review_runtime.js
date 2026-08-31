@@ -504,6 +504,23 @@ test("recording rows show the exact source name and the truthful Recorded column
   assert.match(row.querySelector(".recording-link").getAttribute("aria-label"), /^2025_11_04_figure8\. Recorded /);
 });
 
+test("zero-duration readable recordings are qualified instead of shown as fully healthy", async () => {
+  const recording = {
+    ...catalogFixture().recordings[0],
+    duration_ns: "0",
+    message_count: "1",
+  };
+  const harness = createHarness("/", async () => makeResponse(catalogFixture({
+    recordings: [recording],
+    summary: { recordings: 1, ready: 0, processing: 0, queued: 0, failed: 0, damaged: 0 },
+  })));
+  await flush();
+  const health = harness.document.querySelector("#recording-rows").querySelector(".status-indicator");
+  assert.equal(health.getAttribute("aria-label"), "Review");
+  assert.equal(health.classList.contains("table-health--warning"), true);
+  assert.match(health.querySelector(".status-tooltip").textContent, /did not count messages or verify their timestamp span/);
+});
+
 test("recording status tooltips always open to the left without changing table layout", async () => {
   const harness = createHarness();
   harness.window.innerWidth = 1200;

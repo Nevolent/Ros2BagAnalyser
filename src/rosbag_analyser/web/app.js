@@ -603,6 +603,11 @@ function formatDurationNanoseconds(value) {
   try { return formatSeconds(Number(BigInt(value)) / 1e9, true); } catch { return "Unavailable"; }
 }
 
+function hasZeroDurationMetadataWarning(recording) {
+  if (recording.presentation_health !== "readable") return false;
+  try { return BigInt(recording.duration_ns) === 0n; } catch { return false; }
+}
+
 function formatSeconds(value, precise = false) {
   const seconds = Math.max(0, Number(value) || 0);
   const hours = Math.floor(seconds / 3600);
@@ -980,11 +985,14 @@ function createRecordingRow(recording) {
   );
 
   const healthCell = node("td", null, "status-cell");
+  const zeroDurationWarning = hasZeroDurationMetadataWarning(recording);
   healthCell.append(statusIndicator(
-    recording.presentation_health === "readable" ? "Readable" : "Damaged",
-    recording.presentation_health === "readable" ? "table-health--readable" : "table-health--unreadable",
-    [recording.diagnostic?.message || (recording.presentation_health === "readable" ? "Source prerequisites are readable." : "Open the recording for the precise diagnostic.")],
-    recording.presentation_health === "readable" ? "status-check" : "status-x",
+    recording.presentation_health !== "readable" ? "Damaged" : zeroDurationWarning ? "Review" : "Readable",
+    recording.presentation_health !== "readable" ? "table-health--unreadable" : zeroDurationWarning ? "table-health--warning" : "table-health--readable",
+    [recording.diagnostic?.message || (zeroDurationWarning
+      ? "Metadata reports zero duration. The catalog verified the ROS SQLite schema but did not count messages or verify their timestamp span."
+      : recording.presentation_health === "readable" ? "Source prerequisites are readable." : "Open the recording for the precise diagnostic.")],
+    recording.presentation_health !== "readable" ? "status-x" : zeroDurationWarning ? "warning" : "status-check",
   ));
   const analysisCell = node("td", null, "status-cell");
   const hasReadyOutput = recording.outputs.some((output) => output.state === "ready");
@@ -2019,12 +2027,14 @@ function renderDetail(detail) {
   else detailElements.storage.textContent = "Unavailable";
   detailElements.messages.textContent = formatCount(detail.message_count);
   detailElements.topics.textContent = detail.topic_count === null ? "Unavailable" : String(detail.topic_count);
+  const zeroDurationWarning = hasZeroDurationMetadataWarning(detail);
   detailElements.health.replaceChildren(metadataStatus(
-    humanize(detail.ros_health),
-    detail.presentation_health === "readable" ? "metadata-status--good" : "metadata-status--bad",
+    zeroDurationWarning ? "Review" : humanize(detail.ros_health),
+    detail.presentation_health !== "readable" ? "metadata-status--bad" : zeroDurationWarning ? "metadata-status--warning" : "metadata-status--good",
   ));
   const diagnosticMessages = [
     detail.diagnostic?.message,
+    zeroDurationWarning ? "Metadata reports zero duration. The catalog verified the ROS SQLite schema but did not count messages or verify their timestamp span." : null,
     ...detail.components.map((component) => component.diagnostic?.message),
     ...detail.outputs.map((output) => output.diagnostic?.message),
   ].filter(Boolean).filter((message, index, messages) => messages.indexOf(message) === index);

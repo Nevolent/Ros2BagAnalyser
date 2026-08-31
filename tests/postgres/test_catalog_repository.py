@@ -1386,7 +1386,7 @@ def test_ambiguous_identical_candidates_are_not_merged(
 
 
 @pytest.mark.postgres
-def test_prepare_all_three_preflight_order_and_concurrent_idempotency(
+def test_prepare_outputs_independently_and_remains_concurrently_idempotent(
     postgres_url: str,
 ) -> None:
     catalog = CatalogRepository(postgres_url)
@@ -1406,16 +1406,17 @@ def test_prepare_all_three_preflight_order_and_concurrent_idempotency(
             """,
             (recording_id,),
         )
-    rejected = repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
-    assert [item.state for item in rejected.outputs] == [
-        "unavailable",
-        "unavailable",
+    independent = repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
+    assert [item.state for item in independent.outputs] == [
+        "queued",
+        "queued",
         "unavailable",
     ]
     with open_connection(postgres_url) as connection:
         assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
             "count"
-        ] == 0
+        ] == 2
+        connection.execute("DELETE FROM jobs")
 
     _make_targets_available(postgres_url, recording_id)
     start = threading.Barrier(2)
@@ -1445,7 +1446,7 @@ def test_prepare_all_three_preflight_order_and_concurrent_idempotency(
 
 
 @pytest.mark.postgres
-def test_prepare_transaction_rolls_back_and_is_safely_repeatable(
+def test_prepare_output_scheduling_failure_does_not_rollback_siblings(
     postgres_url: str,
 ) -> None:
     catalog = CatalogRepository(postgres_url)
@@ -1476,19 +1477,28 @@ def test_prepare_transaction_rolls_back_and_is_safely_repeatable(
         )
 
     try:
-        with pytest.raises(psycopg.errors.RaiseException):
-            repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
+        scheduled = repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
+        assert [item.outcome for item in scheduled.outputs] == [
+            "queued",
+            "queued",
+            "request_failed",
+        ]
+        assert scheduled.outputs[2].diagnostic_code == "preparation_schedule_failed"
         with open_connection(postgres_url) as connection:
             assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
                 "count"
-            ] == 0
+            ] == 2
     finally:
         with open_connection(postgres_url) as connection:
             connection.execute("DROP TRIGGER reject_synthetic_imu_job ON jobs")
             connection.execute("DROP FUNCTION reject_synthetic_imu_job()")
 
     repeated = repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
-    assert [item.outcome for item in repeated.outputs] == ["queued"] * 3
+    assert [item.outcome for item in repeated.outputs] == [
+        "active_reused",
+        "active_reused",
+        "queued",
+    ]
     with open_connection(postgres_url) as connection:
         assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
             "count"
@@ -2013,7 +2023,8 @@ def test_prompt_2a_restart_interrupts_every_nonterminal_control_state(
     with open_connection(postgres_url) as connection:
         rows = connection.execute(
             """
-            SELECT id, state, error_code, control_state, execution_phase
+            SELECT id, state, error_code, control_state, execution_phase,
+                   cancel_requested_at, cancel_finished_at
             FROM jobs
             WHERE id = ANY (%s)
             ORDER BY id
@@ -2025,6 +2036,8 @@ def test_prompt_2a_restart_interrupts_every_nonterminal_control_state(
     assert [str(row["error_code"]) for row in rows] == ["worker_interrupted"] * 4
     assert [str(row["control_state"]) for row in rows] == ["none"] * 4
     assert [row["execution_phase"] for row in rows] == [None] * 4
+    assert [row["cancel_requested_at"] for row in rows] == [None] * 4
+    assert [row["cancel_finished_at"] for row in rows] == [None] * 4
 
 
 @pytest.mark.postgres
@@ -2435,12 +2448,27 @@ async def test_v1_nested_synthetic_operational_acceptance(
                 "retry_queued"
             ] * 3
             assert [item["outcome"] for item in prepared_rows[3]["outputs"]] == [
-                "unavailable"
-            ] * 3
+                "queued",
+                "unavailable",
+                "queued",
+            ]
+
+            topdown_disabled = await client.post(
+                "/api/v1/recordings/prepare",
+                json={
+                    "recording_ids": [ids["unavailable"]],
+                    "output_kinds": ["front_preview", "imu_series"],
+                },
+            )
+            assert topdown_disabled.status_code == 202
+            assert [
+                item["outcome"]
+                for item in topdown_disabled.json()["recordings"][0]["outputs"]
+            ] == ["active_reused", "active_reused"]
 
             queue = await client.get("/api/v1/processing/jobs?view=queued&limit=20")
             assert [item["queue_position"] for item in queue.json()["items"]] == list(
-                range(1, 7)
+                range(1, 9)
             )
             running = processing_repository.claim_next_job()
             assert running is not None

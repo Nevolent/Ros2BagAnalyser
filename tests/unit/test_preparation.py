@@ -287,6 +287,63 @@ def test_selective_preparation_forwards_only_chosen_kinds() -> None:
     assert result.recordings[0].analysis_state == "queued"
 
 
+def test_one_scheduling_failure_keeps_sibling_output_results() -> None:
+    class Repository:
+        def get_current_outputs(self, recording_ids):
+            del recording_ids
+            return ()
+
+        def prepare_recording(self, recording_id, planner_identities, **kwargs):
+            del planner_identities, kwargs
+            return PreparationSchedule(
+                recording_id,
+                True,
+                (
+                    ScheduledOutput(
+                        "front_preview",
+                        "queued",
+                        "queued",
+                        _target("front_preview"),
+                        job=_job("front_preview", "queued"),
+                    ),
+                    ScheduledOutput(
+                        "topdown_preview",
+                        "request_failed",
+                        "unavailable",
+                        _target("topdown_preview"),
+                        diagnostic_code="preparation_schedule_failed",
+                        diagnostic_message="Top-down scheduling failed.",
+                    ),
+                    ScheduledOutput(
+                        "imu_series",
+                        "ready_reused",
+                        "ready",
+                        _target("imu_series"),
+                        artifact=_artifact("imu_series"),
+                    ),
+                ),
+            )
+
+    service = PreparationService(
+        object(),  # type: ignore[arg-type]
+        Repository(),  # type: ignore[arg-type]
+        FakePlanner(),  # type: ignore[arg-type]
+        {kind: ValidStore() for kind in PROCESSING_KINDS},  # type: ignore[dict-item]
+    )
+
+    result = service.prepare_selected((7,))
+
+    prepared = result.recordings[0]
+    assert prepared.outcome == "accepted"
+    assert prepared.analysis_state == "queued"
+    assert [item.outcome for item in prepared.outputs] == [
+        "queued",
+        "request_failed",
+        "ready_reused",
+    ]
+    assert result.has_active_work
+
+
 def test_selective_not_found_response_contains_only_requested_kinds() -> None:
     class CatalogRepository:
         def get_catalog_state(self):

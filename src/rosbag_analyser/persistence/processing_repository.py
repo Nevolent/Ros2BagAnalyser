@@ -5,6 +5,8 @@ from datetime import datetime
 import json
 from typing import Any, Mapping, Protocol
 
+import psycopg
+
 from rosbag_analyser.estimation import (
     EstimateSample,
     MAX_ESTIMATE_SAMPLES,
@@ -682,20 +684,12 @@ class ProcessingRepository:
                 (recording_id,),
             ).fetchall()
             targets = {str(row["kind"]): _target_from_row(row) for row in rows}
-            unavailable = (
+            recording_unavailable = (
                 not bool(recording["source_present"])
                 or int(recording["last_seen_generation"])
                 != int(recording["successful_generation"])
-                or not set(selected_kinds).issubset(targets)
-                or any(
-                    target.target_state != "available"
-                    or target.scan_generation != int(recording["successful_generation"])
-                    or target.planner_identity != planner_identities.get(kind)
-                    for kind, target in targets.items()
-                    if kind in selected_kinds
-                )
             )
-            if unavailable:
+            if recording_unavailable:
                 return PreparationSchedule(
                     recording_id,
                     True,
@@ -710,69 +704,113 @@ class ProcessingRepository:
                     ),
                 )
 
-            for kind in sorted(selected_kinds):
-                target = targets[kind]
+            available_targets = {
+                kind: target
+                for kind, target in targets.items()
+                if kind in selected_kinds
+                and target.target_state == "available"
+                and target.scan_generation == int(recording["successful_generation"])
+                and target.planner_identity == planner_identities.get(kind)
+                and target.cache_identity is not None
+            }
+            for kind in sorted(available_targets):
+                target = available_targets[kind]
                 assert target.cache_identity is not None
                 _lock_cache_identity(connection, kind, target.cache_identity)
 
             outputs: list[ScheduledOutput] = []
             for kind in selected_kinds:
-                target = targets[kind]
+                target = targets.get(kind)
+                if target is None or kind not in available_targets:
+                    outputs.append(
+                        ScheduledOutput(
+                            kind,
+                            "unavailable",
+                            "unavailable",
+                            target=target,
+                        )
+                    )
+                    continue
                 assert target.cache_identity is not None
-                artifact_row = _select_artifact(
-                    connection, recording_id, kind, target.cache_identity, for_update=True
-                )
-                if artifact_row is not None:
-                    artifact = _artifact_from_row(artifact_row)
-                    if invalid_ids.get(kind) != artifact.id:
-                        outputs.append(
-                            ScheduledOutput(
-                                kind, "ready_reused", "ready", target, artifact=artifact
-                            )
+                try:
+                    # A savepoint keeps one output's database error from
+                    # invalidating ready/queued work already resolved for its
+                    # siblings in this recording.
+                    with connection.transaction():
+                        artifact_row = _select_artifact(
+                            connection,
+                            recording_id,
+                            kind,
+                            target.cache_identity,
+                            for_update=True,
                         )
-                        continue
-                    connection.execute("DELETE FROM artifacts WHERE id = %s", (artifact.id,))
+                        if artifact_row is not None:
+                            artifact = _artifact_from_row(artifact_row)
+                            if invalid_ids.get(kind) != artifact.id:
+                                scheduled = ScheduledOutput(
+                                    kind,
+                                    "ready_reused",
+                                    "ready",
+                                    target,
+                                    artifact=artifact,
+                                )
+                            else:
+                                connection.execute(
+                                    "DELETE FROM artifacts WHERE id = %s", (artifact.id,)
+                                )
+                                scheduled = None
+                        else:
+                            scheduled = None
 
-                active_row = _select_active_job(
-                    connection, recording_id, kind, target.cache_identity
-                )
-                if active_row is not None:
-                    job = _job_from_row(active_row)
-                    outputs.append(
-                        ScheduledOutput(
-                            kind,
-                            "active_reused",
-                            "queued" if job.state == "queued" else "processing",
-                            target,
-                            job=job,
-                        )
-                    )
-                    continue
-                failed_before = _select_latest_failed_job(
-                    connection, recording_id, kind, target.cache_identity
-                )
-                if admission_diagnostic is not None:
-                    outputs.append(
-                        ScheduledOutput(
-                            kind,
-                            "unavailable",
-                            "unavailable",
-                            target,
-                            diagnostic_code=admission_diagnostic.code,
-                            diagnostic_message=admission_diagnostic.message,
-                        )
-                    )
-                    continue
-                job = _insert_v1_job(connection, target)
-                outputs.append(
-                    ScheduledOutput(
+                        if scheduled is None:
+                            active_row = _select_active_job(
+                                connection, recording_id, kind, target.cache_identity
+                            )
+                            if active_row is not None:
+                                job = _job_from_row(active_row)
+                                scheduled = ScheduledOutput(
+                                    kind,
+                                    "active_reused",
+                                    "queued" if job.state == "queued" else "processing",
+                                    target,
+                                    job=job,
+                                )
+                            else:
+                                failed_before = _select_latest_failed_job(
+                                    connection, recording_id, kind, target.cache_identity
+                                )
+                                if admission_diagnostic is not None:
+                                    scheduled = ScheduledOutput(
+                                        kind,
+                                        "unavailable",
+                                        "unavailable",
+                                        target,
+                                        diagnostic_code=admission_diagnostic.code,
+                                        diagnostic_message=admission_diagnostic.message,
+                                    )
+                                else:
+                                    job = _insert_v1_job(connection, target)
+                                    scheduled = ScheduledOutput(
+                                        kind,
+                                        "retry_queued"
+                                        if failed_before is not None
+                                        else "queued",
+                                        "queued",
+                                        target,
+                                        job=job,
+                                    )
+                except (psycopg.Error, RuntimeError):
+                    scheduled = ScheduledOutput(
                         kind,
-                        "retry_queued" if failed_before is not None else "queued",
-                        "queued",
+                        "request_failed",
+                        "unavailable",
                         target,
-                        job=job,
+                        diagnostic_code="preparation_schedule_failed",
+                        diagnostic_message=(
+                            "This output could not be scheduled. The request can be repeated safely."
+                        ),
                     )
-                )
+                outputs.append(scheduled)
         return PreparationSchedule(recording_id, True, tuple(outputs))
 
     def retry_failed_job(
@@ -1546,7 +1584,8 @@ class ProcessingRepository:
                         )
                         ELSE 0
                     END,
-                    control_state = 'none', execution_phase = NULL
+                    control_state = 'none', execution_phase = NULL,
+                    cancel_requested_at = NULL
                 WHERE state = 'running'
                 RETURNING id
                 """

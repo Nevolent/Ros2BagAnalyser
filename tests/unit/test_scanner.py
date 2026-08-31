@@ -67,6 +67,35 @@ def test_isolates_damaged_database_and_preserves_companions(tmp_path: Path) -> N
     assert components[SourceRole.TOPDOWN_TIMESTAMPS].condition is SourceCondition.PRESENT
 
 
+@pytest.mark.parametrize(
+    ("name", "message_count", "duration_ns"),
+    [
+        ("zero-messages", 0, 0),
+        ("one-message", 1, 0),
+        ("normal-duration", 42, 2_500_000_000),
+    ],
+)
+def test_supported_metadata_duration_is_not_a_database_health_failure(
+    tmp_path: Path, name: str, message_count: int, duration_ns: int
+) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    create_recording(
+        archive,
+        name,
+        metadata_overrides={
+            "message_count": message_count,
+            "duration": {"nanoseconds": duration_ns},
+        },
+    )
+
+    recording = CatalogScanner(archive).scan().recordings[0]
+
+    assert recording.duration_ns == duration_ns
+    assert recording.message_count == message_count
+    assert recording.ros_health is RosHealth.READABLE
+
+
 def test_catalogues_invalid_metadata_folder_without_aborting_sibling(
     tmp_path: Path,
 ) -> None:

@@ -4,15 +4,34 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from rosbag_analyser.deployment import DeploymentConfigurationError
 from rosbag_analyser.preflight import (
+    _stable_file_identity,
     validate_private_file,
     validate_release_manifest,
     verify_probe_capability,
 )
+
+
+def test_stable_file_identity_ignores_access_time_only() -> None:
+    base = SimpleNamespace(
+        st_dev=1,
+        st_ino=2,
+        st_mode=0o100600,
+        st_uid=0,
+        st_gid=0,
+        st_size=123,
+        st_atime_ns=10,
+        st_mtime_ns=20,
+        st_ctime_ns=30,
+    )
+    accessed = SimpleNamespace(**{**vars(base), "st_atime_ns": 11})
+
+    assert _stable_file_identity(base) == _stable_file_identity(accessed)
 
 
 def test_private_environment_file_requires_regular_nonsymlink_tight_mode(

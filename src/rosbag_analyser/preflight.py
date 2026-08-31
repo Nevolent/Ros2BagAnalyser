@@ -42,6 +42,20 @@ RELEASE_MANIFEST_FIELDS = {
 }
 
 
+def _stable_file_identity(details: os.stat_result) -> tuple[int, ...]:
+    """Return manifest metadata that cannot change merely because it was read."""
+    return (
+        details.st_dev,
+        details.st_ino,
+        details.st_mode,
+        details.st_uid,
+        details.st_gid,
+        details.st_size,
+        details.st_mtime_ns,
+        details.st_ctime_ns,
+    )
+
+
 def validate_private_file(
     path: Path,
     *,
@@ -95,7 +109,10 @@ def validate_release_manifest(
         raise DeploymentConfigurationError(
             "The installed release identity is unavailable."
         ) from error
-    if before != after or not isinstance(document, dict):
+    if (
+        _stable_file_identity(before) != _stable_file_identity(after)
+        or not isinstance(document, dict)
+    ):
         raise DeploymentConfigurationError(
             "The installed release identity changed during validation."
         )

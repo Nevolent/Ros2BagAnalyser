@@ -14,6 +14,36 @@ htmlcov/
 *.webm
 *.csv
 
+# Deployment state and release inputs are local/operator-owned. The committed
+# *.example files are the only intentionally versioned deployment templates.
+*.pgpass
+*.pem
+*.key
+*.crt
+*.p12
+*.htpasswd
+*.credentials
+source.cifs-credentials
+application.env
+migration.env
+backup.env
+vm-deploy.env
+GATE0_HANDOFF.md
+REAL_DATA_ANNEX.md
+wheelhouse/
+release/
+releases/
+*.whl
+*.tar.gz
+*.tar.gz.sha256
+*.dump
+
+# Inventory and artifact manifests can contain private archive structure. Keep
+# them outside the repository unless a reviewed fixture deliberately names one.
+*-inventory.json
+*-inventory-*.json
+*-manifest.json
+
 # The authored archive page is a design reference. Its generated/mock payloads
 # and macOS packaging metadata are not source assets and must not enter Git.
 archive/__MACOSX/

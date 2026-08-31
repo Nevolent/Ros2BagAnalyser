@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly project_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+  pwd -P
+)"
+readonly settings_file="${ROS_BAG_ANALYSER_VM_DEPLOY_SETTINGS_FILE:-$HOME/.config/rosbag-analyser/vm-deploy.env}"
+
+fail() {
+  echo "deploy-vm: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ./deploy-vm
+
+Deploy the checked-in main branch to the configured VM. This command refuses
+uncommitted work, an unpushed commit, migrations, dependency changes, and
+infrastructure/template changes. Handle those through the controlled runbook.
+EOF
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"
+}
+
+require_private_settings() {
+  local mode
+  [[ -f "$settings_file" && ! -L "$settings_file" && -r "$settings_file" ]] \
+    || fail "private settings are unavailable: $settings_file"
+  mode="$(stat -c '%a' "$settings_file")"
+  [[ "$mode" == "600" || "$mode" == "400" ]] \
+    || fail "$settings_file must have mode 600 or 400; found $mode"
+}
+
+require_safe_value() {
+  local label="$1"
+  local value="$2"
+  local pattern="$3"
+  [[ "$value" =~ $pattern ]] || fail "$label has an unsafe value"
+}
+
+[[ "${1:-}" != "--help" && "${1:-}" != "-h" ]] || {
+  usage
+  exit 0
+}
+[[ $# -eq 0 ]] || {
+  usage >&2
+  fail "this command takes no arguments"
+}
+
+require_command git
+require_command stat
+require_private_settings
+set -a
+source "$settings_file"
+set +a
+
+: "${ROS_BAG_ANALYSER_VM_DEPLOY_HOST:?missing VM host in $settings_file}"
+: "${ROS_BAG_ANALYSER_VM_DEPLOY_USER:?missing VM user in $settings_file}"
+: "${ROS_BAG_ANALYSER_VM_DEPLOY_BRANCH:?missing VM branch in $settings_file}"
+: "${ROS_BAG_ANALYSER_VM_DEPLOY_SSH:?missing SSH program in $settings_file}"
+readonly deploy_host="$ROS_BAG_ANALYSER_VM_DEPLOY_HOST"
+readonly deploy_user="$ROS_BAG_ANALYSER_VM_DEPLOY_USER"
+readonly deploy_branch="$ROS_BAG_ANALYSER_VM_DEPLOY_BRANCH"
+readonly ssh_program="$ROS_BAG_ANALYSER_VM_DEPLOY_SSH"
+
+require_safe_value "VM host" "$deploy_host" '^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$'
+require_safe_value "VM user" "$deploy_user" '^[A-Za-z_][A-Za-z0-9_-]{0,31}$'
+require_safe_value "VM branch" "$deploy_branch" '^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$'
+[[ -x "$ssh_program" ]] || fail "configured SSH program is unavailable: $ssh_program"
+
+git -C "$project_root" diff --quiet \
+  || fail "the working tree has unstaged changes; commit or stash them first"
+git -C "$project_root" diff --cached --quiet \
+  || fail "the index has staged changes; commit them first"
+[[ -z "$(git -C "$project_root" ls-files --others --exclude-standard)" ]] \
+  || fail "the working tree has untracked files; review and commit, remove, or ignore them first"
+readonly local_branch="$(git -C "$project_root" branch --show-current)"
+[[ "$local_branch" == "$deploy_branch" ]] \
+  || fail "checked-out branch $local_branch does not match configured deployment branch $deploy_branch"
+readonly local_revision="$(git -C "$project_root" rev-parse --verify HEAD)"
+readonly remote_revision="$(
+  git -C "$project_root" ls-remote --exit-code --heads origin "refs/heads/$deploy_branch" \
+    | awk '{print $1}'
+)"
+[[ "$remote_revision" == "$local_revision" ]] \
+  || fail "HEAD is not the pushed origin/$deploy_branch revision; push it before deploying"
+
+echo "Deploying $local_revision from origin/$deploy_branch to $deploy_user@$deploy_host"
+exec "$ssh_program" \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=yes \
+  "$deploy_user@$deploy_host" \
+  sudo --non-interactive \
+  /opt/rosbag-analyser/repository/deploy/scripts/deploy-from-git \
+  "$deploy_branch" "$local_revision"

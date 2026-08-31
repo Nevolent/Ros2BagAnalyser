@@ -30,6 +30,7 @@ The default guest layout is:
 ```text
 /opt/rosbag-analyser/releases/<release-id>/
 /opt/rosbag-analyser/current -> releases/<release-id>
+/opt/rosbag-analyser/repository/  # dedicated clean Git checkout; never run services here
 /etc/rosbag-analyser/application.env
 /etc/rosbag-analyser/runtime.pgpass
 /etc/rosbag-analyser/migration.pgpass
@@ -54,3 +55,20 @@ Repository scripts fail closed and use explicit targets. They do not edit
 TrueNAS, create public listeners, rescan on startup, or automatically delete a
 release, database, backup, derived artifact, or source file. See
 `docs/NAS_TRIAL_RUNBOOK.md` for the reviewed sequence and rollback rules.
+
+## Routine Git deployments
+
+After the initial reviewed installation, routine source changes can use the
+repository-owned `./deploy-vm` command from WSL. It verifies that the current
+branch is clean and exactly matches `origin`, then asks the VM to fast-forward
+its dedicated checkout and build a new immutable release from that exact SHA.
+It never copies source files to the VM. Configure its private WSL settings from
+`vm-deploy-environment.example`; do not commit that settings file.
+
+The VM checkout is intentionally separate from `/opt/rosbag-analyser/current`.
+System services continue to execute only immutable releases. The command drains
+the worker before a worker-code update, selects API-only restart for served
+frontend files, restarts both services for other application changes, and runs
+local health plus smoke checks. It refuses migrations, dependency changes, and
+systemd/Nginx/firewall/template changes because those retain the controlled
+backup, migration, rendered-file, and rollback procedure in the runbook.

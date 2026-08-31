@@ -376,6 +376,55 @@ separate sanitized capabilities. The smoke check observes saved state before
 and after and fails if it creates a job. Only after local checks pass may Nginx
 start and authenticated same-origin checks run.
 
+## Routine Git deployment after commissioning
+
+After the initial controlled install has created and validated an active
+immutable release, bootstrap one separate root-owned checkout at
+`/opt/rosbag-analyser/repository`. Clone only the approved remote and branch;
+the VM needs a read-only Git credential only when that remote is private. Do
+not put an editable checkout below `releases/`, point a systemd service at it,
+or place any generated output in it.
+
+On the WSL development PC, create the private mode-0600
+`~/.config/rosbag-analyser/vm-deploy.env` from
+`deploy/vm-deploy-environment.example`. It records only the VM SSH endpoint,
+operator user, branch, and the SSH program. It is not committed. The normal
+workflow is then:
+
+```bash
+git status
+# run relevant tests
+git add <reviewed files>
+git commit -m "..."
+git push origin main
+./deploy-vm
+```
+
+`./deploy-vm` first requires a clean local worktree and verifies that local
+`HEAD` is exactly the pushed `origin/main` revision. It asks the VM to run
+`git pull --ff-only`, requires that the resulting SHA matches, and builds an
+immutable `git-<short-sha>` release with the checked wheelhouse from the active
+release. Source files are never copied manually to the VM. The newly built
+release is checksummed, installed beside the active release, atomically
+activated, then health- and smoke-checked.
+
+The routine command intentionally has a narrow scope:
+
+- served frontend files restart only `rosbag-analyser-api.service`;
+- other application files drain current worker work, then restart API and
+  worker; and
+- documentation/tests alone update the VM checkout without changing a release.
+
+It refuses migrations, dependency/build-contract changes, deployment scripts,
+systemd/Nginx/firewall/mount templates, and private configuration examples.
+Those changes retain the planned-upgrade sequence below, including backup,
+rendered-file review, migration compatibility, and rollback classification.
+The command also never reschedules, rescans, or prepares a recording.
+
+If the VM checkout is dirty, `git pull --ff-only` is blocked rather than
+overwriting it. Resolve that checkout deliberately; never use reset/clean as a
+routine deployment recovery step.
+
 ## Planned upgrade sequence
 
 1. Record active release/schema, mounts, capacity, services, queue, running job,

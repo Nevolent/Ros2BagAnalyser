@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: deploy-from-git BRANCH EXPECTED_REVISION" >&2
+  exit 2
+}
+
+[[ $# -eq 2 ]] || usage
+readonly branch="$1"
+readonly expected_revision="$2"
+readonly deployment_root="/opt/rosbag-analyser"
+readonly repository_root="$deployment_root/repository"
+readonly current_link="$deployment_root/current"
+
+fail() {
+  echo "deploy-from-git: $*" >&2
+  exit 1
+}
+
+[[ "$(id -u)" -eq 0 ]] || fail "must run as root inside the approved VM"
+[[ "$branch" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ ]] \
+  || fail "branch is invalid"
+[[ "$expected_revision" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "expected revision is invalid"
+[[ -d "$repository_root/.git" && ! -L "$repository_root" ]] \
+  || fail "the dedicated Git checkout is unavailable"
+[[ -L "$current_link" && -d "$current_link" ]] \
+  || fail "no active immutable release is available; use the initial-install runbook"
+
+for command in curl git python3.10 sha256sum systemctl; do
+  command -v "$command" >/dev/null 2>&1 || fail "required command is unavailable: $command"
+done
+
+[[ -z "$(git -C "$repository_root" status --porcelain)" ]] \
+  || fail "the VM Git checkout is not clean; resolve it without overwriting local work"
+[[ "$(git -C "$repository_root" branch --show-current)" == "$branch" ]] \
+  || fail "the VM Git checkout is not on the requested branch"
+[[ "$(git -C "$repository_root" config --get "branch.$branch.remote")" == "origin" ]] \
+  || fail "the VM branch does not track origin"
+
+git -C "$repository_root" pull --ff-only origin "$branch"
+readonly actual_revision="$(git -C "$repository_root" rev-parse --verify HEAD)"
+[[ "$actual_revision" == "$expected_revision" ]] \
+  || fail "the VM resolved a different revision; no release was activated"
+[[ -z "$(git -C "$repository_root" status --porcelain)" ]] \
+  || fail "the VM Git checkout changed during update; no release was activated"
+
+previous_revision="$(
+  python3.10 - "$current_link/release-manifest.json" <<'PY'
+import json
+import pathlib
+import sys
+
+document = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(document["source_revision"])
+PY
+)" || fail "the active release identity is unavailable"
+readonly previous_revision
+[[ "$previous_revision" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "the active release identity is invalid"
+
+mapfile -t changed_paths < <(
+  git -C "$repository_root" diff --name-only "$previous_revision" "$actual_revision"
+)
+if [[ ${#changed_paths[@]} -eq 0 ]]; then
+  echo "The active release already represents $actual_revision; no service was restarted."
+  exit 0
+fi
+
+restart_mode="none"
+requires_controlled_release=false
+for path in "${changed_paths[@]}"; do
+  case "$path" in
+    src/rosbag_analyser/persistence/migrations/*)
+      requires_controlled_release=true
+      ;;
+    pyproject.toml|deploy/runtime-requirements.in|deploy/build-requirements.in|deploy/release-contract.json)
+      requires_controlled_release=true
+      ;;
+    deploy/systemd/*|deploy/nginx/*|deploy/firewall/*|deploy/*.example|deploy/source.cifs-credentials.example)
+      requires_controlled_release=true
+      ;;
+    src/rosbag_analyser/web/*)
+      [[ "$restart_mode" == "none" ]] && restart_mode="api"
+      ;;
+    deploy/scripts/*)
+      requires_controlled_release=true
+      ;;
+    src/rosbag_analyser/*)
+      restart_mode="both"
+      ;;
+  esac
+done
+
+[[ "$requires_controlled_release" == false ]] || fail \
+  "this revision changes migrations, dependencies, or deployment templates; use the controlled upgrade runbook"
+[[ "$restart_mode" != "none" ]] || {
+  echo "No runtime files changed since $previous_revision; Git is updated but no release or service change is needed."
+  exit 0
+}
+
+if [[ "$restart_mode" == "both" ]]; then
+  "$current_link/deploy/scripts/drain-worker"
+fi
+
+readonly release_id="git-${actual_revision:0:12}"
+readonly release_target="$deployment_root/releases/$release_id"
+if [[ ! -d "$release_target" ]]; then
+  readonly wheelhouse="$current_link/wheelhouse"
+  readonly output_directory="$deployment_root/staging/$release_id"
+  [[ -d "$wheelhouse" && -f "$wheelhouse/SHA256SUMS" ]] \
+    || fail "the active checked wheelhouse is unavailable"
+  [[ ! -e "$output_directory" ]] \
+    || fail "the protected release staging directory already exists"
+  "$repository_root/deploy/scripts/build-release" \
+    "$release_id" "vm-git-deploy" "$wheelhouse" "$output_directory"
+  checksum="$(awk '{print $1}' "$output_directory/$release_id.tar.gz.sha256")" \
+    || fail "the generated release checksum is unavailable"
+  readonly checksum
+  [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || fail "the generated release checksum is invalid"
+  "$output_directory/install-release" \
+    "$release_id" "$output_directory/$release_id.tar.gz" "$checksum"
+fi
+
+"$repository_root/deploy/scripts/activate-release" "$release_id"
+systemctl restart rosbag-analyser-api.service
+if [[ "$restart_mode" == "both" ]]; then
+  systemctl restart rosbag-analyser-worker.service
+fi
+curl --fail --silent --show-error http://127.0.0.1:8000/health/live >/dev/null
+curl --fail --silent --show-error http://127.0.0.1:8000/health/ready >/dev/null
+"$current_link/deploy/scripts/smoke-check"
+echo "Activated $release_id from Git revision $actual_revision; restarted $restart_mode."

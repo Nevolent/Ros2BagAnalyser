@@ -1,0 +1,9 @@
+# Private WSL settings for ./deploy-vm. Install outside Git as
+# ~/.config/rosbag-analyser/vm-deploy.env with mode 0600 or 0400.
+#
+# The SSH program is intentionally configurable so WSL can use either its own
+# key or Windows OpenSSH and the user's Windows SSH configuration.
+ROS_BAG_ANALYSER_VM_DEPLOY_HOST=REPLACE_WITH_VM_HOST
+ROS_BAG_ANALYSER_VM_DEPLOY_USER=REPLACE_WITH_VM_OPERATOR
+ROS_BAG_ANALYSER_VM_DEPLOY_BRANCH=main
+ROS_BAG_ANALYSER_VM_DEPLOY_SSH=/mnt/c/Windows/System32/OpenSSH/ssh.exe

@@ -164,6 +164,10 @@ The existing local launcher remains the development baseline:
 ./dev stop
 ```
 
+For frontend-only work on a machine without ROS, PostgreSQL, source storage, or
+the deployment VM, see [frontend mock mode](docs/FRONTEND_MOCK_MODE.md). It
+serves the same production frontend with an opt-in browser API adapter.
+
 Starting the application must not scan the archive or create processing work.
 Rescanning remains explicit.
 

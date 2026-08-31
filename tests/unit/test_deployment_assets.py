@@ -168,6 +168,9 @@ def test_release_scripts_fail_closed_and_do_not_run_migrations_on_startup() -> N
     assert "--platform manylinux_2_28_x86_64" in wheelhouse
     assert "--platform manylinux_2_17_x86_64" in wheelhouse
     assert "already exists; it was not replaced" in install
+    assert '"$staging/release/venv/bin/python"' in install
+    assert '"$release_target/venv/bin/python"' in install
+    assert "content.startswith(staging_interpreter)" in install
     assert "mv -T" in activate
     assert "migrate" not in read("systemd/rosbag-analyser-api.service")
     assert "migrate" not in read("systemd/rosbag-analyser-worker.service")

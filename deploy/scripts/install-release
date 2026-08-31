@@ -81,4 +81,21 @@ chown -R root:root "$staging/release"
 find "$staging/release" -type d -exec chmod 0755 {} +
 find "$staging/release" -type f -exec chmod go-w {} +
 mv -- "$staging/release" "$release_target"
+python3.10 - \
+  "$release_target/venv/bin" \
+  "$staging/release/venv/bin/python" \
+  "$release_target/venv/bin/python" <<'PY'
+import pathlib
+import sys
+
+scripts = pathlib.Path(sys.argv[1])
+staging_interpreter = ("#!" + sys.argv[2] + "\n").encode("utf-8")
+release_interpreter = ("#!" + sys.argv[3] + "\n").encode("utf-8")
+for script in scripts.iterdir():
+    if not script.is_file() or script.is_symlink():
+        continue
+    content = script.read_bytes()
+    if content.startswith(staging_interpreter):
+        script.write_bytes(release_interpreter + content[len(staging_interpreter) :])
+PY
 echo "Release $release_id installed but not activated."

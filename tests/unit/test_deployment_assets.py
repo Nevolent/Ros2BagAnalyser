@@ -73,6 +73,8 @@ def test_runtime_units_are_loopback_mount_ordered_and_hardened() -> None:
     runner = read("scripts/run-service")
     assert 'PGPASSFILE="$database_credential"' in runner
     assert "CREDENTIALS_DIRECTORY" in runner
+    assert "ROS_BAG_ANALYSER_RELEASE_ID" in runner
+    assert '"$release_root/release-manifest.json"' in runner
     validator = read("scripts/validate-site")
     assert '$1 != "/run/postgresql"' in validator
 

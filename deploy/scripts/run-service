@@ -25,6 +25,24 @@ fi
   echo "The installed release virtual environment is unavailable." >&2
   exit 1
 }
+export ROS_BAG_ANALYSER_RELEASE_ID="$(
+  "$release_root/venv/bin/python" - "$release_root/release-manifest.json" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest = pathlib.Path(sys.argv[1])
+document = json.loads(manifest.read_text(encoding="utf-8"))
+release_id = document.get("release_id")
+if not isinstance(release_id, str):
+    raise SystemExit("The installed release identity is unavailable.")
+print(release_id)
+PY
+)"
+[[ "$ROS_BAG_ANALYSER_RELEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "The installed release identity is invalid." >&2
+  exit 1
+}
 
 set +u
 source "$ros_setup"

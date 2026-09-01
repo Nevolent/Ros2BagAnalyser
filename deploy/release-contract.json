@@ -13,7 +13,7 @@
     "support_boundary": "2027-05"
   },
   "processors": {
-    "front_preview": "front-preview-v3",
+    "front_preview": "front-preview-v4",
     "front_timing_policy": "image_header_affine_or_all_zero_record_timestamp_v3",
     "imu_series": "imu-series-v2",
     "topdown_preview": "topdown-preview-v2"

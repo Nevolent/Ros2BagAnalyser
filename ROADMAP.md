@@ -607,6 +607,22 @@ and Git status. Leave changes uncommitted for user review.
   query. No real source, VM service, database, deployment, release, or job was
   accessed or changed; a bounded V3 real-output trial remains separately gated.
 
+#### `front-preview-v4` RGB8 corrective slice — 2026-09-01
+
+- Recording 99, `motors_raw_and_jetson_stats`, reached the worker and failed
+  before transcoding with `front_encoding_unsupported`. This slice admits only
+  standard `sensor_msgs/msg/Image` frames encoded as `rgb8` in addition to the
+  existing `bgr8` input.
+- The worker normalizes each validated RGB8 frame to the existing BGR encoder
+  input in memory, preserving row-step handling, dimensions, payload limits,
+  source identity checks, timing behavior, and read-only source access. Other
+  encodings remain unsupported.
+- Processor `front-preview-v4` gives RGB8-capable front output an independent
+  cache identity. V3 front artifacts remain historical after an explicit
+  successful rescan; top-down and IMU identities are unchanged.
+- Focused synthetic processor and planner verification is required before any
+  bounded real-output retry. No NAS processing is authorized by this change.
+
 #### Approved moved-path catalog corrective slice — 2026-08-05
 
 - Read-only catalog diagnosis found six current physical recordings but 15

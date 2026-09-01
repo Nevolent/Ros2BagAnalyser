@@ -114,6 +114,18 @@ def _all_zero_header_decoder(serialized: bytes) -> DecodedImage:
     )
 
 
+def _rgb_decoder(serialized: bytes) -> DecodedImage:
+    value = serialized[0]
+    return DecodedImage(
+        width=2,
+        height=1,
+        encoding="rgb8",
+        step=8,
+        data=bytes([255, value, 0, 0, value, 255, 17, 19]),
+        header_timestamp_ns=2_000_000_000 + value * 100_000_000,
+    )
+
+
 class _CancelAtFirstCheckpoint:
     phases: list[str]
 
@@ -681,6 +693,24 @@ def test_single_frame_header_timing_maps_to_zero(tmp_path: Path) -> None:
     assert result.maximum_presentation_gap_ns == 0
 
 
+def test_rgb8_frames_are_normalized_to_bgr_and_encoded(tmp_path: Path) -> None:
+    database = tmp_path / "recording.db3"
+    _create_image_database(database, [100_000_000, 200_000_000])
+    rgb = _rgb_decoder(b"\x01")
+
+    assert front_preview_module._bgr_pixels(rgb).tolist() == [
+        [[0, 1, 255], [255, 1, 0]]
+    ]
+
+    result = FrontPreviewProcessor(V0_PREVIEW_PROFILE, _rgb_decoder).process(
+        _descriptor(database, 0, 2), tmp_path / "preview.mp4"
+    )
+
+    assert result.input_frame_count == 2
+    assert result.encoded_frame_count == 2
+    assert (tmp_path / "preview.mp4").stat().st_size > 0
+
+
 def test_oversized_serialized_frame_is_rejected_before_deserialization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -709,7 +739,7 @@ def test_oversized_serialized_frame_is_rejected_before_deserialization(
 @pytest.mark.parametrize(
     ("image", "code"),
     [
-        (DecodedImage(4, 2, "rgb8", 12, b"x" * 24), "front_encoding_unsupported"),
+        (DecodedImage(4, 2, "rgba8", 16, b"x" * 32), "front_encoding_unsupported"),
         (DecodedImage(0, 2, "bgr8", 12, b"x" * 24), "front_dimensions_invalid"),
         (DecodedImage(4, 2, "bgr8", 11, b"x" * 22), "front_step_invalid"),
         (DecodedImage(4, 2, "bgr8", 12, b"x" * 23), "front_payload_invalid"),

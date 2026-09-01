@@ -4,8 +4,9 @@
 > and their corrective slices accepted; Building block 3 repository readiness
 > implemented, verified, and accepted as the working baseline on 2026-08-23;
 > Prompt 2A and read-only CIFS compatibility reviewed and committed locally on
-> 2026-08-24; front-preview-v3 all-zero-header corrective slice implemented
-> synthetically and awaiting review; controlled live commissioning in progress
+> 2026-08-24; front-preview-v3 all-zero-header and front-preview-v4 RGB8
+> corrective slices implemented synthetically and awaiting review; controlled
+> live commissioning in progress
 >
 > **Target:** Internal limited-group NAS trial
 >
@@ -69,7 +70,7 @@ using the already-delivered decimal `start_time_ns` catalog fact. Filter menus
 and status-tooltip placement are browser presentation only: they add no API,
 source read, persistence, job, processor, or timing behavior.
 
-### 1.2 `front-preview-v3` all-zero-header timing correction
+### 1.2 `front-preview-v3` timing and `front-preview-v4` RGB8 correction
 
 `front-preview-v3` adds one narrow timing selection to the existing front
 processor. A stream whose every decoded `sensor_msgs/msg/Image` header has
@@ -87,9 +88,15 @@ nanoseconds, out-of-range value, unordered non-zero header, degenerate affine
 span, or media-timescale collision fails before publication. No frame is
 interpolated and no fixed frame rate is fabricated.
 
-The active planner/cache contract includes processor `front-preview-v3` and
+`front-preview-v4` additionally accepts standard `sensor_msgs/msg/Image`
+frames encoded as `rgb8`, converts their packed pixels to the existing `bgr8`
+encoder input in worker memory, and retains the same row-step, dimensions, and
+payload validation. No source file is rewritten. Other image encodings remain
+unsupported.
+
+The active planner/cache contract includes processor `front-preview-v4` and
 timing identity `image_header_affine_or_all_zero_record_timestamp_v3`.
-Consequently, V2 artifacts remain historical while V3 artifacts have an
+Consequently, V2/V3 artifacts remain historical while V4 artifacts have an
 independent reusable identity. A successful all-zero artifact records
 `ros_record_timestamp_all_zero_image_headers` provenance and an exact media-PTS
 digest; a successful valid-header artifact continues to record the V2 affine
@@ -983,11 +990,11 @@ rows and files. Top-down and IMU identities remain reusable. A replacement is
 published only after its exact media PTS sequence validates against the
 processor result.
 
-The all-zero-header correction likewise requires no migration or new artifact
-kind. The `front-preview-v3` processor and timing identity make V2 front
-artifacts non-current after an explicit successful rescan, while retaining
-their rows and files. Top-down and IMU identities remain reusable. Publication
-still requires validation of the exact selected PTS sequence.
+The all-zero-header and RGB8 corrections require no migration or new artifact
+kind. The `front-preview-v4` processor makes V2/V3 front artifacts non-current
+after an explicit successful rescan, while retaining their rows and files.
+Top-down and IMU identities remain reusable. Publication still requires
+validation of the exact selected PTS sequence.
 
 The move-reconciliation migration keeps current source resolution separate from
 the stable private path and recording anchors used by processor cache identity.

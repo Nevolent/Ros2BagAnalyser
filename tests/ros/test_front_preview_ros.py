@@ -21,22 +21,31 @@ pytestmark = pytest.mark.ros
 
 
 @pytest.mark.parametrize(
-    ("header_stamps", "expected_times", "expected_policy"),
+    ("encoding", "header_stamps", "expected_times", "expected_policy"),
     [
         (
+            "bgr8",
             ((10, 0), (10, 100_000_000), (10, 200_000_000)),
             (0.0, 0.125, 0.25),
             FRONT_HEADER_TIMING_POLICY,
         ),
         (
+            "bgr8",
             ((0, 0), (0, 0), (0, 0)),
             (0.0, 0.05, 0.25),
             FRONT_ALL_ZERO_HEADER_TIMING_POLICY,
+        ),
+        (
+            "rgb8",
+            ((10, 0), (10, 100_000_000), (10, 200_000_000)),
+            (0.0, 0.125, 0.25),
+            FRONT_HEADER_TIMING_POLICY,
         ),
     ],
 )
 def test_generated_ros_images_select_the_exact_v3_timing_mode(
     tmp_path: Path,
+    encoding: str,
     header_stamps: tuple[tuple[int, int], ...],
     expected_times: tuple[float, ...],
     expected_policy: str,
@@ -71,7 +80,7 @@ def test_generated_ros_images_select_the_exact_v3_timing_mode(
             message.header.stamp.nanosec = header_stamp[1]
             message.width = 4
             message.height = 2
-            message.encoding = "bgr8"
+            message.encoding = encoding
             message.step = 12
             message.data = bytes([index, 20, 200] * 8)
             connection.execute(

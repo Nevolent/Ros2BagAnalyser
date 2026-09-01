@@ -715,7 +715,7 @@ def _message_data(
 
 
 def _validate_image(image: DecodedImage) -> None:
-    if image.encoding != "bgr8":
+    if image.encoding not in {"bgr8", "rgb8"}:
         raise FrontPreviewProcessingError(
             "front_encoding_unsupported",
             "The front-camera image encoding is unsupported.",
@@ -793,10 +793,7 @@ def _encode_image(
     *,
     force_keyframe: bool,
 ) -> None:
-    rows = np.frombuffer(image.data, dtype=np.uint8).reshape(image.height, image.step)
-    pixels = np.ascontiguousarray(rows[:, : image.width * 3]).reshape(
-        image.height, image.width, 3
-    )
+    pixels = _bgr_pixels(image)
     frame = av.VideoFrame.from_ndarray(pixels, format="bgr24")
     if frame.width != stream.width or frame.height != stream.height:
         frame = frame.reformat(
@@ -810,3 +807,13 @@ def _encode_image(
         frame.pict_type = PictureType.I
     for packet in stream.encode(frame):
         container.mux(packet)
+
+
+def _bgr_pixels(image: DecodedImage) -> np.ndarray:
+    """Return validated packed pixels in the format used by the encoder."""
+
+    rows = np.frombuffer(image.data, dtype=np.uint8).reshape(image.height, image.step)
+    pixels = rows[:, : image.width * 3].reshape(image.height, image.width, 3)
+    if image.encoding == "rgb8":
+        return np.ascontiguousarray(pixels[:, :, ::-1])
+    return np.ascontiguousarray(pixels)

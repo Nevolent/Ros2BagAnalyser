@@ -9,6 +9,7 @@ from rosbag_analyser.catalog.types import SourceCondition
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
 from rosbag_analyser.front_preview import (
     FRONT_PREVIEW_V2_PROCESSOR_VERSION,
+    FRONT_PREVIEW_V3_PROCESSOR_VERSION,
     FRONT_TIMING_POLICY_V2,
 )
 from rosbag_analyser.preparation_planner import (
@@ -156,6 +157,18 @@ def test_front_v3_planner_identity_differs_from_historical_v2() -> None:
     )
 
     assert current.planner_identity("front_preview") != historical_v2
+
+
+def test_front_v4_planner_identity_differs_from_historical_v3() -> None:
+    current = _planner()
+    historical_v3 = _front_planner_identity(
+        front_topic=FRONT_TOPIC,
+        profile=V0_PREVIEW_PROFILE,
+        encoder_identity="encoder-v1",
+        processor_version=FRONT_PREVIEW_V3_PROCESSOR_VERSION,
+    )
+
+    assert current.planner_identity("front_preview") != historical_v3
 
 
 def test_recording_id_remains_part_of_existing_cache_contract(tmp_path: Path) -> None:

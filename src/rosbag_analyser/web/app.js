@@ -930,11 +930,19 @@ statusIndicator.nextId = 1;
 
 function analysisDetails(recording) {
   const outputs = outputFacts(recording);
-  return OUTPUT_ORDER.map((kind) => {
+  return OUTPUT_ORDER.filter((kind) => {
+    const output = outputs.get(kind);
+    return kind !== "topdown_preview" || !isOptionalTopdownAbsence(output);
+  }).map((kind) => {
     const output = outputs.get(kind);
     const diagnostic = output?.diagnostic?.message;
     return `${OUTPUT_SHORT_LABELS[kind]}: ${humanize(output?.state || "unavailable")}${diagnostic ? ` — ${diagnostic}` : ""}`;
   });
+}
+
+function isOptionalTopdownAbsence(output) {
+  return output?.state === "unavailable"
+    && ["topdown_video_unavailable", "topdown_timestamps_unavailable"].includes(output.diagnostic?.code);
 }
 
 function createRecordingRow(recording) {

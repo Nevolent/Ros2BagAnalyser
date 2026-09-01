@@ -4,11 +4,12 @@
 > and their corrective slices accepted; Building block 3 repository readiness
 > implemented, verified, and accepted as the working baseline on 2026-08-23;
 > Prompt 2A and read-only CIFS compatibility reviewed and committed locally on
-> 2026-08-24; controlled live commissioning in progress
+> 2026-08-24; front-preview-v3 all-zero-header corrective slice implemented
+> synthetically and awaiting review; controlled live commissioning in progress
 >
 > **Target:** Internal limited-group NAS trial
 >
-> **Last updated:** 2026-08-24
+> **Last updated:** 2026-09-01
 
 ## 1. Objective and baseline
 
@@ -68,6 +69,32 @@ using the already-delivered decimal `start_time_ns` catalog fact. Filter menus
 and status-tooltip placement are browser presentation only: they add no API,
 source read, persistence, job, processor, or timing behavior.
 
+### 1.2 `front-preview-v3` all-zero-header timing correction
+
+`front-preview-v3` adds one narrow timing selection to the existing front
+processor. A stream whose every decoded `sensor_msgs/msg/Image` header has
+exactly `stamp.sec == 0` and `stamp.nanosec == 0` uses its already measured ROS
+database record timestamps as frame presentation cadence. Coverage remains the
+first and last retained ROS record timestamps. Duplicate record timestamps
+still collapse to the last frame, and distinct record timestamps must remain
+ordered and distinct at the configured media timescale.
+
+All other streams retain the exact `front-preview-v2` rule: valid, strictly
+increasing header timestamps are affinely mapped between the measured record
+endpoints. The new selection is not a generic invalid-header fallback. A
+missing header, mixed zero/non-zero stream, negative seconds, invalid
+nanoseconds, out-of-range value, unordered non-zero header, degenerate affine
+span, or media-timescale collision fails before publication. No frame is
+interpolated and no fixed frame rate is fabricated.
+
+The active planner/cache contract includes processor `front-preview-v3` and
+timing identity `image_header_affine_or_all_zero_record_timestamp_v3`.
+Consequently, V2 artifacts remain historical while V3 artifacts have an
+independent reusable identity. A successful all-zero artifact records
+`ros_record_timestamp_all_zero_image_headers` provenance and an exact media-PTS
+digest; a successful valid-header artifact continues to record the V2 affine
+policy and provenance.
+
 ## 2. V1 decisions
 
 | Area | V1 decision |
@@ -88,7 +115,7 @@ source read, persistence, job, processor, or timing behavior.
 | Job progress | Indeterminate unless a processor has an exact completed/total unit pair |
 | Estimate | Historical, kind-specific, source-size-normalized, explicitly approximate |
 | ROS time | Database record time relative to bag start |
-| Front media cadence | Image-header capture cadence affinely mapped between measured ROS record endpoints |
+| Front media cadence | V2 affine image-header cadence, or measured ROS record cadence only for a proven all-zero image-header stream (`front-preview-v3`) |
 | Top-down time | CSV Unix time relative to bag start |
 | Trial deployment | One internal Ubuntu VM with a trusted access boundary |
 | Public exposure | Prohibited |
@@ -130,9 +157,12 @@ filesystem paths directly.
 All review consumers use elapsed time from the ROS bag start. Front-camera
 coverage and global placement retain the first and last retained ROS database
 record timestamps. Within that interval, strictly ordered image-header capture
-timestamps are affinely mapped to determine frame presentation cadence. This is
-an explicit, versioned policy; header timestamps do not silently redefine
-coverage. The nominal source AVI rate never replaces CSV capture timestamps.
+timestamps are affinely mapped to determine frame presentation cadence. The
+only alternative is the versioned V3 rule for a stream proven to have exactly
+zero seconds and zero nanoseconds in every decoded image header; that stream
+uses the retained ROS record timestamps directly. Neither rule silently
+redefines coverage, interpolates frames, or invents a fixed rate. The nominal
+source AVI rate never replaces CSV capture timestamps.
 
 ### 3.6 States remain truthful and separate
 
@@ -417,18 +447,22 @@ validation under the derived root but never access source files.
 ### 9.2 Recording aggregate
 
 The API calculates the presentation aggregate after all three output states are
-resolved:
+resolved. Front and IMU are always required. Top-down is excluded from the
+required set only when its video or timestamp companion is absent (the
+`topdown_video_unavailable` or `topdown_timestamps_unavailable` diagnostic).
+A present but invalid top-down source remains required and visible:
 
 ```text
 any processing                 -> processing
 else any queued                -> queued
 else any failed                -> failed
-else all ready                 -> ready
+else all required outputs ready -> ready
 else                              not_planned
 ```
 
 The response always includes the three underlying output states and diagnostics
-so the frontend can build truthful tooltips and detail panels.
+so the frontend can build truthful detail panels. The Recordings Analysis
+tooltip omits only an absent optional top-down companion.
 
 `unavailable` remains a per-output fact, not an aggregate failed attempt. Source
 health separately explains why a recording cannot be prepared.
@@ -485,8 +519,9 @@ Chosen targets are resolved independently. An unavailable or stale chosen
 target creates no job for that output, but compatible ready/active chosen
 outputs are still reused and other chosen outputs may be queued. Existing ready
 artifacts and historical attempts remain untouched. Aggregate readiness and
-Analyzer admission still require all three current outputs, so a partially
-prepared recording is never presented as a complete analyzer bundle.
+Analyzer admission require every current required output, so a partially
+prepared recording is never presented as a complete analyzer bundle. An absent
+top-down companion is not required.
 
 ### 10.3 Concurrency and idempotency
 
@@ -748,9 +783,10 @@ V1 does not change processor inputs, output formats, cache identity safety, or
 publication rules merely to integrate the new frontend.
 
 - Front previews remain H.264/yuv420p MP4. Their measured coverage comes from
-  the first and last retained ROS record timestamps; frame cadence comes from
-  strictly ordered image-header timestamps affinely mapped between those
-  endpoints without frame interpolation or a fabricated fixed FPS.
+  the first and last retained ROS record timestamps. Valid strictly ordered
+  image headers retain the V2 affine cadence; only an all-zero header stream
+  uses the retained record timestamps directly. Neither mode interpolates
+  frames or fabricates a fixed FPS.
 - Top-down previews remain H.264/yuv420p MP4 timed by CSV Unix timestamps.
 - IMU remains one schema-version-2 JSON bundle with one timestamp and six fixed
   raw axes per source row.
@@ -929,6 +965,12 @@ previews non-current after an explicit successful rescan, while retaining their
 rows and files. Top-down and IMU identities remain reusable. A replacement is
 published only after its exact media PTS sequence validates against the
 processor result.
+
+The all-zero-header correction likewise requires no migration or new artifact
+kind. The `front-preview-v3` processor and timing identity make V2 front
+artifacts non-current after an explicit successful rescan, while retaining
+their rows and files. Top-down and IMU identities remain reusable. Publication
+still requires validation of the exact selected PTS sequence.
 
 The move-reconciliation migration keeps current source resolution separate from
 the stable private path and recording anchors used by processor cache identity.

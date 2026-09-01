@@ -36,9 +36,18 @@ from rosbag_analyser.persistence.processing_repository import (
 )
 
 
-PROCESSOR_VERSION = "front-preview-v2"
-FRONT_TIMING_POLICY = "capture_header_affine_to_record_span_v2"
+FRONT_PREVIEW_V2_PROCESSOR_VERSION = "front-preview-v2"
+FRONT_TIMING_POLICY_V2 = "capture_header_affine_to_record_span_v2"
+PROCESSOR_VERSION = "front-preview-v3"
+FRONT_TIMING_POLICY = "image_header_affine_or_all_zero_record_timestamp_v3"
+FRONT_HEADER_TIMING_POLICY = FRONT_TIMING_POLICY_V2
+FRONT_ALL_ZERO_HEADER_TIMING_POLICY = (
+    "ros_record_timestamp_all_zero_image_headers_v3"
+)
 FRONT_TIMESTAMP_PROVENANCE = "ros_image_header_affine_to_record_span"
+FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE = (
+    "ros_record_timestamp_all_zero_image_headers"
+)
 IMAGE_MESSAGE_TYPE = "sensor_msgs/msg/Image"
 CDR_SERIALIZATION = "cdr"
 
@@ -397,12 +406,15 @@ def _cache_identity(
     configured_topic: str,
     profile: PreviewProfile,
     media_encoder_identity: str,
+    *,
+    processor_version: str = PROCESSOR_VERSION,
+    timing_policy: str = FRONT_TIMING_POLICY,
 ) -> str:
     document = {
         "artifact_kind": FRONT_PREVIEW_KIND,
-        "processor_version": PROCESSOR_VERSION,
+        "processor_version": processor_version,
         "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
-        "timing_policy": FRONT_TIMING_POLICY,
+        "timing_policy": timing_policy,
         "recording": {
             "id": record.identity_recording_id,
             "archive_relative_path": record.identity_relative_path,

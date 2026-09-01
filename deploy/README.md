@@ -56,7 +56,7 @@ TrueNAS, create public listeners, rescan on startup, or automatically delete a
 release, database, backup, derived artifact, or source file. See
 `docs/NAS_TRIAL_RUNBOOK.md` for the reviewed sequence and rollback rules.
 
-## Read-only front-header diagnostics
+## Read-only front-camera diagnostics
 
 `scripts/analyze-front-header-timestamps` investigates selected failed
 front-camera recordings without queuing work or generating media. It accepts
@@ -66,12 +66,13 @@ It reads the declared ROS SQLite file by an immutable descriptor path with
 SQLite query-only mode and prints a JSON report to standard output. Redirect
 that output only to the protected evidence location outside the source mount.
 
-The tool reports the first invalid image header (message position/ID, ROS
-record timestamp, `sec`, `nanosec`, and reason), counts all invalid headers,
-and reports strict-order violations separately. It is diagnostic only: it does
-not change the preview timing policy or make an invalid recording processable.
-It reads source payloads, so it may run only under an approved real-data annex
-with the required before/after source-inventory evidence.
+The tool reports image encoding counts and the first encoding that the current
+preview contract cannot process, as well as the first invalid image header
+(message position/ID, ROS record timestamp, `sec`, `nanosec`, and reason), all
+invalid-header counts, and strict-order violations. It is diagnostic only: it
+does not change the preview timing policy or make an invalid recording
+processable. It reads source payloads, so it may run only under an approved
+real-data annex with the required before/after source-inventory evidence.
 
 ## Routine Git deployments
 

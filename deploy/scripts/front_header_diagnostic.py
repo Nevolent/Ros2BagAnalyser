@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only diagnostic for invalid front-camera ROS Image header timestamps."""
+"""Read-only diagnostic for front-camera ROS Image headers and encodings."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from rosbag_analyser.processors.front_preview import FrontPreviewProcessingError
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Inspect selected front-camera bags through immutable SQLite access. "
+            "Inspect selected front-camera headers and encodings through immutable SQLite access. "
             "The report is written only to standard output."
         )
     )

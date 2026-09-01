@@ -5,10 +5,16 @@ from pathlib import Path
 
 from conftest import create_recording, metadata_document
 from rosbag_analyser.catalog.scanner import CatalogScanner
+from rosbag_analyser.catalog.types import SourceCondition
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
+from rosbag_analyser.front_preview import (
+    FRONT_PREVIEW_V2_PROCESSOR_VERSION,
+    FRONT_TIMING_POLICY_V2,
+)
 from rosbag_analyser.preparation_planner import (
     PREPARATION_KINDS,
     PreparationPlanner,
+    _front_planner_identity,
 )
 
 
@@ -76,6 +82,36 @@ def test_missing_configured_topic_is_unavailable_without_hiding_other_targets(
     assert by_kind["imu_series"].diagnostic.code == "imu_topic_unavailable"
 
 
+def test_missing_topdown_is_optional_but_an_invalid_companion_is_not(tmp_path: Path) -> None:
+    recording = _scanned_recording(tmp_path)
+    missing = replace(
+        recording,
+        components=tuple(
+            replace(component, condition=SourceCondition.MISSING)
+            if component.role.value == "topdown_video"
+            else component
+            for component in recording.components
+        ),
+    )
+    invalid = replace(
+        recording,
+        components=tuple(
+            replace(component, condition=SourceCondition.INVALID)
+            if component.role.value == "topdown_video"
+            else component
+            for component in recording.components
+        ),
+    )
+
+    missing_target = _planner().plan_recording(11, missing)[1]
+    invalid_target = _planner().plan_recording(11, invalid)[1]
+
+    assert missing_target.diagnostic is not None
+    assert missing_target.diagnostic.code == "topdown_video_unavailable"
+    assert invalid_target.diagnostic is not None
+    assert invalid_target.diagnostic.code == "topdown_video_invalid"
+
+
 def test_planner_and_cache_identity_change_only_for_relevant_configuration(
     tmp_path: Path,
 ) -> None:
@@ -107,6 +143,19 @@ def test_planner_and_cache_identity_change_only_for_relevant_configuration(
         first_targets["imu_series"].cache_identity
         == second_targets["imu_series"].cache_identity
     )
+
+
+def test_front_v3_planner_identity_differs_from_historical_v2() -> None:
+    current = _planner()
+    historical_v2 = _front_planner_identity(
+        front_topic=FRONT_TOPIC,
+        profile=V0_PREVIEW_PROFILE,
+        encoder_identity="encoder-v1",
+        processor_version=FRONT_PREVIEW_V2_PROCESSOR_VERSION,
+        timing_policy=FRONT_TIMING_POLICY_V2,
+    )
+
+    assert current.planner_identity("front_preview") != historical_v2
 
 
 def test_recording_id_remains_part_of_existing_cache_contract(tmp_path: Path) -> None:

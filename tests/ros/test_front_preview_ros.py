@@ -9,15 +9,37 @@ import pytest
 from rosbag_analyser.catalog.metadata import TopicFact
 from rosbag_analyser.catalog.paths import source_file_identity
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
-from rosbag_analyser.front_preview import FrontSourceDescriptor
+from rosbag_analyser.front_preview import (
+    FRONT_ALL_ZERO_HEADER_TIMING_POLICY,
+    FRONT_HEADER_TIMING_POLICY,
+    FrontSourceDescriptor,
+)
 from rosbag_analyser.processors.front_preview import FrontPreviewProcessor
 
 
 pytestmark = pytest.mark.ros
 
 
-def test_generated_ros_images_deserialize_and_encode_with_smooth_capture_cadence(
+@pytest.mark.parametrize(
+    ("header_stamps", "expected_times", "expected_policy"),
+    [
+        (
+            ((10, 0), (10, 100_000_000), (10, 200_000_000)),
+            (0.0, 0.125, 0.25),
+            FRONT_HEADER_TIMING_POLICY,
+        ),
+        (
+            ((0, 0), (0, 0), (0, 0)),
+            (0.0, 0.05, 0.25),
+            FRONT_ALL_ZERO_HEADER_TIMING_POLICY,
+        ),
+    ],
+)
+def test_generated_ros_images_select_the_exact_v3_timing_mode(
     tmp_path: Path,
+    header_stamps: tuple[tuple[int, int], ...],
+    expected_times: tuple[float, ...],
+    expected_policy: str,
 ) -> None:
     serialization = pytest.importorskip("rclpy.serialization")
     sensor_messages = pytest.importorskip("sensor_msgs.msg")
@@ -36,12 +58,17 @@ def test_generated_ros_images_deserialize_and_encode_with_smooth_capture_cadence
             "INSERT INTO topics VALUES (1, '/camera/image_raw', "
             "'sensor_msgs/msg/Image', 'cdr', '')"
         )
-        for index, timestamp in enumerate(
-            (1_000_000_000, 1_050_000_000, 1_250_000_000), start=1
+        for index, (timestamp, header_stamp) in enumerate(
+            zip(
+                (1_000_000_000, 1_050_000_000, 1_250_000_000),
+                header_stamps,
+                strict=True,
+            ),
+            start=1,
         ):
             message = sensor_messages.Image()
-            message.header.stamp.sec = 10
-            message.header.stamp.nanosec = (index - 1) * 100_000_000
+            message.header.stamp.sec = header_stamp[0]
+            message.header.stamp.nanosec = header_stamp[1]
             message.width = 4
             message.height = 2
             message.encoding = "bgr8"
@@ -80,10 +107,13 @@ def test_generated_ros_images_deserialize_and_encode_with_smooth_capture_cadence
     assert result.coverage_start_ns == 100_000_000
     assert result.coverage_end_ns == 350_000_000
     assert result.encoded_frame_count == 3
-    assert result.header_span_ns == 200_000_000
+    assert result.header_span_ns == (
+        0 if expected_policy == FRONT_ALL_ZERO_HEADER_TIMING_POLICY else 200_000_000
+    )
+    assert result.timing_policy == expected_policy
     with av.open(output) as container:
         times = [
             float(frame.pts * frame.time_base)
             for frame in container.decode(video=0)
         ]
-    assert times == pytest.approx([0.0, 0.125, 0.25], abs=0.000_002)
+    assert times == pytest.approx(expected_times, abs=0.000_002)

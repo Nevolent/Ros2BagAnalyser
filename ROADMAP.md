@@ -22,7 +22,10 @@ Prompt 2A, the big UI overhaul and real processing-controls correction, was
 approved, invoked, implemented, and synthetically verified on 2026-08-23. It
 was reviewed and committed locally as `1c8871b` on 2026-08-24, followed by
 read-only CIFS deployment compatibility in `dd28c42`. Controlled live VM
-preparation is in progress. Release installation, authoritative-source
+preparation is in progress. On 2026-09-01 the user authorized the narrowly
+scoped `front-preview-v3` all-zero-image-header corrective slice; it is
+implemented with synthetic verification and awaits review and a separately
+approved real-output trial. Release installation, authoritative-source
 acceptance, private trial access, reboot persistence, and trial admission remain
 incomplete.
 
@@ -566,6 +569,43 @@ and Git status. Leave changes uncommitted for user review.
   including slow-seek and buffering simulations. No real source archive,
   deployment, or Building block 3 work was performed; real-output acceptance
   remains a separate explicit opt-in.
+
+#### `front-preview-v3` all-zero-header corrective slice — 2026-09-01
+
+- Protected VM diagnostics for recordings 84, 30, 10, and 7 inspected 17,492
+  decoded front-camera frames. Every image header had exactly `stamp.sec == 0`
+  and `stamp.nanosec == 0`; none supplied a valid non-zero capture timestamp.
+  The full-source before/after manifests matched exactly at 53,102 entries and
+  SHA-256
+  `22ee647fd15b82aa7581db16bd06b6718b8aa9e55c5a6cc70e914ce22755380d`.
+- `front-preview-v3` keeps the V2 affine policy unchanged for a stream of valid,
+  strictly increasing non-zero headers. Only a stream whose every decoded
+  image header is exactly zero uses retained ROS database record timestamps as
+  presentation cadence. Coverage remains the first and last retained record
+  timestamp; duplicate record timestamps still collapse to the last frame.
+- The correction does not interpolate frames or fabricate a fixed FPS.
+  Missing headers, mixed zero/non-zero streams, negative seconds, invalid
+  nanoseconds, out-of-range non-zero values, unordered record or valid-header
+  timing, degenerate affine spans, and media-timescale collisions fail safely
+  before publication. The all-zero selection is deliberately not broadened to
+  another invalid-header case.
+- Processor `front-preview-v3` and timing identity
+  `image_header_affine_or_all_zero_record_timestamp_v3` participate in planner
+  and cache hashes. V2 front artifacts remain historical; top-down and IMU
+  identities do not change. Successful fallback artifacts record
+  `ros_record_timestamp_all_zero_image_headers` provenance and retain exact
+  media-PTS digest validation.
+- Focused synthetic verification covers valid V2 cadence, all-zero record-time
+  cadence with visible irregular gaps, exact artifact validation, duplicate and
+  unordered record timestamps, mixed/missing/invalid headers, worker manifest
+  provenance, and V2-to-V3 planner/cache identity separation. The focused
+  processor/planner/artifact/worker/API set passed 113 tests; the complete
+  default Python suite passed 394 with 39 environment-gated skips; three
+  sourced ROS serialization tests and all 49 dependency-free JavaScript tests
+  passed. The optional disposable PostgreSQL suite was unavailable because its
+  local test server was not running; this slice changes no schema or repository
+  query. No real source, VM service, database, deployment, release, or job was
+  accessed or changed; a bounded V3 real-output trial remains separately gated.
 
 #### Approved moved-path catalog corrective slice — 2026-08-05
 

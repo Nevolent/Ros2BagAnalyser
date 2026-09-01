@@ -17,7 +17,10 @@ import numpy as np
 from rosbag_analyser.catalog.paths import SourceFileIdentity, source_file_identity
 from rosbag_analyser.config import PreviewProfile
 from rosbag_analyser.front_preview import (
-    FRONT_TIMING_POLICY,
+    FRONT_ALL_ZERO_HEADER_TIMING_POLICY,
+    FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE,
+    FRONT_HEADER_TIMING_POLICY,
+    FRONT_TIMESTAMP_PROVENANCE,
     FrontSourceDescriptor,
     IMAGE_MESSAGE_TYPE,
 )
@@ -46,14 +49,24 @@ class DecodedImage:
     step: int
     data: bytes
     header_timestamp_ns: int | None = None
+    header_stamp_available: bool = False
+    header_stamp_sec: int | None = None
+    header_stamp_nanosec: int | None = None
+
+
+@dataclass(frozen=True)
+class HeaderStamp:
+    kind: str
+    timestamp_ns: int | None
 
 
 @dataclass(frozen=True)
 class FrontTimingPlan:
     record_start_ns: int
     record_end_ns: int
-    header_start_ns: int
-    header_end_ns: int
+    header_start_ns: int | None
+    header_end_ns: int | None
+    mode: str
 
     @property
     def record_span_ns(self) -> int:
@@ -61,9 +74,58 @@ class FrontTimingPlan:
 
     @property
     def header_span_ns(self) -> int:
+        if self.header_start_ns is None or self.header_end_ns is None:
+            return 0
         return self.header_end_ns - self.header_start_ns
 
-    def presentation_time_ns(self, header_timestamp_ns: int) -> int:
+    @property
+    def timing_policy(self) -> str:
+        if self.mode == "all_zero_record_timestamp":
+            return FRONT_ALL_ZERO_HEADER_TIMING_POLICY
+        return FRONT_HEADER_TIMING_POLICY
+
+    @property
+    def timestamp_provenance(self) -> str:
+        if self.mode == "all_zero_record_timestamp":
+            return FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE
+        return FRONT_TIMESTAMP_PROVENANCE
+
+    def validate_header(self, header: HeaderStamp) -> None:
+        expected_kind = (
+            "all_zero" if self.mode == "all_zero_record_timestamp" else "valid"
+        )
+        if header.kind != expected_kind:
+            raise FrontPreviewProcessingError(
+                "front_header_timestamps_mixed",
+                "Front-camera image headers mix zero and non-zero timestamps.",
+            )
+
+    def presentation_time_ns(
+        self, record_timestamp_ns: int, header: HeaderStamp
+    ) -> int:
+        self.validate_header(header)
+        if self.mode == "all_zero_record_timestamp":
+            if (
+                record_timestamp_ns < self.record_start_ns
+                or record_timestamp_ns > self.record_end_ns
+            ):
+                raise FrontPreviewProcessingError(
+                    "front_record_timestamp_outside_span",
+                    "A front-camera record timestamp is outside the validated span.",
+                )
+            return record_timestamp_ns - self.record_start_ns
+
+        if header.timestamp_ns is None:
+            raise FrontPreviewProcessingError(
+                "front_header_timestamp_invalid",
+                "A front-camera image has an invalid header timestamp.",
+            )
+        if self.header_start_ns is None or self.header_end_ns is None:
+            raise FrontPreviewProcessingError(
+                "front_header_timing_invalid",
+                "The front-camera header timing cannot be mapped safely.",
+            )
+        header_timestamp_ns = header.timestamp_ns
         if (
             header_timestamp_ns < self.header_start_ns
             or header_timestamp_ns > self.header_end_ns
@@ -102,7 +164,8 @@ class FrontPreviewResult:
     header_span_ns: int
     maximum_presentation_gap_ns: int
     media_pts_sha256: str
-    timing_policy: str = FRONT_TIMING_POLICY
+    timing_policy: str = FRONT_HEADER_TIMING_POLICY
+    timestamp_provenance: str = FRONT_TIMESTAMP_PROVENANCE
 
 
 ImageDecoder = Callable[[bytes], DecodedImage]
@@ -130,6 +193,7 @@ class FrontPreviewProcessor:
         messages = _iter_topic_messages(descriptor)
         pending_timestamp: int | None = None
         pending_image: DecodedImage | None = None
+        pending_header: HeaderStamp | None = None
         last_timestamp: int | None = None
         input_frames = 0
         encoded_frames = 0
@@ -141,7 +205,7 @@ class FrontPreviewProcessor:
         time_base = Fraction(1, self.profile.media_timescale)
         keyframe_interval_ns = self.profile.keyframe_interval_seconds * 1_000_000_000
         last_keyframe_elapsed_ns: int | None = None
-        previous_header_timestamp_ns: int | None = None
+        previous_decoded_header_timestamp_ns: int | None = None
         previous_presentation_ns: int | None = None
         previous_media_pts: int | None = None
         maximum_presentation_gap_ns = 0
@@ -155,6 +219,20 @@ class FrontPreviewProcessor:
                 input_frames += 1
                 image = _decode_image(self.image_decoder, serialized)
                 _validate_image(image)
+                header = _header_stamp(image)
+                timing.validate_header(header)
+                if header.kind == "valid":
+                    assert header.timestamp_ns is not None
+                    if (
+                        previous_decoded_header_timestamp_ns is not None
+                        and header.timestamp_ns
+                        <= previous_decoded_header_timestamp_ns
+                    ):
+                        raise FrontPreviewProcessingError(
+                            "front_header_timestamps_invalid",
+                            "Front-camera header timestamps are not strictly ordered.",
+                        )
+                    previous_decoded_header_timestamp_ns = header.timestamp_ns
                 dimensions = (image.width, image.height)
                 if source_size is None:
                     source_size = dimensions
@@ -174,28 +252,26 @@ class FrontPreviewProcessor:
                     )
                 if pending_timestamp == record_timestamp:
                     pending_image = image
+                    pending_header = header
                     duplicates += 1
                     continue
 
-                if pending_timestamp is not None and pending_image is not None:
+                if (
+                    pending_timestamp is not None
+                    and pending_image is not None
+                    and pending_header is not None
+                ):
                     if container is None or stream is None:
                         assert output_size is not None
                         container, stream = _open_output(
                             output_path, output_size, self.profile, time_base
                         )
-                    header_timestamp_ns = _header_timestamp_ns(pending_image)
-                    elapsed_ns = timing.presentation_time_ns(header_timestamp_ns)
+                    elapsed_ns = timing.presentation_time_ns(
+                        pending_timestamp, pending_header
+                    )
                     media_pts = nanoseconds_to_media_pts(
                         elapsed_ns, self.profile.media_timescale
                     )
-                    if (
-                        previous_header_timestamp_ns is not None
-                        and header_timestamp_ns <= previous_header_timestamp_ns
-                    ):
-                        raise FrontPreviewProcessingError(
-                            "front_header_timestamps_invalid",
-                            "Front-camera header timestamps are not strictly ordered.",
-                        )
                     if previous_media_pts is not None and media_pts <= previous_media_pts:
                         raise FrontPreviewProcessingError(
                             "front_presentation_timestamps_invalid",
@@ -223,15 +299,19 @@ class FrontPreviewProcessor:
                         last_keyframe_elapsed_ns = elapsed_ns
                     encoded_frames += 1
                     last_timestamp = pending_timestamp
-                    previous_header_timestamp_ns = header_timestamp_ns
                     previous_presentation_ns = elapsed_ns
                     previous_media_pts = media_pts
                     media_pts_digest.update(media_pts_digest_chunk(media_pts))
 
                 pending_timestamp = record_timestamp
                 pending_image = image
+                pending_header = header
 
-            if pending_timestamp is None or pending_image is None:
+            if (
+                pending_timestamp is None
+                or pending_image is None
+                or pending_header is None
+            ):
                 raise FrontPreviewProcessingError(
                     "front_topic_empty", "The front-camera topic contains no frames."
                 )
@@ -242,19 +322,12 @@ class FrontPreviewProcessor:
                 )
             if control is not None:
                 control.checkpoint("processing", force=True)
-            header_timestamp_ns = _header_timestamp_ns(pending_image)
-            elapsed_ns = timing.presentation_time_ns(header_timestamp_ns)
+            elapsed_ns = timing.presentation_time_ns(
+                pending_timestamp, pending_header
+            )
             media_pts = nanoseconds_to_media_pts(
                 elapsed_ns, self.profile.media_timescale
             )
-            if (
-                previous_header_timestamp_ns is not None
-                and header_timestamp_ns <= previous_header_timestamp_ns
-            ):
-                raise FrontPreviewProcessingError(
-                    "front_header_timestamps_invalid",
-                    "Front-camera header timestamps are not strictly ordered.",
-                )
             if previous_media_pts is not None and media_pts <= previous_media_pts:
                 raise FrontPreviewProcessingError(
                     "front_presentation_timestamps_invalid",
@@ -324,6 +397,8 @@ class FrontPreviewProcessor:
             header_span_ns=timing.header_span_ns,
             maximum_presentation_gap_ns=maximum_presentation_gap_ns,
             media_pts_sha256=media_pts_digest.hexdigest(),
+            timing_policy=timing.timing_policy,
+            timestamp_provenance=timing.timestamp_provenance,
         )
 
 
@@ -349,6 +424,9 @@ def deserialize_ros_image(serialized: bytes) -> DecodedImage:
         encoding=str(message.encoding),
         step=int(message.step),
         data=bytes(message.data),
+        header_stamp_available=True,
+        header_stamp_sec=int(message.header.stamp.sec),
+        header_stamp_nanosec=int(message.header.stamp.nanosec),
         header_timestamp_ns=(
             int(message.header.stamp.sec) * 1_000_000_000
             + int(message.header.stamp.nanosec)
@@ -396,23 +474,50 @@ def _load_timing_plan(
         )
         _validate_image(first_image)
         _validate_image(last_image)
-        plan = FrontTimingPlan(
-            record_start_ns=int(first[1]),
-            record_end_ns=int(last[1]),
-            header_start_ns=_header_timestamp_ns(first_image),
-            header_end_ns=_header_timestamp_ns(last_image),
-        )
+        first_header = _header_stamp(first_image)
+        last_header = _header_stamp(last_image)
+        if first_header.kind != last_header.kind:
+            raise FrontPreviewProcessingError(
+                "front_header_timestamps_mixed",
+                "Front-camera image headers mix zero and non-zero timestamps.",
+            )
+        if first_header.kind == "all_zero":
+            plan = FrontTimingPlan(
+                record_start_ns=int(first[1]),
+                record_end_ns=int(last[1]),
+                header_start_ns=None,
+                header_end_ns=None,
+                mode="all_zero_record_timestamp",
+            )
+        else:
+            assert first_header.timestamp_ns is not None
+            assert last_header.timestamp_ns is not None
+            plan = FrontTimingPlan(
+                record_start_ns=int(first[1]),
+                record_end_ns=int(last[1]),
+                header_start_ns=first_header.timestamp_ns,
+                header_end_ns=last_header.timestamp_ns,
+                mode="header_affine",
+            )
         if plan.record_span_ns < 0 or plan.header_span_ns < 0:
             raise FrontPreviewProcessingError(
                 "front_header_timing_invalid",
                 "The front-camera header timing cannot be mapped safely.",
             )
-        if plan.record_span_ns == 0 and plan.header_span_ns != 0:
+        if (
+            plan.mode == "header_affine"
+            and plan.record_span_ns == 0
+            and plan.header_span_ns != 0
+        ):
             raise FrontPreviewProcessingError(
                 "front_header_timing_invalid",
                 "The front-camera header timing cannot be mapped safely.",
             )
-        if plan.record_span_ns > 0 and plan.header_span_ns <= 0:
+        if (
+            plan.mode == "header_affine"
+            and plan.record_span_ns > 0
+            and plan.header_span_ns <= 0
+        ):
             raise FrontPreviewProcessingError(
                 "front_header_timing_invalid",
                 "The front-camera header timing cannot be mapped safely.",
@@ -432,7 +537,53 @@ def _decode_image(image_decoder: ImageDecoder, serialized: bytes) -> DecodedImag
         ) from error
 
 
-def _header_timestamp_ns(image: DecodedImage) -> int:
+def _header_stamp(image: DecodedImage) -> HeaderStamp:
+    if image.header_stamp_available:
+        seconds = image.header_stamp_sec
+        nanoseconds = image.header_stamp_nanosec
+        if seconds is None or nanoseconds is None:
+            raise FrontPreviewProcessingError(
+                "front_header_timestamp_missing",
+                "A front-camera image header timestamp is missing.",
+            )
+        if (
+            isinstance(seconds, bool)
+            or not isinstance(seconds, int)
+            or seconds < 0
+            or seconds > 2_147_483_647
+        ):
+            raise FrontPreviewProcessingError(
+                "front_header_second_invalid",
+                "A front-camera image header has an invalid seconds value.",
+            )
+        if (
+            isinstance(nanoseconds, bool)
+            or not isinstance(nanoseconds, int)
+            or nanoseconds < 0
+            or nanoseconds >= 1_000_000_000
+        ):
+            raise FrontPreviewProcessingError(
+                "front_header_nanosecond_invalid",
+                "A front-camera image header has an invalid nanoseconds value.",
+            )
+        value = seconds * 1_000_000_000 + nanoseconds
+        if seconds == 0 and nanoseconds == 0:
+            if image.header_timestamp_ns not in (None, 0):
+                raise FrontPreviewProcessingError(
+                    "front_header_timestamp_invalid",
+                    "A front-camera image has an invalid header timestamp.",
+                )
+            return HeaderStamp("all_zero", 0)
+        if (
+            image.header_timestamp_ns is not None
+            and image.header_timestamp_ns != value
+        ):
+            raise FrontPreviewProcessingError(
+                "front_header_timestamp_invalid",
+                "A front-camera image has an invalid header timestamp.",
+            )
+        return HeaderStamp("valid", value)
+
     value = image.header_timestamp_ns
     if (
         isinstance(value, bool)
@@ -444,7 +595,7 @@ def _header_timestamp_ns(image: DecodedImage) -> int:
             "front_header_timestamp_invalid",
             "A front-camera image has an invalid header timestamp.",
         )
-    return value
+    return HeaderStamp("valid", value)
 
 
 def _iter_topic_messages(

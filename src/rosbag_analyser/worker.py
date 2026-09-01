@@ -19,8 +19,8 @@ from rosbag_analyser.deployment import (
     validate_startup_mounts,
 )
 from rosbag_analyser.front_preview import (
+    FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE,
     FRONT_TIMESTAMP_PROVENANCE,
-    FRONT_TIMING_POLICY,
     PROCESSOR_VERSION,
     FrontSourceResolver,
     encoder_identity,
@@ -184,6 +184,37 @@ class SerialWorker:
                 expected_media_pts_sha256=result.media_pts_sha256,
                 control=control,
             )
+            timing_manifest = {
+                "timestamp_provenance": result.timestamp_provenance,
+                "policy": result.timing_policy,
+                "bounds": "measured",
+                "coverage_start_ns": str(result.coverage_start_ns),
+                "coverage_end_ns": str(result.coverage_end_ns),
+                "measured_span_ns": str(result.measured_span_ns),
+                "header_span_ns": str(result.header_span_ns),
+                "maximum_presentation_gap_ns": str(
+                    result.maximum_presentation_gap_ns
+                ),
+                "media_timescale": self.processor.profile.media_timescale,
+                "media_pts_sha256": result.media_pts_sha256,
+            }
+            if result.timestamp_provenance == FRONT_TIMESTAMP_PROVENANCE:
+                timing_manifest.update(
+                    {
+                        "affine_scale_numerator": str(result.measured_span_ns),
+                        "affine_scale_denominator": str(result.header_span_ns),
+                    }
+                )
+            elif (
+                result.timestamp_provenance
+                == FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE
+            ):
+                timing_manifest["image_header_stamps"] = "all_zero"
+            else:
+                raise FrontPreviewProcessingError(
+                    "front_timing_provenance_invalid",
+                    "The generated preview has invalid timing provenance.",
+                )
             manifest: dict[str, object] = {
                 "schema_version": 2,
                 "artifact_kind": FRONT_PREVIEW_KIND,
@@ -195,22 +226,7 @@ class SerialWorker:
                     "message_type": descriptor.topic.message_type,
                     "serialization_format": descriptor.topic.serialization_format,
                 },
-                "timing": {
-                    "timestamp_provenance": FRONT_TIMESTAMP_PROVENANCE,
-                    "policy": FRONT_TIMING_POLICY,
-                    "bounds": "measured",
-                    "coverage_start_ns": str(result.coverage_start_ns),
-                    "coverage_end_ns": str(result.coverage_end_ns),
-                    "measured_span_ns": str(result.measured_span_ns),
-                    "header_span_ns": str(result.header_span_ns),
-                    "affine_scale_numerator": str(result.measured_span_ns),
-                    "affine_scale_denominator": str(result.header_span_ns),
-                    "maximum_presentation_gap_ns": str(
-                        result.maximum_presentation_gap_ns
-                    ),
-                    "media_timescale": self.processor.profile.media_timescale,
-                    "media_pts_sha256": result.media_pts_sha256,
-                },
+                "timing": timing_manifest,
                 "profile": self.processor.profile.identity_values(),
                 "output": {
                     "file_name": "preview.mp4",

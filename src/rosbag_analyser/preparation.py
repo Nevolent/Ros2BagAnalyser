@@ -126,11 +126,19 @@ class PreparationService:
             recording_id: {kind: "unavailable" for kind in PROCESSING_KINDS}
             for recording_id in recording_ids
         }
+        optional_topdown_absent: dict[int, bool] = {
+            recording_id: False for recording_id in recording_ids
+        }
         for current in existing:
             state = "not_requested"
             target = current.target
             if target.target_state != "available" or target.cache_identity is None:
                 state = "unavailable"
+                if (
+                    target.kind == TOPDOWN_PREVIEW_KIND
+                    and target.diagnostic_code in _OPTIONAL_TOPDOWN_ABSENCE_CODES
+                ):
+                    optional_topdown_absent[target.recording_id] = True
             elif current.artifact is not None:
                 diagnostic = self._validate_artifact(current.artifact)
                 if diagnostic is None:
@@ -193,11 +201,14 @@ class PreparationService:
             current_states = baseline_states[recording_id]
             for output in result.outputs:
                 current_states[output.kind] = output.state
+                if _is_optional_topdown_absence(output):
+                    optional_topdown_absent[recording_id] = True
             result = PrepareRecordingResult(
                 result.recording_id,
                 result.outcome,
                 _aggregate_state(
-                    tuple(current_states[kind] for kind in PROCESSING_KINDS)
+                    tuple(current_states[kind] for kind in PROCESSING_KINDS),
+                    optional_topdown_absent=optional_topdown_absent[recording_id],
                 ),
                 result.outputs,
             )
@@ -290,7 +301,12 @@ class PreparationService:
             outputs.append(OutputFact(kind, "not_requested"))
         return RecordingAnalysis(
             recording_id,
-            _aggregate_state(tuple(output.state for output in outputs)),
+            _aggregate_state(
+                tuple(output.state for output in outputs),
+                optional_topdown_absent=any(
+                    _is_optional_topdown_absence(output) for output in outputs
+                ),
+            ),
             tuple(outputs),
         )
 
@@ -361,7 +377,12 @@ class PreparationService:
             )
             for item in schedule.outputs
         )
-        analysis_state = _aggregate_state(tuple(item.state for item in outputs))
+        analysis_state = _aggregate_state(
+            tuple(item.state for item in outputs),
+            optional_topdown_absent=any(
+                _is_optional_topdown_absence(output) for output in outputs
+            ),
+        )
         if outputs and all(item.outcome == "unavailable" for item in outputs):
             outcome = "unavailable"
         elif outputs and all(item.outcome == "request_failed" for item in outputs):
@@ -386,14 +407,35 @@ def _target_diagnostic(current: CurrentOutputRecord) -> SafeDiagnostic:
     )
 
 
-def _aggregate_state(states: tuple[str, ...]) -> str:
+_OPTIONAL_TOPDOWN_ABSENCE_CODES = frozenset(
+    {"topdown_video_unavailable", "topdown_timestamps_unavailable"}
+)
+
+
+def _is_optional_topdown_absence(output: OutputFact | PrepareOutputResult) -> bool:
+    return (
+        output.kind == TOPDOWN_PREVIEW_KIND
+        and output.state == "unavailable"
+        and output.diagnostic is not None
+        and output.diagnostic.code in _OPTIONAL_TOPDOWN_ABSENCE_CODES
+    )
+
+
+def _aggregate_state(
+    states: tuple[str, ...], *, optional_topdown_absent: bool = False
+) -> str:
     if "processing" in states:
         return "processing"
     if "queued" in states:
         return "queued"
     if "failed" in states:
         return "failed"
-    if states and all(state == "ready" for state in states):
+    required_states = (
+        tuple(state for index, state in enumerate(states) if index != 1)
+        if optional_topdown_absent
+        else states
+    )
+    if required_states and all(state == "ready" for state in required_states):
         return "ready"
     return "not_planned"
 

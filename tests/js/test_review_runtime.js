@@ -820,6 +820,26 @@ test("Recordings distinguish a partially prepared output set", async () => {
   assert.match(indicator.querySelector("use").getAttribute("href"), /icon-analysis-subset/);
 });
 
+test("Analysis status omits an absent optional top-down companion", async () => {
+  const catalog = catalogFixture();
+  catalog.recordings[0].analysis_state = "ready";
+  catalog.recordings[0].outputs = [
+    { kind: "front_preview", state: "ready", diagnostic: null },
+    { kind: "topdown_preview", state: "unavailable", diagnostic: { code: "topdown_video_unavailable", message: "The top-down video companion is unavailable." } },
+    { kind: "imu_series", state: "ready", diagnostic: null },
+  ];
+  const harness = createHarness("/", async (url) => {
+    if (url === "/api/v1/catalog") return makeResponse(catalog);
+    throw new Error(url);
+  });
+  await flush();
+
+  const tooltip = harness.document.querySelector(".table-status--ready").querySelector(".status-tooltip");
+  assert.match(tooltip.textContent, /Front: Ready/);
+  assert.match(tooltip.textContent, /IMU: Ready/);
+  assert.doesNotMatch(tooltip.textContent, /Top-down/);
+});
+
 test("Analyzer shows repeated diagnostics once and hides redundant terminal badges", async () => {
   const detail = detailFixture();
   const message = "SQLite header declares a different database size.";

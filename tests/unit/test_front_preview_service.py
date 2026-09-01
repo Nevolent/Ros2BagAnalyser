@@ -11,7 +11,13 @@ from conftest import metadata_document
 from rosbag_analyser.artifact_store import ArtifactStoreError
 from rosbag_analyser.catalog.paths import safe_filesystem_text
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
-from rosbag_analyser.front_preview import FrontPreviewService, FrontSourceResolver
+from rosbag_analyser.front_preview import (
+    FRONT_PREVIEW_V2_PROCESSOR_VERSION,
+    FRONT_TIMING_POLICY_V2,
+    FrontPreviewService,
+    FrontSourceResolver,
+    _cache_identity,
+)
 from rosbag_analyser.persistence.processing_repository import (
     ArtifactRecord,
     JobRecord,
@@ -215,6 +221,30 @@ def test_cache_identity_is_reused_until_a_relevant_front_input_changes(
 
     assert changed.descriptor is not None
     assert changed.descriptor.cache_identity != first.descriptor.cache_identity
+
+
+def test_front_v3_cache_identity_differs_from_historical_v2(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    metadata, database = _write_source(archive)
+    repository = FakeRepository(_source(metadata, database))
+
+    resolution = _resolver(archive, repository).resolve(11)
+
+    assert resolution.descriptor is not None
+    descriptor = resolution.descriptor
+    historical_v2 = _cache_identity(
+        repository.source,
+        descriptor.metadata_identity,
+        descriptor.database_identity,
+        descriptor.topic,
+        TOPIC,
+        V0_PREVIEW_PROFILE,
+        "test-encoder-v1",
+        processor_version=FRONT_PREVIEW_V2_PROCESSOR_VERSION,
+        timing_policy=FRONT_TIMING_POLICY_V2,
+    )
+    assert descriptor.cache_identity != historical_v2
 
 
 def test_safe_catalog_paths_resolve_non_utf8_recording_name(

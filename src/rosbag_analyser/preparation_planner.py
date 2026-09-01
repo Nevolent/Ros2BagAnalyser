@@ -52,6 +52,29 @@ PREPARATION_KINDS = (
 )
 
 
+def _front_planner_identity(
+    *,
+    front_topic: str,
+    profile: PreviewProfile,
+    encoder_identity: str,
+    processor_version: str = FRONT_PROCESSOR_VERSION,
+    timing_policy: str = FRONT_TIMING_POLICY,
+) -> str:
+    return _digest(
+        {
+            "kind": FRONT_PREVIEW_KIND,
+            "processor_version": processor_version,
+            "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
+            "timing_policy": timing_policy,
+            "topic": front_topic,
+            "message_type": IMAGE_MESSAGE_TYPE,
+            "serialization": CDR_SERIALIZATION,
+            "profile": profile.identity_values(),
+            "encoder": encoder_identity,
+        }
+    )
+
+
 @dataclass(frozen=True)
 class RecordingPreparationFacts:
     metadata: ParsedMetadata | None
@@ -89,18 +112,10 @@ class PreparationPlanner:
         self.profile = profile
         self.encoder_identity = encoder_identity
         self._planner_identities = {
-            FRONT_PREVIEW_KIND: _digest(
-                {
-                    "kind": FRONT_PREVIEW_KIND,
-                    "processor_version": FRONT_PROCESSOR_VERSION,
-                    "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
-                    "timing_policy": FRONT_TIMING_POLICY,
-                    "topic": front_topic,
-                    "message_type": IMAGE_MESSAGE_TYPE,
-                    "serialization": CDR_SERIALIZATION,
-                    "profile": profile.identity_values(),
-                    "encoder": encoder_identity,
-                }
+            FRONT_PREVIEW_KIND: _front_planner_identity(
+                front_topic=front_topic,
+                profile=profile,
+                encoder_identity=encoder_identity,
             ),
             TOPDOWN_PREVIEW_KIND: _digest(
                 {
@@ -235,25 +250,32 @@ class PreparationPlanner:
         components = _components_by_role(recording)
         video = components.get(SourceRole.TOPDOWN_VIDEO)
         timestamps = components.get(SourceRole.TOPDOWN_TIMESTAMPS)
-        if (
-            video is None
-            or video.condition is not SourceCondition.PRESENT
-            or facts.video_identity is None
-        ):
+        if video is None or video.condition is SourceCondition.MISSING:
             return self._unavailable(
                 TOPDOWN_PREVIEW_KIND,
                 "topdown_video_unavailable",
                 "The top-down video companion is unavailable.",
             )
-        if (
-            timestamps is None
-            or timestamps.condition is not SourceCondition.PRESENT
-            or facts.timestamps_identity is None
-        ):
+        if timestamps is None or timestamps.condition is SourceCondition.MISSING:
             return self._unavailable(
                 TOPDOWN_PREVIEW_KIND,
                 "topdown_timestamps_unavailable",
                 "The top-down timestamp companion is unavailable.",
+            )
+        if video.condition is not SourceCondition.PRESENT or facts.video_identity is None:
+            return self._unavailable(
+                TOPDOWN_PREVIEW_KIND,
+                "topdown_video_invalid",
+                "The top-down video companion is not usable.",
+            )
+        if (
+            timestamps.condition is not SourceCondition.PRESENT
+            or facts.timestamps_identity is None
+        ):
+            return self._unavailable(
+                TOPDOWN_PREVIEW_KIND,
+                "topdown_timestamps_invalid",
+                "The top-down timestamp companion is not usable.",
             )
         assert facts.metadata_identity is not None
         cache_identity = topdown_cache_identity(

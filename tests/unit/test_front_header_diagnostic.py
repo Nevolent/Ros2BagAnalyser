@@ -8,9 +8,11 @@ import pytest
 from rosbag_analyser.catalog.metadata import TopicFact
 from rosbag_analyser.catalog.paths import source_file_identity
 from rosbag_analyser.front_header_diagnostic import (
+    FrontImageFacts,
     FrontHeaderDiagnosticError,
     HeaderStamp,
     inspect_front_headers,
+    resolve_front_source,
 )
 from rosbag_analyser.front_preview import FrontSourceDescriptor
 
@@ -106,3 +108,42 @@ def test_message_limit_fails_instead_of_returning_an_incomplete_report(tmp_path:
         )
 
     assert captured.value.code == "front_header_diagnostic_limit_exceeded"
+
+
+def test_selected_recording_reports_missing_metadata_precisely(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    recording = archive / "missing-metadata"
+    recording.mkdir(parents=True)
+
+    with pytest.raises(FrontHeaderDiagnosticError) as captured:
+        resolve_front_source(archive, "missing-metadata", "/front")
+
+    assert captured.value.code == "metadata_missing"
+    assert captured.value.safe_message == "The recording metadata is missing."
+
+
+def test_report_counts_image_encodings_and_identifies_first_unsupported(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "recording.db3"
+    _database(database)
+    before = (database.stat().st_size, database.stat().st_mtime_ns)
+
+    report = inspect_front_headers(
+        _descriptor(database),
+        decoder=lambda data: FrontImageFacts(
+            header=HeaderStamp(10, data[0]),
+            encoding={1: "bgr8", 2: "rgb8", 3: "rgb8", 4: "mono8"}[data[0]],
+        ),
+    )
+
+    assert report.encoding_counts == {"bgr8": 1, "rgb8": 2, "mono8": 1}
+    assert report.first_unsupported_encoding is not None
+    assert report.first_unsupported_encoding.message_index == 2
+    assert report.first_unsupported_encoding.message_id == 2
+    assert report.first_unsupported_encoding.record_timestamp_ns == 200
+    assert report.first_unsupported_encoding.encoding == "rgb8"
+    assert (database.stat().st_size, database.stat().st_mtime_ns) == before
+    assert not (tmp_path / "recording.db3-journal").exists()
+    assert not (tmp_path / "recording.db3-wal").exists()
+    assert not (tmp_path / "recording.db3-shm").exists()

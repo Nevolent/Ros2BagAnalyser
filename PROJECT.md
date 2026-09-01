@@ -144,8 +144,10 @@ diagnostic. A coarse presentation label must not discard the actual reason.
 
 ### 4.2 Analysis state
 
-The Analysis column summarizes the current three-output preparation result for
-one recording. It does not replace per-output facts.
+The Analysis column summarizes the current required-output preparation result
+for one recording. Front preview and IMU are required. Top-down preview is
+required only when its video and timestamp companions are present; an absent
+top-down companion is optional and is omitted from the status tooltip.
 
 The states and precedence are:
 
@@ -153,13 +155,15 @@ The states and precedence are:
 2. **Queued** — no output is running and at least one is queued;
 3. **Failed** — no output is active and at least one attempted current output
    failed;
-4. **Ready** — all three current compatible outputs are validated and ready;
+4. **Ready** — every required current compatible output is validated and ready;
 5. **Not planned** — none of the preceding states applies and the complete
    output set has not been requested.
 
-The state tooltip lists front, top-down, and IMU separately. A partially ready
-legacy recording may therefore show **Not planned** with truthful detail such
-as “front ready; top-down not requested; IMU not requested.”
+The state tooltip lists each required output separately. A present but invalid
+top-down source remains visible as unavailable; only an absent companion is
+omitted. A partially ready legacy recording may therefore show **Not planned**
+with truthful detail such as “front ready; top-down not requested; IMU not
+requested.”
 
 Source unavailability is not a processing failure. A damaged recording does not
 gain a failed job merely because it cannot be prepared.
@@ -184,8 +188,9 @@ Only the chosen outputs are preflighted. An unavailable chosen output is
 reported independently and creates no impossible work; compatible ready or
 active chosen outputs are still reused and valid output is retained. Other
 selected recordings continue independently. Aggregate readiness and Analyzer
-admission still reflect all three outputs, so partial preparation is truthful
-and never presented as a complete analyzer bundle.
+admission reflect every required output, so a selected partial set is truthful
+and never presented as a complete analyzer bundle. An absent top-down companion
+is not required.
 
 The request is bounded and idempotent. One unavailable recording does not roll
 back valid work for the others. The UI reports reused, queued, active, and

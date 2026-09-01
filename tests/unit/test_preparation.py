@@ -155,6 +155,53 @@ def test_aggregate_precedence_is_processing_queued_failed_ready_not_planned() ->
     assert not_planned.analysis_state == "not_planned"
 
 
+def test_missing_topdown_companion_is_optional_for_aggregate_readiness() -> None:
+    group = {
+        "front_preview": CurrentOutputRecord(
+            _target("front_preview"), artifact=_artifact("front_preview")
+        ),
+        "topdown_preview": CurrentOutputRecord(
+            _target("topdown_preview", state="unavailable")
+        ),
+        "imu_series": CurrentOutputRecord(
+            _target("imu_series"), artifact=_artifact("imu_series")
+        ),
+    }
+    topdown = group["topdown_preview"].target
+    group["topdown_preview"] = CurrentOutputRecord(
+        PreparationTargetRecord(
+            **{
+                **topdown.__dict__,
+                "diagnostic_code": "topdown_video_unavailable",
+                "diagnostic_message": "The top-down video companion is unavailable.",
+            }
+        )
+    )
+
+    analysis = _service()._analysis_for_group(7, group, GENERATION)
+
+    assert analysis.analysis_state == "ready"
+    assert analysis.outputs[1].state == "unavailable"
+
+
+def test_invalid_topdown_source_remains_required_for_aggregate_readiness() -> None:
+    group = {
+        "front_preview": CurrentOutputRecord(
+            _target("front_preview"), artifact=_artifact("front_preview")
+        ),
+        "topdown_preview": CurrentOutputRecord(
+            _target("topdown_preview", state="unavailable")
+        ),
+        "imu_series": CurrentOutputRecord(
+            _target("imu_series"), artifact=_artifact("imu_series")
+        ),
+    }
+
+    analysis = _service()._analysis_for_group(7, group, GENERATION)
+
+    assert analysis.analysis_state == "not_planned"
+
+
 def test_stale_planner_identity_requires_rescan_without_source_access() -> None:
     stale = _target("front_preview")
     stale = PreparationTargetRecord(

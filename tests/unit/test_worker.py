@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
@@ -11,6 +12,10 @@ from rosbag_analyser.artifact_store import (
     SeriesValidation,
 )
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
+from rosbag_analyser.front_preview import (
+    FRONT_ALL_ZERO_HEADER_TIMING_POLICY,
+    FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE,
+)
 from rosbag_analyser.imu_series import IMU_SERIES_DEFINITIONS
 from rosbag_analyser.job_control import JobCanceled
 from rosbag_analyser.persistence.processing_repository import JobRecord
@@ -138,6 +143,19 @@ class FailingProcessor(SuccessfulProcessor):
         del descriptor, output_path, control
         raise FrontPreviewProcessingError(
             "front_payload_invalid", "A front-camera image has an invalid payload."
+        )
+
+
+class SuccessfulAllZeroHeaderProcessor(SuccessfulProcessor):
+    def process(
+        self, descriptor, output_path: Path, *, control=None
+    ) -> FrontPreviewResult:
+        result = super().process(descriptor, output_path, control=control)
+        return replace(
+            result,
+            header_span_ns=0,
+            timing_policy=FRONT_ALL_ZERO_HEADER_TIMING_POLICY,
+            timestamp_provenance=FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE,
         )
 
 
@@ -390,6 +408,27 @@ def test_worker_publishes_only_after_validation_and_completes_job(
     assert store.validation_expectations is not None
     assert store.validation_expectations["expected_media_pts_sha256"] == "c" * 64
     assert not (tmp_path / "job-5-owned").exists()
+
+
+def test_worker_records_all_zero_header_record_time_provenance(tmp_path: Path) -> None:
+    repository = FakeRepository(_job())
+    store = FakeArtifactStore(tmp_path)
+
+    assert _worker(
+        repository, SuccessfulAllZeroHeaderProcessor(), store
+    ).run_once()
+
+    assert store.published_manifest is not None
+    timing = store.published_manifest["timing"]
+    assert isinstance(timing, dict)
+    assert timing["timestamp_provenance"] == (
+        "ros_record_timestamp_all_zero_image_headers"
+    )
+    assert timing["policy"] == "ros_record_timestamp_all_zero_image_headers_v3"
+    assert timing["header_span_ns"] == "0"
+    assert timing["image_header_stamps"] == "all_zero"
+    assert "affine_scale_numerator" not in timing
+    assert "affine_scale_denominator" not in timing
 
 
 def test_worker_leaves_queue_untouched_when_admission_is_paused(

@@ -44,6 +44,14 @@ class HeaderStamp:
 
 
 @dataclass(frozen=True)
+class FrontImageFacts:
+    """The limited image facts needed for a read-only source diagnostic."""
+
+    header: HeaderStamp
+    encoding: str
+
+
+@dataclass(frozen=True)
 class HeaderObservation:
     message_index: int
     message_id: int
@@ -62,6 +70,22 @@ class HeaderObservation:
 
 
 @dataclass(frozen=True)
+class EncodingObservation:
+    message_index: int
+    message_id: int
+    record_timestamp_ns: int
+    encoding: str
+
+    def json_values(self) -> dict[str, int | str]:
+        return {
+            "message_index": self.message_index,
+            "message_id": self.message_id,
+            "record_timestamp_ns": str(self.record_timestamp_ns),
+            "encoding": self.encoding,
+        }
+
+
+@dataclass(frozen=True)
 class FrontHeaderReport:
     message_count: int
     invalid_header_count: int
@@ -70,6 +94,8 @@ class FrontHeaderReport:
     first_out_of_order: HeaderObservation | None
     first_valid_header_timestamp_ns: int | None
     last_valid_header_timestamp_ns: int | None
+    encoding_counts: dict[str, int] | None
+    first_unsupported_encoding: EncodingObservation | None
 
     @property
     def strictly_ordered(self) -> bool:
@@ -99,14 +125,20 @@ class FrontHeaderReport:
                 if self.last_valid_header_timestamp_ns is not None
                 else None
             ),
+            "encoding_counts": self.encoding_counts,
+            "first_unsupported_encoding": (
+                self.first_unsupported_encoding.json_values()
+                if self.first_unsupported_encoding is not None
+                else None
+            ),
         }
 
 
-HeaderDecoder = Callable[[bytes], HeaderStamp]
+HeaderDecoder = Callable[[bytes], HeaderStamp | FrontImageFacts]
 
 
-def deserialize_ros_header_stamp(serialized: bytes) -> HeaderStamp:
-    """Read only an Image header from a CDR payload; no output is generated."""
+def deserialize_ros_header_stamp(serialized: bytes) -> FrontImageFacts:
+    """Read Image header and encoding facts from CDR; no output is generated."""
 
     try:
         from rclpy.serialization import deserialize_message
@@ -123,7 +155,12 @@ def deserialize_ros_header_stamp(serialized: bytes) -> HeaderStamp:
             "front_image_deserialization_failed",
             "A front-camera image could not be decoded for header inspection.",
         ) from error
-    return HeaderStamp(sec=int(message.header.stamp.sec), nanosec=int(message.header.stamp.nanosec))
+    return FrontImageFacts(
+        header=HeaderStamp(
+            sec=int(message.header.stamp.sec), nanosec=int(message.header.stamp.nanosec)
+        ),
+        encoding=str(message.encoding),
+    )
 
 
 def resolve_front_source(
@@ -138,6 +175,10 @@ def resolve_front_source(
     metadata_path = recording_root / "metadata.yaml"
     try:
         metadata_details = metadata_path.lstat()
+    except FileNotFoundError as error:
+        raise FrontHeaderDiagnosticError(
+            "metadata_missing", "The recording metadata is missing."
+        ) from error
     except OSError as error:
         raise FrontHeaderDiagnosticError(
             "metadata_unreadable", "The recording metadata could not be read safely."
@@ -206,6 +247,8 @@ def inspect_front_headers(
     first_valid: int | None = None
     last_valid: int | None = None
     previous_valid: int | None = None
+    encoding_counts: dict[str, int] | None = {}
+    first_unsupported_encoding: EncodingObservation | None = None
 
     with _open_source_database(descriptor) as connection:
         topic_id = _topic_id(connection, descriptor)
@@ -236,7 +279,23 @@ def inspect_front_headers(
                     "A front-camera serialized image exceeds the supported size.",
                 )
             serialized = _message_data(data_cursor, int(message_id), serialized_size)
-            stamp = decoder(serialized)
+            decoded = decoder(serialized)
+            if isinstance(decoded, FrontImageFacts):
+                stamp = decoded.header
+                encoding_counts[decoded.encoding] = (
+                    encoding_counts.get(decoded.encoding, 0) + 1
+                )
+                if decoded.encoding != "bgr8" and first_unsupported_encoding is None:
+                    first_unsupported_encoding = EncodingObservation(
+                        message_index=message_count,
+                        message_id=int(message_id),
+                        record_timestamp_ns=int(record_timestamp),
+                        encoding=decoded.encoding,
+                    )
+            else:
+                stamp = decoded
+                # Keep the pure header-inspection test seam backwards compatible.
+                encoding_counts = None
             timestamp_ns, reason = _classify_header_stamp(stamp)
             observation = HeaderObservation(
                 message_index=message_count,
@@ -270,6 +329,8 @@ def inspect_front_headers(
         first_out_of_order=first_out_of_order,
         first_valid_header_timestamp_ns=first_valid,
         last_valid_header_timestamp_ns=last_valid,
+        encoding_counts=encoding_counts,
+        first_unsupported_encoding=first_unsupported_encoding,
     )
 
 

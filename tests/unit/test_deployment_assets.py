@@ -91,7 +91,8 @@ def test_source_mount_is_read_only_and_derived_mount_is_distinct() -> None:
     assert "Type=cifs" in derived
     assert "Where=/var/lib/rosbag-analyser/derived" in derived
     assert "Options=rw,nosuid,nodev,noexec,_netdev" in derived
-    assert "prefixpath=Rosbag_Analyser_Cache" in derived
+    assert "What=//nas.example.invalid/TO_Rosbag_databank/Rosbag_Analyser_Cache" in derived
+    assert "prefixpath=" not in derived
     assert "/srv/rosbag-analyser/source" not in derived
 
 

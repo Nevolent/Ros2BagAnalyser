@@ -777,8 +777,8 @@ path, or backup destination belongs in Git.
   listener is enabled.
 - Existing NFS exports include overlapping parent/child locations and the
   candidate source area has broad filesystem permissions. The approved simpler
-  layout keeps the existing read-only SMB source mount and mounts the same share
-  with `prefixpath=Rosbag_Analyser_Cache` for writable derived output.
+  layout keeps the existing read-only SMB source mount and mounts the exact
+  `Rosbag_Analyser_Cache` SMB subdirectory for writable derived output.
 - The accepted application runtime remains Ubuntu 22.04 LTS, Python 3.10, and
   ROS 2 Humble because Jammy is Humble's Tier 1 binary platform. Ubuntu 22.04
   standard security maintenance and ROS 2 Humble support both end in May 2027.

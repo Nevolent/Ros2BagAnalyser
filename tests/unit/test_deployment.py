@@ -85,7 +85,7 @@ def test_deployment_settings_accept_exact_cifs_source_share() -> None:
     )
 
 
-def test_deployment_settings_accept_single_share_cifs_bind_roots() -> None:
+def test_deployment_settings_accept_cifs_cache_subdirectory_source() -> None:
     environment = _deployment_environment()
     environment.update(
         {
@@ -95,9 +95,9 @@ def test_deployment_settings_accept_single_share_cifs_bind_roots() -> None:
             ),
             "ROS_BAG_ANALYSER_DERIVED_MOUNT_FSTYPE": "cifs",
             "ROS_BAG_ANALYSER_DERIVED_MOUNT_SOURCE": (
-                "//nas.invalid/TO_Rosbag_databank"
+                "//nas.invalid/TO_Rosbag_databank/Rosbag_Analyser_Cache"
             ),
-            "ROS_BAG_ANALYSER_DERIVED_MOUNT_ROOT": "/Rosbag_Analyser_Cache",
+            "ROS_BAG_ANALYSER_DERIVED_MOUNT_ROOT": "/",
         }
     )
 
@@ -105,10 +105,10 @@ def test_deployment_settings_accept_single_share_cifs_bind_roots() -> None:
 
     assert settings.derived_mount == MountExpectation(
         "cifs",
-        "//nas.invalid/TO_Rosbag_databank",
+        "//nas.invalid/TO_Rosbag_databank/Rosbag_Analyser_Cache",
         read_only=False,
         required_options=frozenset({"rw", "nosuid", "nodev"}),
-        mount_root="/Rosbag_Analyser_Cache",
+        mount_root="/",
     )
 
 

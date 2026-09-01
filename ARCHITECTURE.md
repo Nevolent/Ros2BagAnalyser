@@ -241,8 +241,8 @@ outside Git.
 
 The two configured application paths remain separate and non-overlapping even
 when the NAS stores them in one dataset. In that supported layout, the existing
-SMB share is mounted read-only at its root as `archive_root` and mounted again
-with CIFS `prefixpath=Rosbag_Analyser_Cache` as the read/write `derived_root`.
+SMB share is mounted read-only at its root as `archive_root` and its
+`Rosbag_Analyser_Cache` subdirectory is mounted as the read/write `derived_root`.
 The derived mount cannot traverse above that reserved folder.
 
 ## 7. Physical folder catalog
@@ -889,9 +889,8 @@ separate temporary database and derived target before the trial gate passes.
 
 The source mount must match the configured NFS export or SMB/CIFS share,
 internal mount root, and `ro,nosuid,nodev,noexec` options exactly. The derived
-mount may reuse the same SMB share with its root constrained by CIFS
-`prefixpath` to `Rosbag_Analyser_Cache/`; it must match that exact remote share
-and internal mount root and use `rw,nosuid,nodev`. It retains a fixed marker and
+mount may use the exact `Rosbag_Analyser_Cache/` SMB subdirectory UNC; it must
+match that exact remote path and use `rw,nosuid,nodev`. It retains a fixed marker and
 exposes only an application-owned child for writes.
 Source loss disables
 source-dependent work without hiding saved state. Low space rejects insertion

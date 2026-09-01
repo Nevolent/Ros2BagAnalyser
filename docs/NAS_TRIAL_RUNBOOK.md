@@ -235,10 +235,9 @@ seven days.
 
 ## Mounts and derived ownership
 
-The administrator keeps the existing read-only CIFS source mount. The same SMB
-share is mounted at the derived path with
-`prefixpath=Rosbag_Analyser_Cache`, which prevents that writable mount from
-traversing above the reserved folder. Keep credentials in the root-owned
+The administrator keeps the existing read-only CIFS source mount. The cache
+subdirectory is mounted at the derived path as an appended SMB UNC path, which
+prevents that writable mount from traversing above the reserved folder. Keep credentials in the root-owned
 `source.cifs-credentials` file, never in a mount unit. Start both reviewed
 mounts, then use only mount metadata tools:
 
@@ -251,9 +250,9 @@ findmnt --mountpoint /var/lib/rosbag-analyser/derived \
   --output TARGET,SOURCE,FSTYPE,FSROOT,OPTIONS,MAJ:MIN,SIZE,AVAIL
 ```
 
-Expected: both rows identify the same exact SMB share. Source has filesystem
-root `/` and `ro,nosuid,nodev,noexec`; derived has filesystem root
-`/Rosbag_Analyser_Cache` and `rw,nosuid,nodev,noexec`. Do not list the source
+Expected: source identifies the root SMB share while derived identifies its
+exact `Rosbag_Analyser_Cache` subdirectory. Both have filesystem root `/`;
+source has `ro,nosuid,nodev,noexec` and derived has `rw,nosuid,nodev,noexec`. Do not list the source
 directory before the real-data annex authorizes the before manifest. Never
 format storage or move an existing recording for this layout.
 

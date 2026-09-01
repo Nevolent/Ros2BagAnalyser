@@ -13,7 +13,7 @@ in this repository copy.
 | Start on Boot, orderly shutdown budget, detached ISO, console/recovery path | PENDING | PENDING | PENDING |
 | Stable IPv4/IPv6 policy, admin path, engineer HTTPS path, DNS/NTP | PENDING | PENDING | PENDING |
 | Exact existing SMB/CIFS share, VM/account entry, and read-only source mount | PENDING | PENDING | PENDING |
-| Exact reserved-cache `prefixpath` writable mount evidence | PENDING | PENDING | PENDING |
+| Exact reserved-cache SMB-subdirectory writable mount evidence | PENDING | PENDING | PENDING |
 | Cache capacity basis, threshold, snapshot/backup policy, and growth owner | PENDING | PENDING | PENDING |
 | PostgreSQL ownership and least-privilege runtime/migration/backup credentials | PENDING | PENDING | PENDING |
 | Protected off-VM backup destination, encryption, RPO, retention, restore owner | PENDING | PENDING | PENDING |

@@ -58,8 +58,8 @@ release, database, backup, derived artifact, or source file. See
 
 The supported TrueNAS layout may keep an ordinary
 `Rosbag_Analyser_Cache/` folder inside the existing source dataset. The VM
-keeps the existing read-only source mount and mounts the same share with CIFS
-`prefixpath=Rosbag_Analyser_Cache` for writable derived output. Production
+keeps the existing read-only source mount and mounts the cache subdirectory as
+the CIFS UNC `//server/TO_Rosbag_databank/Rosbag_Analyser_Cache` for writable derived output. Production
 source walkers reserve and exclude the folder before discovery, limits,
 manifests, sizes, and identities.
 

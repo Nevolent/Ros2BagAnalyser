@@ -29,8 +29,11 @@ FILESYSTEM_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}$")
 NFS_SOURCE_PATTERN = re.compile(
     r"^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,252}|\[[0-9A-Fa-f:]+\]):/[^,\s]+$"
 )
-CIFS_SOURCE_PATTERN = re.compile(
+CIFS_SHARE_PATTERN = re.compile(
     r"^//[A-Za-z0-9][A-Za-z0-9._-]{0,252}/[A-Za-z0-9][A-Za-z0-9._$-]{0,254}$"
+)
+CIFS_MOUNT_SOURCE_PATTERN = re.compile(
+    r"^//[A-Za-z0-9][A-Za-z0-9._-]{0,252}/[A-Za-z0-9][A-Za-z0-9._$-]{0,254}(?:/[A-Za-z0-9][A-Za-z0-9._$-]{0,254})*$"
 )
 MOUNTINFO_ESCAPE = re.compile(r"\\([0-7]{3})")
 
@@ -131,7 +134,7 @@ class DeploymentSettings:
             )
         source_identity = _required(values, SOURCE_MOUNT_SOURCE_ENV)
         source_pattern = (
-            CIFS_SOURCE_PATTERN if source_type == "cifs" else NFS_SOURCE_PATTERN
+            CIFS_SHARE_PATTERN if source_type == "cifs" else NFS_SOURCE_PATTERN
         )
         if source_pattern.fullmatch(source_identity) is None:
             raise DeploymentConfigurationError(
@@ -145,7 +148,7 @@ class DeploymentSettings:
         )
         derived_identity = _required(values, DERIVED_MOUNT_SOURCE_ENV)
         if derived_type == "cifs":
-            if CIFS_SOURCE_PATTERN.fullmatch(derived_identity) is None:
+            if CIFS_MOUNT_SOURCE_PATTERN.fullmatch(derived_identity) is None:
                 raise DeploymentConfigurationError(
                     "The deployment derived share identity is invalid."
                 )

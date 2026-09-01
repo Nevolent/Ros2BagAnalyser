@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly release_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+  pwd -P
+)"
+readonly ros_setup="/opt/ros/humble/setup.bash"
+[[ -r "$ros_setup" ]] || {
+  echo "The approved ROS 2 Humble runtime is unavailable." >&2
+  exit 1
+}
+[[ -x "$release_root/venv/bin/python" ]] || {
+  echo "The installed release virtual environment is unavailable." >&2
+  exit 1
+}
+set +u
+source "$ros_setup"
+set -u
+exec "$release_root/venv/bin/python" \
+  "$release_root/deploy/scripts/front_header_diagnostic.py" "$@"

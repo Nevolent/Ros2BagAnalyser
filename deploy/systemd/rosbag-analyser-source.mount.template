@@ -6,10 +6,10 @@ After=network-online.target
 Before=rosbag-analyser-preflight.service rosbag-analyser-api.service rosbag-analyser-worker.service
 
 [Mount]
-What=//nas.example.invalid/REPLACE_WITH_FIXED_SHARE
+What=//nas.example.invalid/TO_Rosbag_databank
 Where=/srv/rosbag-analyser/source
 Type=cifs
-Options=ro,nosuid,nodev,noexec,_netdev,vers=3.0,credentials=/etc/rosbag-analyser/source.cifs-credentials,uid=rosbag-analyser,gid=rosbag-analyser,forceuid,forcegid,file_mode=0440,dir_mode=0550
+Options=ro,nosuid,nodev,noexec,_netdev,vers=3.1.1,credentials=/etc/rosbag-analyser/source.cifs-credentials,uid=rosbag-analyser,gid=rosbag-analyser,forceuid,forcegid,file_mode=0440,dir_mode=0550
 TimeoutSec=60
 
 [Install]

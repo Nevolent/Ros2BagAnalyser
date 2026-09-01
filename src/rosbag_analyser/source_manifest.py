@@ -10,6 +10,8 @@ import stat
 import tempfile
 from typing import Sequence
 
+from rosbag_analyser.storage_layout import is_reserved_cache_root_entry
+
 
 class ManifestError(RuntimeError):
     """A bounded source-inventory failure safe for operator output."""
@@ -63,6 +65,11 @@ def build_source_manifest(
             with os.scandir(directory) as iterator:
                 children = []
                 for child in iterator:
+                    if (
+                        directory == root
+                        and is_reserved_cache_root_entry(child.name)
+                    ):
+                        continue
                     if len(collected) + len(children) >= max_entries:
                         raise ManifestError(
                             "The source manifest entry bound was exceeded."

@@ -130,7 +130,9 @@ It must:
 Source size is the sum of every safely inventoried component whose byte size is
 known. A missing optional companion such as top-down media does not erase the
 known ROS bag size; the value is unavailable only when no component size is
-known.
+known. The reserved archive-root `Rosbag_Analyser_Cache/` folder is
+analyser-owned derived storage and is never a source component, recording
+candidate, or source-size input.
 
 The visible source-health vocabulary is:
 

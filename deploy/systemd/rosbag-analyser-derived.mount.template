@@ -1,13 +1,15 @@
 [Unit]
-Description=ROS Bag Analyser derived artifact filesystem
+Description=ROS Bag Analyser writable SMB cache folder
 Documentation=file:/opt/rosbag-analyser/current/docs/NAS_TRIAL_RUNBOOK.md
+Wants=network-online.target
+After=network-online.target
 Before=rosbag-analyser-preflight.service rosbag-analyser-api.service rosbag-analyser-worker.service
 
 [Mount]
-What=/dev/disk/by-uuid/REPLACE_WITH_DERIVED_UUID
+What=//nas.example.invalid/TO_Rosbag_databank
 Where=/var/lib/rosbag-analyser/derived
-Type=ext4
-Options=rw,nosuid,nodev
+Type=cifs
+Options=rw,nosuid,nodev,noexec,_netdev,vers=3.1.1,credentials=/etc/rosbag-analyser/source.cifs-credentials,uid=rosbag-analyser,gid=rosbag-analyser,forceuid,forcegid,file_mode=0640,dir_mode=0750,prefixpath=Rosbag_Analyser_Cache
 TimeoutSec=60
 
 [Install]

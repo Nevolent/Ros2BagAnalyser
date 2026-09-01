@@ -25,8 +25,10 @@ def _deployment_environment() -> dict[str, str]:
         "ROS_BAG_ANALYSER_BIND_PORT": "8000",
         "ROS_BAG_ANALYSER_SOURCE_MOUNT_FSTYPE": "nfs4",
         "ROS_BAG_ANALYSER_SOURCE_MOUNT_SOURCE": "nas.invalid:/fixed-recordings",
+        "ROS_BAG_ANALYSER_SOURCE_MOUNT_ROOT": "/",
         "ROS_BAG_ANALYSER_DERIVED_MOUNT_FSTYPE": "ext4",
         "ROS_BAG_ANALYSER_DERIVED_MOUNT_SOURCE": "/dev/disk/by-uuid/example",
+        "ROS_BAG_ANALYSER_DERIVED_MOUNT_ROOT": "/",
         "ROS_BAG_ANALYSER_DERIVED_MIN_FREE_BYTES": "1073741824",
         "ROS_BAG_ANALYSER_DERIVED_MIN_FREE_PERCENT": "10",
     }
@@ -83,6 +85,33 @@ def test_deployment_settings_accept_exact_cifs_source_share() -> None:
     )
 
 
+def test_deployment_settings_accept_single_share_cifs_bind_roots() -> None:
+    environment = _deployment_environment()
+    environment.update(
+        {
+            "ROS_BAG_ANALYSER_SOURCE_MOUNT_FSTYPE": "cifs",
+            "ROS_BAG_ANALYSER_SOURCE_MOUNT_SOURCE": (
+                "//nas.invalid/TO_Rosbag_databank"
+            ),
+            "ROS_BAG_ANALYSER_DERIVED_MOUNT_FSTYPE": "cifs",
+            "ROS_BAG_ANALYSER_DERIVED_MOUNT_SOURCE": (
+                "//nas.invalid/TO_Rosbag_databank"
+            ),
+            "ROS_BAG_ANALYSER_DERIVED_MOUNT_ROOT": "/Rosbag_Analyser_Cache",
+        }
+    )
+
+    settings = DeploymentSettings.from_environment(environment)
+
+    assert settings.derived_mount == MountExpectation(
+        "cifs",
+        "//nas.invalid/TO_Rosbag_databank",
+        read_only=False,
+        required_options=frozenset({"rw", "nosuid", "nodev"}),
+        mount_root="/Rosbag_Analyser_Cache",
+    )
+
+
 @pytest.mark.parametrize(
     ("name", "value", "message"),
     [
@@ -95,7 +124,9 @@ def test_deployment_settings_accept_exact_cifs_source_share() -> None:
         ("ROS_BAG_ANALYSER_BIND_PORT", "9000", "port 8000"),
         ("ROS_BAG_ANALYSER_SOURCE_MOUNT_FSTYPE", "ext4", "NFS or CIFS"),
         ("ROS_BAG_ANALYSER_SOURCE_MOUNT_SOURCE", "broad-relative", "share identity"),
+        ("ROS_BAG_ANALYSER_SOURCE_MOUNT_ROOT", "relative", "mount root"),
         ("ROS_BAG_ANALYSER_DERIVED_MOUNT_SOURCE", "relative-device", "device identity"),
+        ("ROS_BAG_ANALYSER_DERIVED_MOUNT_ROOT", "/cache/../bags", "mount root"),
         ("ROS_BAG_ANALYSER_DERIVED_MIN_FREE_BYTES", "0", "positive"),
         ("ROS_BAG_ANALYSER_DERIVED_MIN_FREE_PERCENT", "101", "percentage"),
     ],
@@ -133,7 +164,7 @@ def test_mountinfo_parser_decodes_paths_and_keeps_exact_identity() -> None:
 
 def test_mountinfo_parser_uses_read_only_bind_options_not_rw_cifs_superblock() -> None:
     document = (
-        "41 25 0:47 / /srv/rosbag-analyser/source "
+        "41 25 0:47 /Rosbag_Analyser_Cache /srv/rosbag-analyser/source "
         "ro,nosuid,nodev,noexec,relatime - cifs //nas.invalid/recordings "
         "rw,vers=3.1.1,cache=strict\n"
     )
@@ -142,6 +173,37 @@ def test_mountinfo_parser_uses_read_only_bind_options_not_rw_cifs_superblock() -
 
     assert mount.options == frozenset({"ro", "nosuid", "nodev", "noexec", "relatime"})
     assert "rw" not in mount.options
+    assert mount.mount_root == "/Rosbag_Analyser_Cache"
+
+
+def test_mount_validation_rejects_wrong_bind_root(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    mount = MountInfo(
+        source,
+        "cifs",
+        "//nas.invalid/TO_Rosbag_databank",
+        frozenset({"ro", "nosuid", "nodev", "noexec"}),
+        "0:47",
+        mount_root="/Rosbag_Analyser_Cache",
+    )
+    guard = ProcessingAdmissionGuard(
+        source,
+        MountExpectation(
+            "cifs",
+            "//nas.invalid/TO_Rosbag_databank",
+            read_only=True,
+            required_options=frozenset({"ro", "nosuid", "nodev", "noexec"}),
+            mount_root="/",
+        ),
+        None,
+        mount_reader=lambda: (mount,),
+    )
+
+    assert guard.source_diagnostic() == SafeDiagnostic(
+        "source_mount_identity_invalid",
+        "The trusted read-only source mount is unavailable.",
+    )
 
 
 def test_source_mount_validation_never_write_probes(

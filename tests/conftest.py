@@ -7,6 +7,8 @@ from typing import Any
 import pytest
 import yaml
 
+from rosbag_analyser.storage_layout import is_reserved_cache_root_entry
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("optional acceptance")
@@ -147,6 +149,9 @@ def create_recording(
 def inventory(root: Path) -> tuple[tuple[str, str, int, int], ...]:
     entries: list[tuple[str, str, int, int]] = []
     for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if relative.parts and is_reserved_cache_root_entry(relative.parts[0]):
+            continue
         details = path.lstat()
         kind = "symlink" if path.is_symlink() else "dir" if path.is_dir() else "file"
         entries.append(

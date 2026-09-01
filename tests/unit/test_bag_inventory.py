@@ -100,6 +100,33 @@ def test_inventory_reads_metadata_and_never_follows_storage_symlink(
     assert "hidden.mcap" not in json.dumps(inventory)
 
 
+def test_inventory_excludes_reserved_cache_from_discovery_sizes_and_limits(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    recording = source / "run"
+    recording.mkdir(parents=True)
+    (recording / "metadata.yaml").write_text(_metadata(), encoding="utf-8")
+    (recording / "run_0.db3").write_bytes(b"source")
+    cache_recording = source / "Rosbag_Analyser_Cache" / "generated"
+    cache_recording.mkdir(parents=True)
+    (cache_recording / "metadata.yaml").write_text(_metadata(), encoding="utf-8")
+    for number in range(10):
+        (cache_recording / f"artifact-{number}.mcap").write_bytes(b"cache")
+
+    inventory = build_bag_inventory(source, max_depth=1, max_entries=3)
+
+    assert inventory["summary"] == {
+        "recording_count": 1,
+        "metadata_bag_count": 1,
+        "metadata_missing_candidate_count": 0,
+        "metadata_or_read_error_count": 0,
+        "source_file_count": 2,
+    }
+    assert [bag["path"] for bag in inventory["recordings"]] == ["run"]
+    assert "Rosbag_Analyser_Cache" not in json.dumps(inventory)
+
+
 def test_inventory_reports_malformed_metadata_and_storage_without_metadata(
     tmp_path: Path,
 ) -> None:

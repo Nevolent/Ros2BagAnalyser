@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import stat
 import tempfile
@@ -17,8 +17,10 @@ BIND_HOST_ENV = "ROS_BAG_ANALYSER_BIND_HOST"
 BIND_PORT_ENV = "ROS_BAG_ANALYSER_BIND_PORT"
 SOURCE_MOUNT_FSTYPE_ENV = "ROS_BAG_ANALYSER_SOURCE_MOUNT_FSTYPE"
 SOURCE_MOUNT_SOURCE_ENV = "ROS_BAG_ANALYSER_SOURCE_MOUNT_SOURCE"
+SOURCE_MOUNT_ROOT_ENV = "ROS_BAG_ANALYSER_SOURCE_MOUNT_ROOT"
 DERIVED_MOUNT_FSTYPE_ENV = "ROS_BAG_ANALYSER_DERIVED_MOUNT_FSTYPE"
 DERIVED_MOUNT_SOURCE_ENV = "ROS_BAG_ANALYSER_DERIVED_MOUNT_SOURCE"
+DERIVED_MOUNT_ROOT_ENV = "ROS_BAG_ANALYSER_DERIVED_MOUNT_ROOT"
 DERIVED_MIN_FREE_BYTES_ENV = "ROS_BAG_ANALYSER_DERIVED_MIN_FREE_BYTES"
 DERIVED_MIN_FREE_PERCENT_ENV = "ROS_BAG_ANALYSER_DERIVED_MIN_FREE_PERCENT"
 
@@ -43,6 +45,7 @@ class MountExpectation:
     source: str
     read_only: bool
     required_options: frozenset[str] = frozenset()
+    mount_root: str = "/"
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,7 @@ class MountInfo:
     source: str
     options: frozenset[str]
     device: str
+    mount_root: str = "/"
 
 
 @dataclass(frozen=True)
@@ -133,19 +137,31 @@ class DeploymentSettings:
             raise DeploymentConfigurationError(
                 "The deployment source share identity is invalid."
             )
+        source_mount_root = _validated_mount_root(
+            _required(values, SOURCE_MOUNT_ROOT_ENV)
+        )
         derived_type = _validated_filesystem(
             _required(values, DERIVED_MOUNT_FSTYPE_ENV)
         )
         derived_identity = _required(values, DERIVED_MOUNT_SOURCE_ENV)
-        derived_device = Path(derived_identity)
-        if (
-            not derived_device.is_absolute()
-            or derived_device.parts[:2] != ("/", "dev")
-            or ".." in derived_device.parts
-        ):
-            raise DeploymentConfigurationError(
-                "The deployment derived device identity is invalid."
-            )
+        if derived_type == "cifs":
+            if CIFS_SOURCE_PATTERN.fullmatch(derived_identity) is None:
+                raise DeploymentConfigurationError(
+                    "The deployment derived share identity is invalid."
+                )
+        else:
+            derived_device = Path(derived_identity)
+            if (
+                not derived_device.is_absolute()
+                or derived_device.parts[:2] != ("/", "dev")
+                or ".." in derived_device.parts
+            ):
+                raise DeploymentConfigurationError(
+                    "The deployment derived device identity is invalid."
+                )
+        derived_mount_root = _validated_mount_root(
+            _required(values, DERIVED_MOUNT_ROOT_ENV)
+        )
         minimum_free_bytes = _integer_setting(
             values,
             DERIVED_MIN_FREE_BYTES_ENV,
@@ -172,12 +188,14 @@ class DeploymentSettings:
                 source_identity,
                 True,
                 frozenset({"ro", "nosuid", "nodev", "noexec"}),
+                source_mount_root,
             ),
             MountExpectation(
                 derived_type,
                 derived_identity,
                 False,
                 frozenset({"rw", "nosuid", "nodev"}),
+                derived_mount_root,
             ),
             minimum_free_bytes,
             minimum_free_percent,
@@ -203,6 +221,7 @@ def parse_mountinfo(document: str) -> tuple[MountInfo, ...]:
                     # superblock, whose separate options must not override it.
                     options=frozenset(mount_options),
                     device=fields[2],
+                    mount_root=_decode_mountinfo(fields[3]),
                 )
             )
         except (IndexError, ValueError) as error:
@@ -288,8 +307,14 @@ class DerivedStorageGuard:
                 if (
                     marker.is_symlink()
                     or not stat.S_ISREG(marker_details.st_mode)
-                    or marker_details.st_uid != self.marker_owner_uid
-                    or stat.S_IMODE(marker_details.st_mode) not in {0o400, 0o440, 0o444}
+                    or (
+                        self.expectation.filesystem_type != "cifs"
+                        and (
+                            marker_details.st_uid != self.marker_owner_uid
+                            or stat.S_IMODE(marker_details.st_mode)
+                            not in {0o400, 0o440, 0o444}
+                        )
+                    )
                     or marker.read_bytes() != b"rosbag-analyser-derived-v1\n"
                 ):
                     raise OSError("derived ownership marker is invalid")
@@ -435,6 +460,7 @@ def _mount_diagnostic(
     if (
         exact.filesystem_type != expectation.filesystem_type
         or not _mount_source_matches(exact.source, expectation.source)
+        or exact.mount_root != expectation.mount_root
         or expected_option not in exact.options
         or forbidden_option in exact.options
         or not expectation.required_options.issubset(exact.options)
@@ -493,6 +519,20 @@ def _validated_filesystem(value: str) -> str:
     if FILESYSTEM_PATTERN.fullmatch(value) is None:
         raise DeploymentConfigurationError(
             "The configured derived filesystem type is invalid."
+        )
+    return value
+
+
+def _validated_mount_root(value: str) -> str:
+    candidate = PurePosixPath(value)
+    if (
+        not value.startswith("/")
+        or "\\" in value
+        or any(part in {"", ".", ".."} for part in candidate.parts[1:])
+        or candidate.as_posix() != value
+    ):
+        raise DeploymentConfigurationError(
+            "The configured mount root is invalid."
         )
     return value
 

@@ -38,6 +38,26 @@ def test_manifest_records_only_relative_metadata_and_never_follows_symlinks(
     assert not hasattr(file_entry, "sha256")
 
 
+def test_manifest_excludes_reserved_cache_before_bounds_and_digest(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    source_file = source / "recording.db3"
+    source_file.write_bytes(b"source")
+    cache = source / "Rosbag_Analyser_Cache"
+    cache.mkdir()
+    for number in range(10):
+        (cache / f"artifact-{number}.mp4").write_bytes(b"cache")
+
+    before = build_source_manifest(source, max_depth=1, max_entries=1)
+    (cache / "new-artifact.json").write_text("{}", encoding="utf-8")
+    after = build_source_manifest(source, max_depth=1, max_entries=1)
+
+    assert before == after
+    assert [entry.relative_path for entry in after] == ["recording.db3"]
+
+
 def test_manifest_bounds_fail_closed(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()

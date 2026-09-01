@@ -7,6 +7,7 @@ import stat
 import unicodedata
 
 from .types import RootScanError
+from rosbag_analyser.storage_layout import is_reserved_cache_root_entry
 
 
 DEFAULT_MAX_CATALOG_DEPTH = 8
@@ -108,6 +109,11 @@ def discover_recording_directories(
         try:
             with os.scandir(directory) as iterator:
                 for entry in iterator:
+                    if (
+                        directory == archive_root
+                        and is_reserved_cache_root_entry(entry.name)
+                    ):
+                        continue
                     visited_entries += 1
                     if visited_entries > selected_limits.max_entries:
                         raise RootScanError(

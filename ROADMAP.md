@@ -776,9 +776,9 @@ path, or backup destination belongs in Git.
   the actual VPN, firewall, allowlist, and IPv6 policy before an engineer-facing
   listener is enabled.
 - Existing NFS exports include overlapping parent/child locations and the
-  candidate source area has broad filesystem permissions. The exact fixed
-  recording root must use a dedicated, explicitly server-side read-only export;
-  a client ro mount alone is insufficient.
+  candidate source area has broad filesystem permissions. The approved simpler
+  layout keeps the existing read-only SMB source mount and mounts the same share
+  with `prefixpath=Rosbag_Analyser_Cache` for writable derived output.
 - The accepted application runtime remains Ubuntu 22.04 LTS, Python 3.10, and
   ROS 2 Humble because Jammy is Humble's Tier 1 binary platform. Ubuntu 22.04
   standard security maintenance and ROS 2 Humble support both end in May 2027.
@@ -1159,13 +1159,12 @@ Stop and request direction for any of the following:
 
 - Gate 0 is incomplete, the exact target is ambiguous, or the live change would
   exceed the reviewed command/target list.
-- The source is not independently exported server-side read-only to the exact
-  VM, the export is effectively open to all hosts, parent/child behavior is
-  unclear, or safe root mapping cannot be established.
+- The source mount is not read-only, the writable cache mount does not resolve
+  to the reserved top-level folder, or safe root mapping cannot be established.
 - The required source mount is absent, writable, the wrong filesystem/export,
   or can silently fall back to an ordinary local directory.
-- Derived storage overlaps source, lacks space/atomic semantics, or would
-  require automatic deletion.
+- Derived storage escapes the reserved cache folder, lacks space/atomic
+  semantics, or would require automatic deletion.
 - The access boundary cannot prevent public/raw service exposure on both IPv4
   and IPv6, or the only console option is publicly reachable VNC.
 - The administrator does not accept or remediate the TrueNAS beta risk for this

@@ -239,6 +239,12 @@ unsafe symlink relationship, or have the wrong access mode.
 Machine-specific mount paths, credentials, hostnames, and certificates remain
 outside Git.
 
+The two configured application paths remain separate and non-overlapping even
+when the NAS stores them in one dataset. In that supported layout, the existing
+SMB share is mounted read-only at its root as `archive_root` and mounted again
+with CIFS `prefixpath=Rosbag_Analyser_Cache` as the read/write `derived_root`.
+The derived mount cannot traverse above that reserved folder.
+
 ## 7. Physical folder catalog
 
 ### 7.1 Discovery
@@ -246,6 +252,13 @@ outside Git.
 The V1 scanner walks ordinary directories below the configured archive root to
 a configured maximum depth. It counts every visited directory entry against a
 global bound and never follows symlinks.
+
+`Rosbag_Analyser_Cache/` is a reserved, case-insensitive top-level archive name.
+Every source-tree walker discards that entry before traversal, stat collection,
+bounds accounting, recording discovery, size calculation, manifest
+construction, or identity hashing. Cache writes therefore cannot change source
+discovery or a rescan result. A folder with that name cannot contain source
+recordings.
 
 A directory becomes a recording candidate when it contains the supported
 `metadata.yaml` entry. Once treated as a recording root, its known source
@@ -859,7 +872,9 @@ Services never run migrations concurrently and never rescan at startup.
 ### 16.4 Storage and backup
 
 The source mount is excluded from application backup because it is authoritative
-external data and immutable to the service.
+external data and immutable to the service. The reserved cache folder may be in
+the same NAS dataset, but it is excluded from source manifests and is backed up
+only as derived data.
 
 Trial backup covers:
 
@@ -872,10 +887,13 @@ At minimum, artifact manifests and PostgreSQL must be recoverable together or a
 restore must deliberately invalidate absent artifacts. A restore drill uses a
 separate temporary database and derived target before the trial gate passes.
 
-The source mount must match the configured NFS export or SMB/CIFS share and
-`ro,nosuid,nodev,noexec` options exactly. The derived mount must match its
-configured filesystem/device and `rw,nosuid,nodev`, retain a root-owned marker,
-and expose only an application-owned child for writes. Source loss disables
+The source mount must match the configured NFS export or SMB/CIFS share,
+internal mount root, and `ro,nosuid,nodev,noexec` options exactly. The derived
+mount may reuse the same SMB share with its root constrained by CIFS
+`prefixpath` to `Rosbag_Analyser_Cache/`; it must match that exact remote share
+and internal mount root and use `rw,nosuid,nodev`. It retains a fixed marker and
+exposes only an application-owned child for writes.
+Source loss disables
 source-dependent work without hiding saved state. Low space rejects insertion
 and pauses worker claim without invalidating ready artifacts; database or
 trusted-derived loss fails core readiness while liveness remains available.

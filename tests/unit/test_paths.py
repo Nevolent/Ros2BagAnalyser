@@ -57,6 +57,25 @@ def test_discovers_recording_candidate_and_does_not_follow_symlink(tmp_path: Pat
     assert tuple(item.path for item in discovered) == (recording,)
 
 
+def test_reserved_cache_tree_is_excluded_before_catalog_limits(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    recording = archive / "recording"
+    recording.mkdir(parents=True)
+    (recording / "metadata.yaml").write_text("recording", encoding="utf-8")
+    cache_recording = archive / "rOsBaG_aNaLySeR_cAcHe" / "generated"
+    cache_recording.mkdir(parents=True)
+    (cache_recording / "metadata.yaml").write_text("generated", encoding="utf-8")
+    for number in range(10):
+        (cache_recording / f"generated-{number}.db3").write_bytes(b"cache")
+
+    discovered = discover_recording_directories(
+        archive,
+        CatalogScanLimits(max_entries=2),
+    )
+
+    assert tuple(item.path for item in discovered) == (recording,)
+
+
 @pytest.mark.parametrize(
     "declared",
     ["../outside.db3", "/absolute.db3", "folder\\database.db3", "./database.db3"],

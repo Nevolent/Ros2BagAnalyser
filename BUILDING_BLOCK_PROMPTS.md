@@ -2184,7 +2184,8 @@ The completed outcome must provide:
 - one reproducible, immutable application release with a recorded identity;
 - one local PostgreSQL database, one loopback API, and exactly one serial worker;
 - a fail-closed read-only mount of one fixed approved NAS source root;
-- a distinct writable derived filesystem with bounded low-space behavior;
+- a distinct writable mount of the same share constrained to the reserved
+  top-level analyser cache folder, with bounded low-space behavior;
 - authenticated same-origin HTTPS through the approved network boundary;
 - controlled schema migration, backup, restore, upgrade, and rollback;
 - TrueNAS VM-autostart configuration evidence plus orderly guest application
@@ -2971,14 +2972,13 @@ Stop and request direction if:
 - the administrator handoff, site annex, exact target, owner, or recovery path
   is incomplete;
 - live commands or targets differ from the reviewed change set;
-- the source cannot be exported independently server-side read-only to the
-  exact VM, the allow list is effectively open, root mapping/security is
-  unresolved, parent/child exports are ambiguous, or an existing consumer could
-  be disrupted;
+- the source mount is writable, root mapping/security is unresolved, the cache
+  mount does not select the reserved folder, or an existing consumer could be
+  disrupted;
 - source mount identity cannot fail closed, the source is writable, or any
   process requires a write-capable source open;
-- source and derived overlap, derived capacity/atomic semantics are inadequate,
-  or safe operation would require automatic deletion;
+- derived output escapes the reserved cache folder, derived capacity/atomic
+  semantics are inadequate, or safe operation would require automatic deletion;
 - IPv4 or IPv6 can bypass the approved private/VPN TLS boundary, or VNC/raw
   API/PostgreSQL/NFS is unexpectedly reachable, or no tested default-deny guest
   firewall/equivalent and recovery path exists;

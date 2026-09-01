@@ -41,9 +41,10 @@ incident contact, engineer-feedback owner, and project approver. It also records
   FFmpeg/ffprobe, Nginx, CIFS client, and nftables package versions;
 - VM identity, recovery point, vCPU/RAM/disk facts, UTC/time sync, stable MAC,
   IPv4 and IPv6 routes, Start on Boot, console policy, and shutdown budget;
-- exact source export/mount and server-side read-only evidence;
-- exact derived filesystem UUID, capacity basis, warning/rejection thresholds,
-  reservation/quota, and growth procedure;
+- exact SMB share plus read-only source and reserved-cache writable mount
+  evidence;
+- exact reserved cache path, capacity basis, warning/rejection thresholds,
+  snapshot/backup policy, and growth procedure;
 - database roles, protected backup target, RPO, retention, encryption, restore
   owner, and coherent derived-recovery rule;
 - TLS issuer/expiry/renewal, individual access owners, grant/revoke/expiry, and
@@ -234,28 +235,30 @@ seven days.
 
 ## Mounts and derived ownership
 
-The administrator first proves the server-side source share and its account/ACL
-are exact and read-only. Install the reviewed CIFS client unit with
-`ro,nosuid,nodev,noexec,_netdev` and the approved SMB version. Keep credentials
-in the root-owned `source.cifs-credentials` file, never in the mount unit. The empty local
-mountpoint is root-owned and not used as a fallback. Start the mount, then use
-only metadata tools:
+The administrator keeps the existing read-only CIFS source mount. The same SMB
+share is mounted at the derived path with
+`prefixpath=Rosbag_Analyser_Cache`, which prevents that writable mount from
+traversing above the reserved folder. Keep credentials in the root-owned
+`source.cifs-credentials` file, never in a mount unit. Start both reviewed
+mounts, then use only mount metadata tools:
 
 ```bash
 systemctl start 'srv-rosbag\x2danalyser-source.mount'
+systemctl start 'var-lib-rosbag\x2danalyser-derived.mount'
 findmnt --mountpoint /srv/rosbag-analyser/source \
-  --output TARGET,SOURCE,FSTYPE,OPTIONS,MAJ:MIN
+  --output TARGET,SOURCE,FSTYPE,FSROOT,OPTIONS,MAJ:MIN
+findmnt --mountpoint /var/lib/rosbag-analyser/derived \
+  --output TARGET,SOURCE,FSTYPE,FSROOT,OPTIONS,MAJ:MIN,SIZE,AVAIL
 ```
 
-Expected: exact target, exact dedicated share, `cifs`, and `ro,nosuid,nodev,noexec`.
-Do not list the source directory before the real-data annex authorizes the
-before manifest.
+Expected: both rows identify the same exact SMB share. Source has filesystem
+root `/` and `ro,nosuid,nodev,noexec`; derived has filesystem root
+`/Rosbag_Analyser_Cache` and `rw,nosuid,nodev,noexec`. Do not list the source
+directory before the real-data annex authorizes the before manifest. Never
+format storage or move an existing recording for this layout.
 
-The derived filesystem is separate. Formatting is destructive: generate its
-exact `mkfs` command only after the approved `/dev/disk/by-id` target, `lsblk`
-facts, recovery point, and confirmation are attached to the live review. Never
-copy a placeholder formatting command. After the reviewed filesystem is
-mounted `rw,nosuid,nodev`:
+After both mount views are proven, create only derived-owned state through the
+derived view:
 
 ```bash
 sudo install -o root -g root -m 0444 /dev/stdin \
@@ -267,12 +270,13 @@ findmnt --mountpoint /var/lib/rosbag-analyser/derived \
   --output TARGET,SOURCE,FSTYPE,OPTIONS,MAJ:MIN,SIZE,AVAIL
 ```
 
-The marker is root-owned and immutable to the service; only the
-`rosbag-analyser` child is application-writable. Temporary and final artifacts
-therefore remain on one filesystem for atomic rename. The configured rejection
-threshold is the larger operational constraint represented by the byte and
-percentage settings. Low space pauses claims and rejects new preparation; it
-does not delete valid output.
+On ordinary CIFS the client reports mount-wide ownership and mode defaults, so
+the marker's fixed content plus the exact remote share and internal mount root
+form the identity check. The service writes only through the
+`rosbag-analyser` child. Temporary and final artifacts remain on one filesystem
+for atomic rename. The configured rejection threshold is the larger operational
+constraint represented by the byte and percentage settings. Low space pauses
+claims and rejects new preparation; it does not delete valid output.
 
 ## Install, migrate, and activate a candidate
 

@@ -18,6 +18,8 @@ import stat
 import tempfile
 from typing import Any, Sequence
 
+from rosbag_analyser.storage_layout import is_reserved_cache_root_entry
+
 try:
     import yaml
     from yaml.events import AliasEvent
@@ -231,6 +233,8 @@ def _walk_source_tree(
         direct_entries: list[SourceEntry] = []
         child_directories: list[tuple[Path, PurePosixPath]] = []
         for child in children:
+            if directory == root and is_reserved_cache_root_entry(child.name):
+                continue
             if entry_count >= max_entries:
                 issues.append({"code": "entry_limit_exceeded", "path": directory_key})
                 return result, issues, False

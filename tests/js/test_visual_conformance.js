@@ -117,8 +117,8 @@ test("effective visual tokens and graph renderer match the neutral reference tre
   assert.ok(renderedBreakpoints.length > 0);
   assert.ok(renderedBreakpoints.every((breakpoint) => scaledBreakpoints.has(breakpoint)));
   assert.match(styles, /--rail-width:\s*70px/);
-  assert.match(styles, /@media \(min-width:\s*1313\.75px\)[\s\S]*?--folders-width:\s*315px/);
-  assert.match(styles, /@media \(max-width:\s*1312\.5px\)[\s\S]*?--folders-width:\s*300px/);
+  assert.match(styles, /@media \(min-width:\s*1313\.75px\)[\s\S]*?--folders-width:\s*352\.5px/);
+  assert.match(styles, /@media \(max-width:\s*1312\.5px\)[\s\S]*?--folders-width:\s*335px/);
   assert.match(styles, /--accent:\s*#f4f4f5/);
   assert.match(styles, /--chart-accent:\s*#f4f4f5/);
   assert.match(styles, /\.rosbag-table\s*\{\s*min-width:\s*950px/);

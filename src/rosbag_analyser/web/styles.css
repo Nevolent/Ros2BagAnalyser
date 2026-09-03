@@ -5019,11 +5019,11 @@ html[data-theme="light"] .is-skeleton-loading :is(#detail-recorded, #detail-dura
 /* Recordings folder and selection refinements. Keep row outer metrics fixed so
    selecting or expanding a folder never shifts its siblings. */
 @media (min-width: 1313.75px) {
-  :root { --folders-width: 315px; }
+  :root { --folders-width: 352.5px; }
 }
 
 @media (max-width: 1312.5px) {
-  :root { --folders-width: 300px; }
+  :root { --folders-width: 335px; }
 }
 
 #recordings-view .folder-search,

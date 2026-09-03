@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 import hashlib
 import json
@@ -251,13 +251,16 @@ class ArtifactStore:
             or final_details.st_dev != validation.device_id
             or final_details.st_ino != validation.inode
             or final_details.st_size != validation.size_bytes
-            or final_details.st_mtime_ns != validation.mtime_ns
         ):
             raise ArtifactStoreError(
                 "preview_output_changed",
                 "The generated preview changed during validation.",
             )
-        return validation
+        # CIFS may finalize only the timestamp after ffprobe has completely
+        # validated an otherwise unchanged derived file.  Persist that final
+        # timestamp so later manifest-bound delivery checks keep protecting the
+        # exact published file instead of rejecting this safe finalization.
+        return replace(validation, mtime_ns=final_details.st_mtime_ns)
 
     def publish(
         self,
@@ -443,7 +446,6 @@ class ArtifactStore:
                 or after.st_dev != before.st_dev
                 or after.st_ino != before.st_ino
                 or after.st_size != before.st_size
-                or after.st_mtime_ns != before.st_mtime_ns
             ):
                 raise ValueError("series changed during validation")
         except (OSError, TypeError, ValueError, OverflowError) as error:
@@ -458,7 +460,7 @@ class ArtifactStore:
             size_bytes=before.st_size,
             device_id=before.st_dev,
             inode=before.st_ino,
-            mtime_ns=before.st_mtime_ns,
+            mtime_ns=after.st_mtime_ns,
             sample_count=expected_sample_count,
             column_count=len(expected_columns),
             coverage_start_ns=first_time,

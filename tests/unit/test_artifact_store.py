@@ -214,6 +214,39 @@ def test_validation_checks_profile_duration_and_representative_seeks(
     assert captured.value.code == "preview_validation_mismatch"
 
 
+def test_preview_validation_accepts_timestamp_finalization_and_records_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    store = _store(derived)
+    workspace = store.create_workspace(41)
+    output = workspace / "preview.mp4"
+    _write_preview(output)
+    original_mtime_ns = output.stat().st_mtime_ns
+
+    def finalize_timestamp(*_args, **_kwargs) -> None:
+        details = output.stat()
+        os.utime(
+            output,
+            ns=(details.st_atime_ns, details.st_mtime_ns + 1_000_000_000),
+        )
+
+    monkeypatch.setattr(store, "_validate_representative_seeks", finalize_timestamp)
+
+    validation = store.validate_preview(
+        output,
+        V0_PREVIEW_PROFILE,
+        expected_width=4,
+        expected_height=2,
+        expected_frame_count=2,
+        measured_span_ns=250_000_000,
+    )
+
+    assert validation.mtime_ns != original_mtime_ns
+    assert validation.mtime_ns == output.stat().st_mtime_ns
+
+
 def test_validation_rejects_mp4_that_requires_a_complete_download(
     tmp_path: Path,
 ) -> None:

@@ -120,6 +120,46 @@ def test_series_is_validated_then_atomically_published_and_reopened(
         os.close(opened.descriptor)
 
 
+def test_series_validation_accepts_timestamp_finalization_and_records_it(
+    tmp_path: Path,
+) -> None:
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    store = _store(derived)
+    workspace = store.create_workspace(35)
+    series = workspace / "series.json"
+    series.write_text(
+        '{"schema_version":2,"samples":[["0",1,1,1,1,1,1]]}'
+    )
+    original_mtime_ns = series.stat().st_mtime_ns
+
+    class TimestampFinalizingControl:
+        finalized = False
+
+        def checkpoint(self, _phase: str, *, force: bool = False) -> None:
+            if force or self.finalized:
+                return
+            details = series.stat()
+            os.utime(
+                series,
+                ns=(details.st_atime_ns, details.st_mtime_ns + 1_000_000_000),
+            )
+            self.finalized = True
+
+    validation = store.validate_series(
+        series,
+        expected_schema_version=2,
+        expected_sample_count=1,
+        expected_columns=_columns(1, 0, 1.0, 1.0),
+        expected_coverage_start_ns=0,
+        expected_coverage_end_ns=0,
+        control=TimestampFinalizingControl(),  # type: ignore[arg-type]
+    )
+
+    assert validation.mtime_ns != original_mtime_ns
+    assert validation.mtime_ns == series.stat().st_mtime_ns
+
+
 @pytest.mark.parametrize(
     ("payload", "expected_code"),
     [

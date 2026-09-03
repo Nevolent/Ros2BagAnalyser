@@ -12,11 +12,14 @@ def test_git_deployment_launcher_is_local_clean_and_remote_revision_guarded() ->
 
     assert "Usage: ./deploy-vm" in launcher
     assert "must have mode 600 or 400" in launcher
-    assert "git -C \"$project_root\" diff --quiet" in launcher
-    assert "git -C \"$project_root\" diff --cached --quiet" in launcher
+    assert "require_deployable_worktree" in launcher
+    assert "README.md|docs/*" in launcher
+    assert "uncommitted runtime change" in launcher
     assert "ls-files --others --exclude-standard" in launcher
     assert "ls-remote --exit-code --heads origin" in launcher
     assert "BatchMode=yes" in launcher
+    assert "ConnectTimeout=10" in launcher
+    assert "ConnectionAttempts=1" in launcher
     assert "StrictHostKeyChecking=yes" in launcher
     assert "sudo --non-interactive" in launcher
     assert "deploy-from-git" in launcher
@@ -40,6 +43,9 @@ def test_vm_git_deployment_preserves_immutable_release_and_refuses_sensitive_cha
     assert 'realpath -e -- "$current_link/wheelhouse"' in deployer
     assert "systemctl restart rosbag-analyser-api.service" in deployer
     assert "systemctl restart rosbag-analyser-worker.service" in deployer
+    assert "wait_for_local_readiness" in deployer
+    assert "attempt < 30" in deployer
+    assert "the restarted API did not become ready within 30 seconds" in deployer
     assert "activate-release" in deployer
     assert "build-release" in deployer
     assert "rescan" not in deployer

@@ -42,6 +42,30 @@ require_safe_value() {
   [[ "$value" =~ $pattern ]] || fail "$label has an unsafe value"
 }
 
+require_deployable_worktree() {
+  local changed_path
+  local -a changed_paths
+  mapfile -t changed_paths < <(
+    {
+      git -C "$project_root" diff --name-only
+      git -C "$project_root" diff --cached --name-only
+      git -C "$project_root" ls-files --others --exclude-standard
+    } | LC_ALL=C sort -u
+  )
+  for changed_path in "${changed_paths[@]}"; do
+    case "$changed_path" in
+      README.md|docs/*)
+        ;;
+      *)
+        fail "uncommitted runtime change: $changed_path; commit or stash it first"
+        ;;
+    esac
+  done
+  if (( ${#changed_paths[@]} > 0 )); then
+    echo "Deploying the pushed commit; local README/docs changes are excluded."
+  fi
+}
+
 [[ "${1:-}" != "--help" && "${1:-}" != "-h" ]] || {
   usage
   exit 0
@@ -72,12 +96,7 @@ require_safe_value "VM user" "$deploy_user" '^[A-Za-z_][A-Za-z0-9_-]{0,31}$'
 require_safe_value "VM branch" "$deploy_branch" '^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$'
 [[ -x "$ssh_program" ]] || fail "configured SSH program is unavailable: $ssh_program"
 
-git -C "$project_root" diff --quiet \
-  || fail "the working tree has unstaged changes; commit or stash them first"
-git -C "$project_root" diff --cached --quiet \
-  || fail "the index has staged changes; commit them first"
-[[ -z "$(git -C "$project_root" ls-files --others --exclude-standard)" ]] \
-  || fail "the working tree has untracked files; review and commit, remove, or ignore them first"
+require_deployable_worktree
 readonly local_branch="$(git -C "$project_root" branch --show-current)"
 [[ "$local_branch" == "$deploy_branch" ]] \
   || fail "checked-out branch $local_branch does not match configured deployment branch $deploy_branch"
@@ -92,6 +111,8 @@ readonly remote_revision="$(
 echo "Deploying $local_revision from origin/$deploy_branch to $deploy_user@$deploy_host"
 exec "$ssh_program" \
   -o BatchMode=yes \
+  -o ConnectTimeout=10 \
+  -o ConnectionAttempts=1 \
   -o StrictHostKeyChecking=yes \
   "$deploy_user@$deploy_host" \
   sudo --non-interactive \

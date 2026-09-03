@@ -18,6 +18,19 @@ fail() {
   exit 1
 }
 
+wait_for_local_readiness() {
+  local attempt=0
+  while (( attempt < 30 )); do
+    if curl --fail --silent http://127.0.0.1:8000/health/live >/dev/null \
+      && curl --fail --silent http://127.0.0.1:8000/health/ready >/dev/null; then
+      return 0
+    fi
+    ((attempt += 1))
+    sleep 1
+  done
+  fail "the restarted API did not become ready within 30 seconds"
+}
+
 [[ "$(id -u)" -eq 0 ]] || fail "must run as root inside the approved VM"
 [[ "$branch" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ ]] \
   || fail "branch is invalid"
@@ -131,7 +144,6 @@ systemctl restart rosbag-analyser-api.service
 if [[ "$restart_mode" == "both" ]]; then
   systemctl restart rosbag-analyser-worker.service
 fi
-curl --fail --silent --show-error http://127.0.0.1:8000/health/live >/dev/null
-curl --fail --silent --show-error http://127.0.0.1:8000/health/ready >/dev/null
+wait_for_local_readiness
 "$current_link/deploy/scripts/smoke-check"
 echo "Activated $release_id from Git revision $actual_revision; restarted $restart_mode."

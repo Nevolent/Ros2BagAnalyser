@@ -107,9 +107,12 @@ fi
 readonly release_id="git-${actual_revision:0:12}"
 readonly release_target="$deployment_root/releases/$release_id"
 if [[ ! -d "$release_target" ]]; then
-  readonly wheelhouse="$current_link/wheelhouse"
+  wheelhouse="$(realpath -e -- "$current_link/wheelhouse")" \
+    || fail "the active checked wheelhouse is unavailable"
+  readonly wheelhouse
   readonly output_directory="$deployment_root/staging/$release_id"
-  [[ -d "$wheelhouse" && -f "$wheelhouse/SHA256SUMS" ]] \
+  [[ "$wheelhouse" == /* && -d "$wheelhouse" && ! -L "$wheelhouse" \
+    && -f "$wheelhouse/SHA256SUMS" ]] \
     || fail "the active checked wheelhouse is unavailable"
   [[ ! -e "$output_directory" ]] \
     || fail "the protected release staging directory already exists"

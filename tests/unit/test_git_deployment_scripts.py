@@ -37,6 +37,7 @@ def test_vm_git_deployment_preserves_immutable_release_and_refuses_sensitive_cha
     assert "deploy/systemd" in deployer
     assert "deploy/scripts/*" in deployer
     assert '"$current_link/deploy/scripts/drain-worker"' in deployer
+    assert 'realpath -e -- "$current_link/wheelhouse"' in deployer
     assert "systemctl restart rosbag-analyser-api.service" in deployer
     assert "systemctl restart rosbag-analyser-worker.service" in deployer
     assert "activate-release" in deployer

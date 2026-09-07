@@ -232,7 +232,7 @@ class FakeDocument {
     this.element("div", "recordings-page", recordings, "recordings-page");
     this.element("section", "", recordings, "table-filter-bar");
     ["last-scanned", "recording-loading", "recording-empty", "recording-filter-empty", "recording-failure", "recording-failure-text", "page-buttons", "page-status", "selected-count", "selection-context"].forEach((id) => this.element("div", id, recordings));
-    ["rescan-archive", "recording-retry", "prepare-selected", "previous-page", "next-page", "clear-filters", "clear-filter-menu"].forEach((id) => this.element("button", id, recordings));
+    ["clear-selection", "rescan-archive", "recording-retry", "prepare-selected", "previous-page", "next-page", "clear-filters", "clear-filter-menu"].forEach((id) => this.element("button", id, recordings));
     this.element("tbody", "recording-rows", recordings);
     ["recording-search", "select-all-recordings"].forEach((id) => this.element("input", id, recordings));
     const buildFilter = (key, values) => {
@@ -500,7 +500,7 @@ test("recording rows show the exact source name and the truthful Recorded column
   assert.equal(row.querySelector(".recording-link").textContent, "2025_11_04_figure8");
   assert.equal(row.querySelector(".cell-sublabel"), null);
   assert.equal(row.children.length, 7);
-  assert.equal(row.querySelector(".date-cell").querySelector("time").children.length, 2);
+  assert.equal(row.querySelector(".date-cell").querySelector("time").getAttribute("datetime"), "2025-11-04T12:00:00.000Z");
   assert.match(row.querySelector(".recording-link").getAttribute("aria-label"), /^2025_11_04_figure8\. Recorded /);
 });
 
@@ -534,7 +534,7 @@ test("recording status tooltips always open to the left without changing table l
   tooltip.rectWidth = 240;
   tooltip.rectHeight = 100;
   indicator.dispatch("pointerenter");
-  assert.equal(tooltip.style.left, "550px");
+  assert.equal(tooltip.style.left, "552px");
   assert.ok(Number.parseFloat(tooltip.style.left) + tooltip.rectWidth < indicator.rectLeft);
 });
 
@@ -580,21 +580,16 @@ test("collapsed folder shortcut follows the active Recordings route", async () =
   const harness = createHarness();
   await flush();
   vm.runInContext("updateFolderPanelState(false)", harness.context);
-  const slot = harness.document.querySelector("#folder-reveal-slot");
-  const sidebar = harness.document.querySelector(".sidebar");
-  assert.equal(slot.classList.contains("is-visible"), true);
-  assert.equal(sidebar.classList.contains("has-folder-slot"), true);
+  const button = harness.document.querySelector("#archive-view-button");
+  assert.equal(button.getAttribute("aria-label"), "Show folders");
   vm.runInContext("navigate('/processing')", harness.context);
   await flush();
-  assert.equal(slot.classList.contains("is-visible"), false);
-  assert.equal(slot.classList.contains("is-reserved"), false);
-  assert.equal(sidebar.classList.contains("has-folder-slot"), false);
-  assert.equal(harness.document.querySelector("#expand-folders").tabIndex, -1);
+  assert.equal(button.getAttribute("aria-label"), "Recordings");
   vm.runInContext("navigate('/')", harness.context);
   await flush();
-  assert.equal(slot.classList.contains("is-visible"), true);
-  assert.equal(slot.classList.contains("is-reserved"), true);
-  assert.equal(sidebar.classList.contains("has-folder-slot"), true);
+  assert.equal(button.getAttribute("aria-label"), "Show folders");
+  harness.document.dispatch("click", { target: button, button: 0, preventDefault() {} });
+  assert.equal(button.getAttribute("aria-label"), "Hide folders");
 });
 
 test("successful explicit rescan reloads and reports the saved catalog", async () => {
@@ -718,9 +713,9 @@ test("Processing preserves authoritative queue positions, server estimates, offl
   });
   await flush();
   const queueRow = harness.document.querySelector("#queue-rows").children[0];
-  assert.match(queueRow.children[3].textContent, /#7/);
-  assert.match(queueRow.children[4].textContent, /≈ 0:08/);
-  assert.match(harness.document.querySelector("#current-job-host").textContent, /Likely duration≈ 0:03/);
+  assert.equal(vm.runInContext("processingState.overview.queue[0].outputs[0].queue_position", harness.context), 7);
+  assert.match(queueRow.children[3].textContent, /≈ 1 min/);
+  assert.match(harness.document.querySelector("#current-job-host").textContent, /Likely duration:≈ 0:05/);
   assert.equal(vm.runInContext("estimateText({status: 'unavailable', sample_count: 0})", harness.context), "Not enough history");
   assert.equal(vm.runInContext("estimateText({status: 'exceeded'})", harness.context), "Estimate exceeded");
   assert.equal([...harness.timers.values()][0].delay, 1500);
@@ -756,15 +751,16 @@ test("Processing shows truthful empty current and queue states while idle", asyn
 });
 
 test("Processing controls use authoritative mutations, selection actions, and cancellation confirmation", async () => {
+  let canceled = false;
   const harness = createHarness("/processing", async (url, options) => {
-    if (url === "/api/v1/processing/overview") return makeResponse(overviewFixture());
+    if (url === "/api/v1/processing/overview") return makeResponse(overviewFixture(canceled ? { queue: [], queued_count: 0 } : {}));
     if (url === "/api/v1/processing/jobs/31/pause") return makeResponse({ job_id: 31, outcome: "requested", job: null, server_time: "2026-08-04T12:00:05Z" });
     if (url === "/api/v1/processing/jobs/reorder") return makeResponse({ items: [{ job_id: 32, outcome: "reordered", job: null }], server_time: "2026-08-04T12:00:05Z" });
-    if (url === "/api/v1/processing/jobs/32/cancel") return makeResponse({ job_id: 32, outcome: "canceled", job: null, server_time: "2026-08-04T12:00:05Z" });
+    if (url === "/api/v1/processing/jobs/32/cancel") { canceled = true; return makeResponse({ job_id: 32, outcome: "canceled", job: null, server_time: "2026-08-04T12:00:05Z" }); }
     throw new Error(`${options.method || "GET"} ${url}`);
   });
   await flush();
-  const pause = harness.document.querySelector("#current-job-host").querySelectorAll("button").find((button) => button.textContent === "Pause");
+  const pause = harness.document.querySelector("#current-job-host").querySelectorAll("button").find((button) => button.title === "Pause");
   pause.dispatch("click");
   await flush();
   assert.equal(harness.calls.filter((call) => call.url.endsWith("/31/pause") && call.options.method === "POST").length, 1);
@@ -886,7 +882,7 @@ test("failure detail is safe, restores focus, retry is idempotent, and history c
   assert.equal(harness.document.activeElement, tabs[1]);
   assert.equal(tabs[1].getAttribute("aria-selected"), "true");
   const failureRow = harness.document.querySelector("#failure-rows").children[0];
-  const details = failureRow.children[2].querySelector("button");
+  const details = harness.document.querySelector(".failure-child-row").children[2].querySelector("button");
   details.dispatch("click");
   assert.equal(harness.document.querySelector("#processing-error-dialog").open, true);
   assert.equal(harness.document.querySelector("#processing-error-copy").textContent, "Failed <without markup>");
@@ -901,9 +897,8 @@ test("failure detail is safe, restores focus, retry is idempotent, and history c
   await vm.runInContext("loadProcessingPage('history', {append: true})", harness.context);
   assert.equal(harness.document.querySelector("#history-rows").children.length, 2);
   const completed = harness.document.querySelector("#history-rows").children[0].querySelector(".history-completed");
-  assert.equal(completed.querySelector("time").children.length, 2);
-  assert.equal(completed.querySelector("time").children[0].tagName, "strong");
-  assert.equal(completed.querySelector("time").children[1].tagName, "span");
+  assert.equal(completed.querySelector("time").dateTime, failed.finished_at);
+  assert.notEqual(completed.querySelector("time").textContent, "Unavailable");
 });
 
 test("direct Analyzer route binds identity URLs, precise health, six IMU channels, gaps, coverage, and independent failure", async () => {
@@ -1046,7 +1041,7 @@ test("recording details resize redraws each distinct graph size at native pixel 
   }
 
   assert.equal(clearCount(), initialClearCount + 5);
-  assert.equal(vm.runInContext("reviewController.telemetry.plotWidth", harness.context), 830.4);
+  assert.equal(vm.runInContext("reviewController.telemetry.plotWidth", harness.context), 844.4);
   assert.equal(canvas.width, 2251);
 
   vm.runInContext("reviewController.telemetry.resizeObserver.callback()", harness.context);
@@ -1334,4 +1329,40 @@ test("static runtime contains no mock arrays, static preview sources, fake progr
   assert.match(source, /textContent/);
   assert.match(source, /AbortController/);
   assert.match(source, /routeGeneration/);
+});
+
+
+test("real flat jobs group adjacent outputs without changing queue order or inventing attempts", async () => {
+  const first = overviewFixture().queue[0];
+  const queue = [first, { ...first, id: 33, kind: "imu_series", queue_position: 8,
+    queue_estimate: { status: "unavailable", ready_in_ms: null } },
+    { ...first, id: 34, recording_id: 8, queue_position: 9 },
+    { ...first, id: 35, queue_position: 10 }];
+  const harness = createHarness("/processing", async () => makeResponse(overviewFixture({ queue, queued_count: 4 })));
+  await flush();
+  const groups = JSON.parse(vm.runInContext("JSON.stringify(processingState.overview.queue)", harness.context));
+  assert.deepEqual(groups.map((group) => group.outputs.map((job) => job.id)), [[32, 33], [34], [35]]);
+  assert.equal(groups[0].queue_estimate.status, "unavailable");
+  assert.equal(harness.document.querySelector("#processing-queue-count").textContent, "4");
+  assert.equal(harness.document.querySelector("#queue-rows").children.length, 3);
+  const checkbox = harness.document.querySelector(".queue-row-select");
+  checkbox.checked = true;
+  checkbox.dispatch("change");
+  assert.deepEqual(JSON.parse(vm.runInContext("JSON.stringify(selectedQueueIdsInOrder())", harness.context)), [32, 33]);
+  assert.equal(harness.calls.every((call) => !call.options.method || call.options.method === "GET"), true);
+});
+
+test("history loads one bounded page and retains the cursor until requested", async () => {
+  const job = { ...overviewFixture().current, state: "succeeded", runtime_ms: 5000, output_size_bytes: "1024" };
+  const harness = createHarness("/processing", async (url) => {
+    if (url === "/api/v1/processing/overview") return makeResponse(overviewFixture());
+    return makeResponse({ items: [job], next_cursor: "more" });
+  });
+  await flush();
+  vm.runInContext("setProcessingTab('history')", harness.context);
+  await flush();
+  const requests = harness.calls.filter((call) => call.url.includes("view=history"));
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /limit=25/);
+  assert.equal(harness.document.querySelector("#history-more").hidden, false);
 });

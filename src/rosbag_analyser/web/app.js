@@ -11,7 +11,6 @@ const catalogElements = {
   folderTree: byId("folder-tree"),
   folderSearch: byId("folder-search"),
   collapseFolders: byId("collapse-folders"),
-  expandFolders: byId("expand-folders"),
   page: document.querySelector(".recordings-page"),
   lastScanned: byId("last-scanned"),
   rescan: byId("rescan-archive"),
@@ -29,6 +28,7 @@ const catalogElements = {
   clearFilters: byId("clear-filter-menu"),
   selectAll: byId("select-all-recordings"),
   selectedCount: byId("selected-count"),
+  clearSelection: byId("clear-selection"),
   selectionContext: byId("selection-context"),
   prepare: byId("prepare-selected"),
   previous: byId("previous-page"),
@@ -61,7 +61,6 @@ const processingElements = {
   dialogTitle: byId("processing-error-title"),
   dialogCopy: byId("processing-error-copy"),
   dialogMeta: byId("processing-error-meta"),
-  dialogRecovery: byId("processing-error-recovery"),
   dialogClose: byId("close-processing-error"),
   dialogDismiss: byId("dismiss-processing-error"),
   dialogCopyButton: byId("copy-processing-error"),
@@ -97,14 +96,6 @@ const cancelElements = {
   copy: byId("cancel-job-copy"),
   keep: byId("keep-processing"),
   confirm: byId("confirm-job-cancel"),
-};
-
-const toastElements = {
-  root: byId("operation-toast"),
-  title: byId("operation-toast-title"),
-  copy: byId("operation-toast-copy"),
-  processing: byId("view-processing-toast"),
-  dismiss: byId("dismiss-toast"),
 };
 
 const detailElements = {
@@ -195,8 +186,6 @@ const GRAPH_SEEK_STEP_SECONDS = 0.1;
 const GRAPH_SEEK_PAGE_SECONDS = 5;
 const RECORDING_DETAILS_RESIZE_DURATION = 360;
 const RECORDING_DETAILS_GRAPH_DURATION = 520;
-const INTERFACE_SCALE = 1.25;
-const interfacePixels = (value) => value * INTERFACE_SCALE;
 
 let routeGeneration = 0;
 let routeController = null;
@@ -213,14 +202,11 @@ let diagnosticJob = null;
 const reduceMotionQuery = window.matchMedia
   ? window.matchMedia("(prefers-reduced-motion: reduce)")
   : { matches: false };
-let folderPanelTransitionVersion = 0;
-let folderPanelAnimations = [];
 const transientPanelAnimations = new WeakMap();
 let recordingDetailsTransitionVersion = 0;
 let recordingDetailsLayoutAnimations = [];
 let recordingDetailsGraphFrame = null;
 let clearFilterShouldShow = false;
-let tableHeightAnimation = null;
 
 const catalogState = {
   data: null,
@@ -251,10 +237,14 @@ const processingState = {
   historyIds: new Set(),
   elapsedFrame: null,
   elapsedAnchor: null,
+  elapsedFreezes: new Map(),
   selectedQueueIds: new Set(),
   selectedFailureIds: new Set(),
   busyControlKeys: new Set(),
   canceledJobIds: new Set(),
+  expandedHistoryGroupIds: new Set(),
+  hoveredGroupKey: null,
+  hoveredGroupRows: null,
 };
 
 class ApiError extends Error {
@@ -440,11 +430,11 @@ function setTransientPanelOpen(panel, open) {
     return;
   }
   const animation = panel.animate(open ? [
-    { opacity: 0, transform: `translate3d(0, ${interfacePixels(-4)}px, 0)` },
+    { opacity: 0, transform: `translate3d(0, ${-4}px, 0)` },
     { opacity: 1, transform: "translate3d(0, 0, 0)" },
   ] : [
     { opacity: 1, transform: "translate3d(0, 0, 0)" },
-    { opacity: 0, transform: `translate3d(0, ${interfacePixels(-2)}px, 0)` },
+    { opacity: 0, transform: `translate3d(0, ${-2}px, 0)` },
   ], {
     duration: open ? 150 : 100,
     easing: open ? "cubic-bezier(.16, 1, .3, 1)" : "cubic-bezier(.4, 0, 1, 1)",
@@ -461,7 +451,7 @@ function setTransientPanelOpen(panel, open) {
 
 function showNotice(element, message, kind = "") {
   element.textContent = message;
-  element.className = `inline-notice ${kind}`.trim();
+  element.className = `processing-connection-status ${kind}`.trim();
   element.hidden = !message;
 }
 
@@ -526,6 +516,19 @@ function navigate(path, { replace = false } = {}) {
   activateRoute(route, { focus: true });
 }
 
+function syncFolderToggleState(view) {
+  const archiveViewButton = byId("archive-view-button");
+  if (!archiveViewButton) return;
+  const recordingsView = byId("recordings-view");
+  const isRecordingsView = view === "recordings";
+  const open = !recordingsView.classList.contains("is-folders-collapsed");
+  archiveViewButton.classList.toggle("is-folder-toggle-closed", isRecordingsView && !open);
+  archiveViewButton.setAttribute("aria-label", isRecordingsView ? (open ? "Hide folders" : "Show folders") : "Recordings");
+  archiveViewButton.title = isRecordingsView
+    ? (open ? "Folders open · click to hide" : "Folders closed · click to show")
+    : "Recordings";
+}
+
 function setActiveView(view) {
   viewPanels.forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== view; });
   navLinks.forEach((link) => {
@@ -534,7 +537,7 @@ function setActiveView(view) {
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
-  syncFolderReveal();
+  syncFolderToggleState(view);
   const label = view === "recordings" ? "Recordings" : view === "processing" ? "Processing" : "Analyzer";
   document.title = `${label} — Tectrace`;
 }
@@ -560,6 +563,7 @@ function activateRoute(route, { focus = false } = {}) {
   } else if (route.view === "processing") {
     if (processingState.overview) renderProcessingOverview();
     else renderProcessingSkeleton();
+    window.requestAnimationFrame(() => syncProcessingTabIndicator({ animate: false }));
     loadProcessing({ manual: true });
   } else {
     analyzerNav.href = `/recordings/${route.recordingId}`;
@@ -575,7 +579,7 @@ function formatRecorded(value) {
     const date = new Date(milliseconds);
     if (Number.isNaN(date.getTime())) return "Unavailable";
     return date.toLocaleString(undefined, {
-      year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit",
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
     });
   } catch { return "Unavailable"; }
 }
@@ -870,7 +874,10 @@ function filteredRecordings() {
   const rows = catalogState.data.recordings.filter((recording) => {
     const matchesQuery = !query || `${recording.name} ${recording.folder_path}`.toLocaleLowerCase().includes(query);
     const matchesFolder = !path || recording.folder_path === path || recording.folder_path.startsWith(`${path}/`);
-    const matchesAnalysis = catalogState.analysis === "all" || recording.analysis_state === catalogState.analysis;
+    const matchesAnalysis = catalogState.analysis === "all"
+      || (catalogState.analysis === "partial"
+        ? recording.analysis_state === "not_planned" && recording.outputs.some((output) => output.state === "ready")
+        : recording.analysis_state === catalogState.analysis);
     const matchesHealth = catalogState.health === "all" || recording.presentation_health === catalogState.health;
     return matchesQuery && matchesFolder && matchesAnalysis && matchesHealth;
   });
@@ -913,9 +920,9 @@ function statusIndicator(label, className, details, iconName) {
     const viewportWidth = window.innerWidth || document.documentElement?.clientWidth || 0;
     const viewportHeight = window.innerHeight || document.documentElement?.clientHeight || 0;
     if (!viewportWidth || !viewportHeight) return;
-    const gap = interfacePixels(8);
-    const edge = interfacePixels(8);
-    const width = bounds.width || interfacePixels(238);
+    const gap = 8;
+    const edge = 8;
+    const width = bounds.width || 238;
     const height = bounds.height || 0;
     const left = Math.max(edge, anchor.left - width - gap);
     const top = Math.max(edge, Math.min(viewportHeight - height - edge, anchor.top + (anchor.height - height) / 2));
@@ -945,6 +952,16 @@ function isOptionalTopdownAbsence(output) {
     && ["topdown_video_unavailable", "topdown_timestamps_unavailable"].includes(output.diagnostic?.code);
 }
 
+function bindSelectionCell(cell, checkbox) {
+  cell.addEventListener("click", (event) => {
+    if (event.target === checkbox || checkbox.disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    checkbox.checked = !checkbox.checked;
+    checkbox.dispatchEvent(new Event("change"));
+  });
+}
+
 function createRecordingRow(recording) {
   const row = document.createElement("tr");
   row.dataset.recordingId = String(recording.id);
@@ -965,6 +982,7 @@ function createRecordingRow(recording) {
     updateSelectionState();
   });
   selection.append(checkbox);
+  bindSelectionCell(selection, checkbox);
 
   const nameCell = document.createElement("td");
   const copy = node("span", null, "recording-copy");
@@ -979,9 +997,8 @@ function createRecordingRow(recording) {
   const recordedCell = node("td", null, "date-cell");
   const recorded = recordedDateParts(recording.start_time_ns);
   if (recorded) {
-    const time = node("time");
+    const time = node("time", formatRecorded(recording.start_time_ns));
     time.setAttribute("datetime", recorded.iso);
-    time.append(node("span", recorded.date), node("span", recorded.time));
     recordedCell.append(time);
   } else {
     recordedCell.textContent = "Unavailable";
@@ -1043,7 +1060,7 @@ function renderPagination(totalPages) {
     button.classList.toggle("is-active", page === catalogState.page);
     button.setAttribute("aria-label", `Page ${page}`);
     if (page === catalogState.page) button.setAttribute("aria-current", "page");
-    button.addEventListener("click", () => { catalogState.page = page; renderRecordingTableWithHeightTransition(); });
+    button.addEventListener("click", () => { catalogState.page = page; renderRecordingTable(); });
     catalogElements.pageButtons.append(button);
   }
   catalogElements.previous.disabled = catalogState.page === 1;
@@ -1055,23 +1072,6 @@ function setClearFilterVisible(visible) {
   if (visible === clearFilterShouldShow) return;
   clearFilterShouldShow = visible;
   catalogElements.clearFilters.hidden = !visible;
-}
-
-function renderRecordingTableWithHeightTransition() {
-  const panel = document.querySelector(".home-table-panel");
-  const startHeight = panel?.getBoundingClientRect().height || 0;
-  tableHeightAnimation?.cancel();
-  renderRecordingTable();
-  if (!panel || reduceMotionQuery.matches || typeof panel.animate !== "function") return;
-  const endHeight = panel.getBoundingClientRect().height;
-  if (Math.abs(startHeight - endHeight) < 1) return;
-  const animation = panel.animate([
-    { height: `${startHeight}px` },
-    { height: `${endHeight}px` },
-  ], { duration: 340, easing: "cubic-bezier(.22, 1, .36, 1)" });
-  tableHeightAnimation = animation;
-  const clearAnimation = () => { if (tableHeightAnimation === animation) tableHeightAnimation = null; };
-  animation.finished.then(clearAnimation).catch(clearAnimation);
 }
 
 function updateSelectionState() {
@@ -1185,15 +1185,9 @@ function openPreparationDialog() {
   if (catalogElements.prepare.disabled || !catalogState.data) return;
   dialogReturnFocus = catalogElements.prepare;
   updatePreparationDialog();
+  preparationElements.impact.hidden = true;
+  preparationElements.impact.textContent = "";
   preparationElements.dialog.showModal();
-}
-
-function showToast(title, copy, { processing = false } = {}) {
-  toastElements.title.textContent = title;
-  toastElements.copy.textContent = copy;
-  toastElements.processing.hidden = !processing;
-  toastElements.root.hidden = false;
-  acknowledgeStateChange(toastElements.root);
 }
 
 function closePreparationDialog() {
@@ -1240,11 +1234,11 @@ async function prepareSelected(event) {
     closePreparationDialog();
     await loadCatalog({ retained: true });
     announce(summary);
-    showToast(activeWork ? "Preparation resolved" : "Preparation checked", summary, { processing: activeWork });
     if (activeWork) navigate("/processing");
   } catch (error) {
     if (error?.name !== "AbortError") {
       preparationElements.impact.textContent = error.message;
+      preparationElements.impact.hidden = false;
       announce("Preparation request failed. The selection has been retained.");
     }
   } finally {
@@ -1282,10 +1276,21 @@ function syncProcessingTabIndicator({ animate = true } = {}) {
   if (!active || !tabs || !indicator || typeof active.getBoundingClientRect !== "function") return;
   const tabsRect = tabs.getBoundingClientRect();
   const activeRect = active.getBoundingClientRect();
-  indicator.classList.toggle("is-positioning", !animate);
-  indicator.style.width = `${activeRect.width}px`;
-  indicator.style.transform = `translate3d(${activeRect.left - tabsRect.left + (tabs.scrollLeft || 0)}px, 0, 0)`;
-  if (!animate) window.requestAnimationFrame(() => indicator.classList.remove("is-positioning"));
+  if (tabsRect.width <= 0 || activeRect.width <= 0) return;
+  const targetWidth = `${activeRect.width}px`;
+  const targetTransform = `translate3d(${activeRect.left - tabsRect.left + (tabs.scrollLeft || 0)}px, 0, 0)`;
+  // Polls and resize notifications must not cancel a slide to the same target.
+  if (indicator.style.width === targetWidth && indicator.style.transform === targetTransform) return;
+  const shouldAnimate = animate && Boolean(indicator.style.width);
+  indicator.classList.toggle("is-positioning", !shouldAnimate);
+  // Commit the transition mode before updating both animated properties together.
+  void indicator.offsetWidth;
+  indicator.style.width = targetWidth;
+  indicator.style.transform = targetTransform;
+  if (!shouldAnimate) {
+    void indicator.offsetWidth;
+    indicator.classList.remove("is-positioning");
+  }
 }
 
 function stopProcessingActivity() {
@@ -1298,13 +1303,46 @@ function stopProcessingActivity() {
   if (processingState.elapsedFrame !== null) window.cancelAnimationFrame(processingState.elapsedFrame);
   processingState.elapsedFrame = null;
   processingState.elapsedAnchor = null;
+  processingState.elapsedFreezes.clear();
+  processingState.hoveredGroupKey = null;
+  processingState.hoveredGroupRows = null;
+}
+
+function groupProcessingJobs(jobs) {
+  const groups = [];
+  jobs.forEach((job) => {
+    let group = groups[groups.length - 1];
+    if (!group || group.recording_id !== job.recording_id
+        || group.outputs.some((output) => output.kind === job.kind)) {
+      group = { ...job, outputs: [] };
+      groups.push(group);
+    }
+    group.outputs.push(job);
+  });
+  return groups.map((group) => {
+    const outputs = group.outputs;
+    const last = outputs[outputs.length - 1];
+    return {
+      ...group,
+      // These rows summarize only returned jobs, never an invented lifecycle.
+      queue_estimate: last.queue_estimate,
+      allowed_controls: [...new Set(outputs.flatMap((job) => job.allowed_controls || []))].filter((control) =>
+        control.startsWith("move_")
+          ? outputs.some((job) => (job.allowed_controls || []).includes(control))
+          : outputs.every((job) => (job.allowed_controls || []).includes(control))),
+      runtime_ms: outputs.every((job) => job.runtime_ms != null)
+        ? outputs.reduce((total, job) => total + job.runtime_ms, 0) : null,
+      output_size_bytes: outputs.every((job) => job.output_size_bytes != null)
+        ? outputs.reduce((total, job) => total + BigInt(job.output_size_bytes), 0n).toString() : null,
+    };
+  });
 }
 
 function validateOverview(document) {
   if (typeof document.worker_online !== "boolean" || !Array.isArray(document.queue) || typeof document.recommended_poll_interval_ms !== "number") {
     throw new ApiError("The processing response was invalid.", "validation");
   }
-  return document;
+  return { ...document, queue: groupProcessingJobs(document.queue) };
 }
 
 async function loadProcessing({ manual = false } = {}) {
@@ -1318,8 +1356,6 @@ async function loadProcessing({ manual = false } = {}) {
   try {
     const overview = validateOverview(await requestJson("/api/v1/processing/overview", { signal: controller.signal }));
     if (serial !== processingState.requestSerial || currentRoute?.view !== "processing") return;
-    overview.queue = overview.queue.filter((job) => !processingState.canceledJobIds.has(job.id));
-    overview.queued_count = overview.queue.length;
     processingState.overview = overview;
     processingState.pollFailures = 0;
     finishProcessingSkeleton();
@@ -1330,7 +1366,7 @@ async function loadProcessing({ manual = false } = {}) {
     if (error?.name !== "AbortError") {
       processingState.pollFailures += 1;
       const retained = processingState.overview ? " Previously loaded processing facts are retained." : " No processing facts are available yet.";
-      showNotice(processingElements.notice, `${error.message}${retained}`, "error");
+      showNotice(processingElements.notice, error.kind === "network" ? "Can't access server." : `${error.message}${retained}`, "error");
       if (initialLoad && !processingState.overview) renderProcessingUnavailable();
     }
   } finally {
@@ -1399,19 +1435,21 @@ function renderProcessingOverview() {
   processingElements.lastUpdate.textContent = `Updated ${formatDateTime(overview.server_time)}`;
   renderCurrentJob();
   renderQueue();
-  syncProcessingTabIndicator({ animate: false });
+  syncProcessingTabIndicator();
 }
 
 function processingLink(job, label = job.recording_name) {
   const link = node("a", label);
   link.href = `/recordings/${job.recording_id}`;
   link.dataset.route = "";
+  link.title = label;
   return link;
 }
 
 function renderCurrentJob() {
   processingElements.currentHost.replaceChildren();
-  const job = processingState.overview?.current;
+  const group = processingState.overview?.current_group;
+  const job = processingState.overview?.current || group?.outputs.find((output) => output.state === "queued");
   if (!job) {
     processingElements.currentHost.hidden = false;
     const queuedCount = processingState.overview?.queued_count || 0;
@@ -1434,22 +1472,25 @@ function renderCurrentJob() {
   }
   processingElements.currentHost.hidden = false;
   const article = node("article", null, "panel current-job");
-  article.setAttribute("aria-label", "Current processing job");
+  article.setAttribute("aria-label", "Current processing recording");
+  article.dataset.groupId = String(group?.id || job.processing_group_id || job.id);
   article.dataset.jobState = job.control_state === "none" ? job.state : job.control_state;
   const activity = job.control_state === "pause_requested" ? "Pause requested"
     : job.control_state === "paused" ? "Paused"
       : job.control_state === "cancel_requested" ? "Cancellation requested"
-        : processingState.overview.worker_online ? humanize(job.execution_phase || "processing") : "Worker offline";
+        : !processingState.overview.worker_online ? "Worker offline"
+          : job.state === "queued" ? "Waiting for next stage" : humanize(job.execution_phase || "processing");
   const body = node("div", null, "current-job-body");
   const main = node("div", null, "current-job-main");
   const copy = node("div");
   const titleLine = node("div", null, "current-job-title-line");
-  titleLine.append(node("h2", CURRENT_JOB_LABELS[job.kind] || humanize(job.kind)), node("span", activity, "sr-only"));
-  const exact = processingLink(job, job.recording_name);
-  exact.className = "recording-reference";
-  exact.title = job.recording_name;
-  exact.setAttribute("aria-label", `Open ${job.recording_name} in Analyzer`);
-  copy.append(titleLine, exact);
+  const heading = node("h2");
+  heading.append(processingLink(job));
+  titleLine.append(heading);
+  const outputs = group?.outputs || [job];
+  const displayedElapsed = job.elapsed_ms ?? 0;
+  const stage = node("p", OUTPUT_LABELS[job.kind], "current-stage");
+  copy.append(titleLine, stage);
   main.append(copy);
   const meta = node("dl", null, "current-job-meta");
   const metaItem = (label, value, className = "") => {
@@ -1460,8 +1501,8 @@ function renderCurrentJob() {
   const activeMeta = metaItem("Active:", formatMilliseconds(job.active_elapsed_ms), "current-active-elapsed");
   activeMeta.className = "sr-only";
   meta.append(
-    metaItem("Elapsed:", formatMilliseconds(job.elapsed_ms), "current-elapsed"),
-    metaItem("Likely duration", estimateText(job.estimate), "current-estimate"),
+    metaItem("Elapsed:", formatMilliseconds(displayedElapsed), "current-elapsed"),
+    metaItem("Likely duration:", groupEstimateText(group?.estimate || job.estimate), "current-estimate"),
     activeMeta,
   );
   const progress = node("div", null, "current-job-progress");
@@ -1469,17 +1510,18 @@ function renderCurrentJob() {
   track.setAttribute("role", "progressbar");
   track.setAttribute("aria-label", `${CURRENT_JOB_LABELS[job.kind] || humanize(job.kind)} ${activity.toLocaleLowerCase()}`);
   track.append(node("i"));
-  progress.title = estimateTotalText(job.estimate);
+  progress.title = estimateTotalText(group?.estimate || job.estimate);
   progress.append(track, meta);
   const actions = node("div", null, "current-job-actions");
   (job.allowed_controls || []).filter((control) => ["pause", "resume", "cancel"].includes(control)).forEach((control) => {
     const button = node("button", null, `current-job-icon-action${control === "cancel" ? " danger-action" : ""}`);
     button.type = "button";
     button.disabled = controlIsBusy(job.id, control);
-    button.append(icon(control === "pause" ? "pause" : control === "resume" ? "play" : "x"), node("span", humanize(control)));
-    button.setAttribute("aria-label", `${humanize(control)} ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
+    button.append(icon(control === "pause" ? "pause" : control === "resume" ? "play" : "x"));
+    button.title = humanize(control);
+    button.setAttribute("aria-label", `${humanize(control)} processing for ${job.recording_name}`);
     button.addEventListener("click", () => {
-      if (control === "cancel") requestCancellation([job], button);
+      if (control === "cancel") requestCancellation(outputs.filter((output) => ["queued", "running"].includes(output.state) && output.allowed_controls.includes("cancel")), button);
       else controlJob(job.id, control, button);
     });
     actions.append(button);
@@ -1490,6 +1532,11 @@ function renderCurrentJob() {
   article.append(body);
   processingElements.currentHost.append(article);
   startElapsedTicker(job);
+}
+
+function groupEstimateText(estimate) {
+  if (!estimate || estimate.status !== "available") return estimateText(estimate);
+  return `≈ ${formatMilliseconds(estimate.estimated_total_ms)}`;
 }
 
 function estimateText(estimate) {
@@ -1537,93 +1584,165 @@ function startElapsedTicker(job) {
   processingState.elapsedFrame = window.requestAnimationFrame(tick);
 }
 
+function outputCount(group) {
+  const count = (group.outputs || []).length;
+  return `${count} output${count === 1 ? "" : "s"}`;
+}
+
+function formatEstimatedMinutes(milliseconds) {
+  if (milliseconds === null || milliseconds === undefined || !Number.isFinite(Number(milliseconds))) return "Unavailable";
+  return `${Math.max(1, Math.ceil(Number(milliseconds) / 60_000))} min`;
+}
+
+function groupJobIds(group, state = null) {
+  return (group.outputs || []).filter((job) => !state || job.state === state).map((job) => job.id);
+}
+
+function groupIsCollapsed(group) {
+  return !processingState.expandedHistoryGroupIds.has(group.id);
+}
+
+function toggleProcessingGroup(group) {
+  if (groupIsCollapsed(group)) processingState.expandedHistoryGroupIds.add(group.id);
+  else processingState.expandedHistoryGroupIds.delete(group.id);
+  if (processingState.tab === "queue") renderQueue();
+  else renderProcessingPage(processingState.tab);
+}
+
+function groupToggle(group) {
+  const button = node("button", null, "processing-group-toggle");
+  button.type = "button";
+  button.setAttribute("aria-expanded", String(!groupIsCollapsed(group)));
+  button.setAttribute("aria-label", `${groupIsCollapsed(group) ? "Expand" : "Collapse"} ${group.recording_name}`);
+  button.append(icon("chevron"));
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleProcessingGroup(group);
+  });
+  return button;
+}
+
+function bindProcessingGroupHover(rows, groupKey, { restoreOnlyIfHovered = false } = {}) {
+  let clearTimer = null;
+  const groupContains = (target) => target instanceof Node && rows.some((row) => row.contains(target));
+  const highlight = () => {
+    if (clearTimer !== null) window.clearTimeout(clearTimer);
+    clearTimer = null;
+    if (processingState.hoveredGroupRows && processingState.hoveredGroupRows !== rows) {
+      processingState.hoveredGroupRows.forEach((row) => row.classList.remove("is-group-hovered"));
+    }
+    processingState.hoveredGroupKey = groupKey;
+    processingState.hoveredGroupRows = rows;
+    rows.forEach((row) => row.classList.add("is-group-hovered"));
+  };
+  const clear = (event) => {
+    if (groupContains(event.relatedTarget)) return;
+    if (clearTimer !== null) window.clearTimeout(clearTimer);
+    clearTimer = window.setTimeout(() => {
+      clearTimer = null;
+      if (processingState.hoveredGroupRows !== rows) return;
+      if (!rows.some((row) => row.matches(":hover"))) {
+        rows.forEach((row) => row.classList.remove("is-group-hovered"));
+        processingState.hoveredGroupKey = null;
+        processingState.hoveredGroupRows = null;
+      }
+    }, 80);
+  };
+  if (processingState.hoveredGroupKey === groupKey
+    && (!restoreOnlyIfHovered || rows.some((row) => row.matches(":hover")))) {
+    processingState.hoveredGroupRows = rows;
+    rows.forEach((row) => row.classList.add("is-group-hovered"));
+  }
+  rows.forEach((row) => {
+    row.addEventListener("pointerenter", highlight);
+    row.addEventListener("pointerleave", clear);
+  });
+}
+
 function renderQueue() {
   const queue = processingState.overview?.queue || [];
   const query = processingElements.search.value.trim().toLocaleLowerCase();
-  const visible = queue.filter((job) => `${job.recording_name} ${OUTPUT_LABELS[job.kind] || job.kind}`.toLocaleLowerCase().includes(query));
-  processingElements.queueRows.replaceChildren(...visible.map((job) => {
+  const visible = queue.filter((group) => `${group.recording_name} ${(group.outputs || []).map((job) => OUTPUT_LABELS[job.kind] || job.kind).join(" ")}`.toLocaleLowerCase().includes(query));
+  const rows = [];
+  visible.forEach((group) => {
     const row = document.createElement("tr");
-    row.dataset.jobId = String(job.id);
-    row.classList.toggle("is-selected", processingState.selectedQueueIds.has(job.id));
+    row.dataset.groupId = String(group.id);
+    row.className = "processing-group-row";
+    row.classList.toggle("is-selected", processingState.selectedQueueIds.has(group.id));
     const selectionCell = node("td", null, "selection-column");
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.className = "queue-row-select";
-    checkbox.checked = processingState.selectedQueueIds.has(job.id);
-    checkbox.setAttribute("aria-label", `Select ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
+    checkbox.checked = processingState.selectedQueueIds.has(group.id);
+    checkbox.setAttribute("aria-label", `Select processing group for ${group.recording_name}`);
     checkbox.addEventListener("change", () => {
-      if (checkbox.checked) processingState.selectedQueueIds.add(job.id);
-      else processingState.selectedQueueIds.delete(job.id);
-      row.classList.toggle("is-selected", checkbox.checked);
-      updateQueueSelectionState();
+      if (checkbox.checked) processingState.selectedQueueIds.add(group.id);
+      else processingState.selectedQueueIds.delete(group.id);
+      renderQueue();
     });
     selectionCell.append(checkbox);
-    const recording = node("td", null, "queue-recording");
-    const link = processingLink(job, job.recording_name);
-    link.title = job.recording_name;
-    recording.append(link, node("span", job.recording_name, "cell-sublabel"));
-    const ready = node("td", null, "queue-estimate");
-    if (job.queue_estimate?.status === "available") {
-      ready.append(node("strong", `≈ ${formatMilliseconds(job.queue_estimate.ready_in_ms)}`), node("span", `${job.queue_estimate.sample_count} historical samples`));
-    } else {
-      ready.append(node("strong", "Unavailable"), node("span", "Approximation prerequisites missing"));
-    }
-    const controlsCell = document.createElement("td");
+    bindSelectionCell(selectionCell, checkbox);
+    const recording = node("td", null, "processing-group-name");
+    recording.append(processingLink(group, group.recording_name));
     const queued = node("td", null, "queue-age");
-    queued.append(
-      node("strong", job.queue_position === null || job.queue_position === undefined ? "Position unavailable" : `#${job.queue_position}`),
-      node("span", formatAge(job.queued_age_ms)),
-    );
+    queued.append(node("span", formatDateTime(group.queued_at)));
+    const ready = node("td", null, "queue-estimate");
+    ready.append(node("strong", group.queue_estimate?.status === "available" ? `≈ ${formatEstimatedMinutes(group.queue_estimate.ready_in_ms)}` : "Unavailable"));
+    const outputs = node("td", outputCount(group), "processing-output-count");
+    const controlsCell = document.createElement("td");
     const controls = node("div", null, "queue-controls");
     [["move_earlier", "chevron", "Move earlier", "queue-move queue-move--up"], ["move_later", "chevron", "Move later", "queue-move queue-move--down"], ["cancel", "x", "Cancel", "queue-cancel"]].forEach(([control, iconName, label, className]) => {
-      if (!(job.allowed_controls || []).includes(control)) return;
+      if (!(group.allowed_controls || []).includes(control)) return;
+      const ids = groupJobIds(group, "queued");
       const button = node("button", null, className);
       button.type = "button";
-      button.disabled = controlIsBusy(job.id, control);
+      button.disabled = ids.some((id) => controlIsBusy(id, control));
       button.title = label;
-      button.setAttribute("aria-label", `${label} ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
+      button.setAttribute("aria-label", `${label} processing group for ${group.recording_name}`);
       button.append(icon(iconName));
-      if (control === "cancel") button.append(node("span", "Cancel"));
+
       button.addEventListener("click", () => {
-        if (control === "cancel") requestCancellation([job], button);
-        else reorderJobs([job.id], control === "move_earlier" ? "earlier" : "later", button);
+        if (control === "cancel") requestCancellation(group.outputs.filter((job) => job.state === "queued"), button);
+        else reorderJobs(ids, control === "move_earlier" ? "earlier" : "later", button);
       });
       controls.append(button);
     });
     controlsCell.append(controls);
-    row.append(selectionCell, recording, node("td", OUTPUT_LABELS[job.kind] || humanize(job.kind), "queue-artifact"), queued, ready, controlsCell);
-    return row;
-  }));
-  const currentIds = new Set(queue.map((job) => job.id));
+    row.append(selectionCell, recording, queued, ready, outputs, controlsCell);
+    rows.push(row);
+  });
+  processingElements.queueRows.replaceChildren(...rows);
+  rows.forEach((row) => bindProcessingGroupHover([row], `queue:${row.dataset.groupId}`, { restoreOnlyIfHovered: true }));
+  const currentIds = new Set(queue.map((group) => group.id));
   processingState.selectedQueueIds.forEach((id) => { if (!currentIds.has(id)) processingState.selectedQueueIds.delete(id); });
   processingElements.queueEmpty.hidden = visible.length !== 0;
-  processingElements.queueDescription.textContent = queue.length === 1 ? "1 job waiting" : `${queue.length} jobs waiting`;
+  processingElements.queueDescription.textContent = queue.length === 1 ? "1 recording waiting" : `${queue.length} recordings waiting`;
   updateQueueSelectionState();
 }
 
 function updateQueueSelectionState() {
   const queue = processingState.overview?.queue || [];
-  const selected = queue.filter((job) => processingState.selectedQueueIds.has(job.id));
+  const selected = queue.filter((group) => processingState.selectedQueueIds.has(group.id));
   processingElements.queueSelectedCount.textContent = String(selected.length);
   processingElements.queueSelectionActions.hidden = processingState.tab !== "queue" || selected.length === 0;
   processingElements.queueSelectionFooter.hidden = selected.length === 0;
   processingElements.queueSelectAll.checked = queue.length > 0 && selected.length === queue.length;
   processingElements.queueSelectAll.indeterminate = selected.length > 0 && selected.length < queue.length;
-  const selectedIds = new Set(selected.map((job) => job.id));
-  const canMoveEarlier = selected.some((job) => {
-    if (!(job.allowed_controls || []).includes("move_earlier")) return false;
-    const index = queue.findIndex((candidate) => candidate.id === job.id);
+  const selectedIds = new Set(selected.map((group) => group.id));
+  const canMoveEarlier = selected.some((group) => {
+    if (!(group.allowed_controls || []).includes("move_earlier")) return false;
+    const index = queue.findIndex((candidate) => candidate.id === group.id);
     return index > 0 && !selectedIds.has(queue[index - 1].id);
   });
-  const canMoveLater = selected.some((job) => {
-    if (!(job.allowed_controls || []).includes("move_later")) return false;
-    const index = queue.findIndex((candidate) => candidate.id === job.id);
+  const canMoveLater = selected.some((group) => {
+    if (!(group.allowed_controls || []).includes("move_later")) return false;
+    const index = queue.findIndex((candidate) => candidate.id === group.id);
     return index >= 0 && index < queue.length - 1 && !selectedIds.has(queue[index + 1].id);
   });
-  processingElements.moveEarlier.disabled = !canMoveEarlier || selected.some((job) => controlIsBusy(job.id, "move_earlier"));
-  processingElements.moveLater.disabled = !canMoveLater || selected.some((job) => controlIsBusy(job.id, "move_later"));
+  processingElements.moveEarlier.disabled = !canMoveEarlier || selected.some((group) => groupJobIds(group, "queued").some((id) => controlIsBusy(id, "move_earlier")));
+  processingElements.moveLater.disabled = !canMoveLater || selected.some((group) => groupJobIds(group, "queued").some((id) => controlIsBusy(id, "move_later")));
   processingElements.cancelSelected.disabled = selected.length === 0
-    || selected.some((job) => !(job.allowed_controls || []).includes("cancel") || controlIsBusy(job.id, "cancel"));
+    || selected.some((group) => !(group.allowed_controls || []).includes("cancel") || groupJobIds(group, "queued").some((id) => controlIsBusy(id, "cancel")));
   processingElements.cancelSelected.querySelector("span").textContent = selected.length > 0 ? `Cancel ${selected.length} selected` : "Cancel selected";
 }
 
@@ -1642,20 +1761,16 @@ async function loadProcessingPage(view, { append = false } = {}) {
   try {
     const page = await requestJson(`/api/v1/processing/jobs?${params}`, { signal: controller.signal });
     if (serial !== processingState.requestSerial || processingState.tab !== view || !Array.isArray(page.items)) return;
-    if (view === "history") {
-      if (!append) processingState.historyIds.clear();
-      const items = append ? [...(previous?.items || [])] : [];
-      page.items.forEach((item) => {
-        if (!processingState.historyIds.has(item.id)) { items.push(item); processingState.historyIds.add(item.id); }
-      });
-      processingState.pages.history = { items, next_cursor: page.next_cursor };
-    } else {
-      processingState.pages.failed = page;
-    }
+    const jobs = append ? (previous?.items || []).flatMap((group) => group.outputs) : [];
+    const ids = new Set(jobs.map((job) => job.id));
+    page.items.forEach((job) => {
+      if (!ids.has(job.id)) { jobs.push(job); ids.add(job.id); }
+    });
+    processingState.pages[view] = { items: groupProcessingJobs(jobs), next_cursor: page.next_cursor };
     renderProcessingPage(view);
   } catch (error) {
     if (error?.name !== "AbortError") {
-      showNotice(processingElements.notice, `${error.message} The prior job page has been retained.`, "error");
+      showNotice(processingElements.notice, error.kind === "network" ? "Can't access server." : `${error.message} The prior job page has been retained.`, "error");
       if (!previous) {
         const rows = view === "failed" ? processingElements.failureRows : processingElements.historyRows;
         const empty = view === "failed" ? processingElements.failuresEmpty : processingElements.historyEmpty;
@@ -1680,87 +1795,120 @@ function renderProcessingPage(view) {
     processingElements.failuresEmpty.textContent = "There are no current actionable failures.";
     const availableIds = new Set(items.map((item) => item.id));
     processingState.selectedFailureIds.forEach((id) => { if (!availableIds.has(id)) processingState.selectedFailureIds.delete(id); });
-    processingElements.failureRows.replaceChildren(...items.map(createFailureRow));
+    processingElements.failureRows.replaceChildren(...items.flatMap(createFailureRows));
     processingElements.failuresEmpty.hidden = items.length !== 0;
     updateFailureSelectionState();
   } else {
     processingElements.historyEmpty.textContent = "No completed processing history is available.";
-    processingElements.historyRows.replaceChildren(...items.map(createHistoryRow));
+    processingElements.historyRows.replaceChildren(...items.flatMap(createHistoryRows));
     processingElements.historyEmpty.hidden = items.length !== 0;
-    processingElements.historyDescription.textContent = `Showing ${items.length} completed jobs`;
+    processingElements.historyDescription.textContent = `Showing ${items.reduce((count, group) => count + group.outputs.length, 0)} completed jobs`;
     processingElements.historyMore.hidden = !page.next_cursor;
   }
 }
 
 function createFailureRow(job) {
+  return createFailureRows(job)[0];
+}
+
+function createFailureRows(group) {
   const row = document.createElement("tr");
-  row.dataset.jobId = String(job.id);
-  row.classList.toggle("is-selected", processingState.selectedFailureIds.has(job.id));
+  row.dataset.groupId = String(group.id);
+  row.className = "processing-group-row";
+  const isSelected = processingState.selectedFailureIds.has(group.id);
+  row.classList.toggle("is-selected", isSelected);
   const selectionCell = node("td", null, "selection-column");
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.className = "failure-row-select";
-  checkbox.checked = processingState.selectedFailureIds.has(job.id);
-  checkbox.setAttribute("aria-label", `Select failed ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
+  checkbox.checked = processingState.selectedFailureIds.has(group.id);
+  checkbox.setAttribute("aria-label", `Select failed processing group for ${group.recording_name}`);
   checkbox.addEventListener("change", () => {
-    if (checkbox.checked) processingState.selectedFailureIds.add(job.id);
-    else processingState.selectedFailureIds.delete(job.id);
-    row.classList.toggle("is-selected", checkbox.checked);
-    updateFailureSelectionState();
+    if (checkbox.checked) processingState.selectedFailureIds.add(group.id);
+    else processingState.selectedFailureIds.delete(group.id);
+    renderProcessingPage("failed");
   });
   selectionCell.append(checkbox);
-  const recording = node("td", null, "processing-recording");
-  const link = processingLink(job, job.recording_name);
-  link.title = job.recording_name;
-  recording.append(link, node("span", OUTPUT_LABELS[job.kind] || humanize(job.kind), "cell-sublabel"));
-  const problem = node("td", null, "failure-reason");
-  const details = node("button", job.diagnostic?.message || "Processing failed.");
-  details.type = "button";
-  details.addEventListener("click", () => showFailureDialog(job, details));
-  problem.append(details);
+  bindSelectionCell(selectionCell, checkbox);
+  const recording = node("td", null, "processing-group-name");
+  recording.append(processingLink(group, group.recording_name));
+  const failedOutputs = (group.outputs || []).filter((job) => job.state === "failed");
+  const problem = node("td", failedOutputs.length === 1 ? "1 failed output" : `${failedOutputs.length} failed outputs`, "failure-reason");
   const actions = node("td");
   const host = node("div", null, "processing-row-actions");
   const retry = node("button", null, "failure-retry-button");
   retry.type = "button";
-  retry.disabled = controlIsBusy(job.id, "retry");
+  const failedIds = failedOutputs.map((job) => job.id);
+  retry.disabled = failedIds.some((id) => controlIsBusy(id, "retry"));
   retry.title = "Retry";
-  retry.setAttribute("aria-label", `Retry ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
+  retry.setAttribute("aria-label", `Retry failed outputs for ${group.recording_name}`);
   retry.append(icon("refresh"));
-  retry.addEventListener("click", () => retryJob(job, retry));
+  retry.addEventListener("click", () => retryJobs(failedOutputs, retry));
   host.append(retry);
   actions.append(host);
   row.append(selectionCell, recording, problem, actions);
-  return row;
+  const rows = [row];
+  failedOutputs.forEach((job) => {
+    const child = document.createElement("tr");
+    child.className = "processing-child-row failure-child-row";
+    child.classList.toggle("is-selected", isSelected);
+    const details = node("button", job.diagnostic?.message || "Processing failed.");
+    details.type = "button";
+    details.addEventListener("click", () => showFailureDialog(job, details));
+    const problemCell = node("td", null, "failure-reason");
+    problemCell.append(details);
+    child.append(
+      node("td", "", "selection-column failure-child-marker"),
+      node("td", OUTPUT_LABELS[job.kind] || humanize(job.kind), "processing-child-name"),
+      problemCell,
+      node("td", ""),
+    );
+    rows.push(child);
+  });
+  if (rows.length > 1) rows.at(-1).classList.add("processing-child-last");
+  bindProcessingGroupHover(rows, `failure:${group.id}`);
+  return rows;
 }
 
-function createHistoryRow(job) {
+function createHistoryRows(group) {
   const row = document.createElement("tr");
-  const recording = node("td", null, "processing-recording");
-  recording.append(processingLink(job, job.recording_name), node("span", OUTPUT_LABELS[job.kind] || humanize(job.kind), "cell-sublabel"));
-  const completed = formatHistoryCompletion(job.finished_at);
+  row.className = "processing-group-row history-group-row";
+  row.dataset.groupId = String(group.id);
+  const recording = node("td", null, "processing-group-name");
+  recording.append(groupToggle(group), processingLink(group, group.recording_name));
   const completedCell = node("td", null, "history-completed");
   const completedTime = document.createElement("time");
-  if (completed.full !== "Unavailable") completedTime.dateTime = job.finished_at;
-  completedTime.title = completed.full;
-  completedTime.append(node("strong", completed.date));
-  if (completed.time) completedTime.append(node("span", completed.time));
+  completedTime.dateTime = group.finished_at || "";
+  completedTime.textContent = formatDateTime(group.finished_at);
   completedCell.append(completedTime);
+  const sizeCell = node("td", formatBytes(group.output_size_bytes), "history-size");
   row.append(
     recording,
     completedCell,
-    node("td", formatMilliseconds(job.runtime_ms), "history-runtime"),
-    node("td", formatBytes(job.output_size_bytes), "history-size"),
+    node("td", formatMilliseconds(group.runtime_ms), "history-runtime"),
+    sizeCell,
+    node("td", outputCount(group), "processing-output-count"),
   );
-  row.tabIndex = 0;
-  row.setAttribute("role", "link");
-  row.setAttribute("aria-label", `Open ${OUTPUT_LABELS[job.kind] || humanize(job.kind)} for ${job.recording_name}`);
-  row.addEventListener("click", () => navigate(`/recordings/${job.recording_id}`));
-  row.addEventListener("keydown", (event) => {
-    if (!["Enter", " "].includes(event.key)) return;
-    event.preventDefault();
-    navigate(`/recordings/${job.recording_id}`);
+  row.addEventListener("click", (event) => {
+    if (event.target.closest("a, button")) return;
+    toggleProcessingGroup(group);
   });
-  return row;
+  const rows = [row];
+  if (!groupIsCollapsed(group)) (group.outputs || []).forEach((job) => {
+    const child = document.createElement("tr");
+    child.className = "processing-child-row history-child-row";
+    child.append(
+      node("td", OUTPUT_LABELS[job.kind] || humanize(job.kind), "processing-child-name"),
+      node("td", formatDateTime(job.finished_at), "history-completed"),
+      node("td", formatMilliseconds(job.runtime_ms), "history-runtime"),
+      node("td", formatBytes(job.output_size_bytes), "history-size"),
+      node("td", ""),
+    );
+    rows.push(child);
+  });
+  if (rows.length > 1) rows.at(-1).classList.add("processing-child-last");
+  bindProcessingGroupHover(rows, `history:${group.id}`);
+  return rows;
 }
 
 function showFailureDialog(job, trigger) {
@@ -1774,16 +1922,6 @@ function showFailureDialog(job, trigger) {
     item.append(node("dt", label), node("dd", value));
     processingElements.dialogMeta.append(item);
   });
-  const recoveryByCode = {
-    source_unavailable: "Confirm that the configured read-only source is available, then rescan before retrying.",
-    worker_interrupted: "Retry creates a new attempt from the current recording identity.",
-    processing_failed: "Review the retained diagnostic, then retry if the source is still available.",
-  };
-  processingElements.dialogRecovery.replaceChildren(
-    node("strong", "Suggested recovery"),
-    node("p", recoveryByCode[job.diagnostic?.code]
-      || "Review the retained diagnostic and recording state before retrying."),
-  );
   processingElements.dialogRetryButton.hidden = !(job.allowed_controls || ["retry"]).includes("retry");
   processingElements.dialog.showModal();
 }
@@ -1827,15 +1965,33 @@ async function retryJob(job, button) {
   }
 }
 
+async function retryJobs(jobs, button) {
+  const jobIds = jobs.map((job) => job.id);
+  if (jobIds.length === 1) return retryJob(jobs[0], button);
+  if (!beginControls(jobIds, "retry", button)) return;
+  try {
+    const result = await runJobMutation("/api/v1/processing/jobs/retry", { job_ids: jobIds });
+    const active = result.items.filter((item) => ["queued", "processing"].includes(item.state)).length;
+    announce(`${active} current processing outputs queued or active.`);
+    await refreshProcessingAfterMutation();
+    if (processingState.tab === "failed") await loadProcessingPage("failed", { append: false });
+  } catch (error) {
+    showNotice(processingElements.notice, error.message, "error");
+    await refreshProcessingAfterMutation();
+  } finally {
+    finishControls(jobIds, "retry", button);
+  }
+}
+
 function updateFailureSelectionState() {
   const items = processingState.pages.failed?.items || [];
-  const selected = items.filter((job) => processingState.selectedFailureIds.has(job.id));
+  const selected = items.filter((group) => processingState.selectedFailureIds.has(group.id));
   processingElements.failureSelectedCount.textContent = String(selected.length);
   processingElements.failureSelectionActions.hidden = processingState.tab !== "failed" || selected.length === 0;
   processingElements.failureSelectionFooter.hidden = selected.length === 0;
   processingElements.failureSelectAll.checked = items.length > 0 && selected.length === items.length;
   processingElements.failureSelectAll.indeterminate = selected.length > 0 && selected.length < items.length;
-  processingElements.retrySelected.disabled = selected.length === 0 || selected.some((job) => controlIsBusy(job.id, "retry"));
+  processingElements.retrySelected.disabled = selected.length === 0 || selected.some((group) => groupJobIds(group, "failed").some((id) => controlIsBusy(id, "retry")));
   processingElements.retrySelected.querySelector("span").textContent = selected.length > 0 ? `Retry ${selected.length} selected` : "Retry selected";
 }
 
@@ -1865,8 +2021,8 @@ async function controlJob(jobId, action, button) {
 }
 
 function queueRowPositions() {
-  return new Map([...processingElements.queueRows.querySelectorAll("tr")].filter((row) => row.dataset.jobId).map((row) => [
-    row.dataset.jobId,
+  return new Map([...processingElements.queueRows.querySelectorAll("tr")].filter((row) => row.dataset.groupId).map((row) => [
+    row.dataset.groupId,
     row.getBoundingClientRect().top,
   ]));
 }
@@ -1874,11 +2030,11 @@ function queueRowPositions() {
 function animateAuthoritativeQueueOrder(previousPositions, movedJobIds) {
   if (reduceMotionQuery.matches) return;
   const moved = new Set(movedJobIds.map(String));
-  [...processingElements.queueRows.querySelectorAll("tr")].filter((row) => row.dataset.jobId).forEach((row) => {
-    if (typeof row.animate !== "function" || !previousPositions.has(row.dataset.jobId)) return;
-    const offset = previousPositions.get(row.dataset.jobId) - row.getBoundingClientRect().top;
+  [...processingElements.queueRows.querySelectorAll("tr")].filter((row) => row.dataset.groupId).forEach((row) => {
+    if (typeof row.animate !== "function" || !previousPositions.has(row.dataset.groupId)) return;
+    const offset = previousPositions.get(row.dataset.groupId) - row.getBoundingClientRect().top;
     if (!offset) return;
-    row.animate(moved.has(row.dataset.jobId) ? [
+    row.animate(moved.has(row.dataset.groupId) ? [
       { transform: `translate3d(0, ${offset}px, 0) scale(.985)`, filter: "brightness(1)" },
       { offset: 0.55, transform: "translate3d(0, 0, 0) scale(.985)", filter: "brightness(1.18)" },
       { transform: "translate3d(0, 0, 0) scale(1)", filter: "brightness(1)" },
@@ -1886,8 +2042,8 @@ function animateAuthoritativeQueueOrder(previousPositions, movedJobIds) {
       { transform: `translate3d(0, ${offset}px, 0)` },
       { transform: "translate3d(0, 0, 0)" },
     ], {
-      duration: moved.has(row.dataset.jobId) ? 420 : 320,
-      easing: moved.has(row.dataset.jobId) ? "cubic-bezier(.16, 1, .3, 1)" : "cubic-bezier(.22, 1, .36, 1)",
+      duration: moved.has(row.dataset.groupId) ? 420 : 320,
+      easing: moved.has(row.dataset.groupId) ? "cubic-bezier(.16, 1, .3, 1)" : "cubic-bezier(.22, 1, .36, 1)",
     });
   });
 }
@@ -1897,13 +2053,15 @@ async function reorderJobs(jobIds, direction, button) {
   const action = direction === "earlier" ? "move_earlier" : "move_later";
   if (!beginControls(jobIds, action, button)) return;
   const previousPositions = queueRowPositions();
+  const movedGroupIds = (processingState.overview?.queue || [])
+    .filter((group) => groupJobIds(group, "queued").some((id) => jobIds.includes(id)))
+    .map((group) => group.id);
   try {
     const result = await runJobMutation("/api/v1/processing/jobs/reorder", { job_ids: jobIds, direction });
     const conflicts = result.items.filter((item) => item.outcome !== "reordered").length;
     announce(conflicts ? `${conflicts} queue rows changed before reorder.` : `${jobIds.length} queue row${jobIds.length === 1 ? "" : "s"} moved ${direction}.`);
     await refreshProcessingAfterMutation();
-    animateAuthoritativeQueueOrder(previousPositions, jobIds);
-    if (!conflicts) showToast("Queue updated", `${jobIds.length} job${jobIds.length === 1 ? "" : "s"} moved ${direction}.`);
+    animateAuthoritativeQueueOrder(previousPositions, movedGroupIds);
   } catch (error) {
     showNotice(processingElements.notice, error.message, "error");
     await refreshProcessingAfterMutation();
@@ -1937,15 +2095,6 @@ async function confirmCancellation() {
       ? { items: [await runJobMutation(`/api/v1/processing/jobs/${jobIds[0]}/cancel`)] }
       : await runJobMutation("/api/v1/processing/jobs/cancel", { job_ids: jobIds });
     const accepted = result.items.filter((item) => ["requested", "canceled", "already_requested", "already_canceled"].includes(item.outcome)).length;
-    const canceledIds = new Set(result.items
-      .filter((item) => ["canceled", "already_canceled"].includes(item.outcome))
-      .map((item) => item.requested_job_id ?? item.job_id));
-    canceledIds.forEach((jobId) => processingState.canceledJobIds.add(jobId));
-    if (processingState.overview && canceledIds.size > 0) {
-      processingState.overview.queue = processingState.overview.queue.filter((job) => !canceledIds.has(job.id));
-      processingState.overview.queued_count = processingState.overview.queue.length;
-      renderProcessingOverview();
-    }
     closeCancelDialog();
     processingState.selectedQueueIds.clear();
     announce(`${accepted} cancellation${accepted === 1 ? "" : "s"} accepted.`);
@@ -1962,8 +2111,8 @@ async function confirmCancellation() {
 
 async function retrySelectedFailures() {
   const jobIds = (processingState.pages.failed?.items || [])
-    .filter((job) => processingState.selectedFailureIds.has(job.id))
-    .map((job) => job.id);
+    .filter((group) => processingState.selectedFailureIds.has(group.id))
+    .flatMap((group) => groupJobIds(group, "failed"));
   if (jobIds.length === 0 || !beginControls(jobIds, "retry", processingElements.retrySelected)) return;
   try {
     const result = await runJobMutation("/api/v1/processing/jobs/retry", { job_ids: jobIds });
@@ -2179,6 +2328,7 @@ function renderPreviewOutput(kind, detail, output) {
   const elements = previewElements(kind);
   const label = output.state === "not_requested" ? "Not planned" : humanize(output.state);
   resetPreview(kind, "No current compatible output is ready.", label, output.state);
+  if (["queued", "processing"].includes(output.state)) elements.badge.hidden = true;
   elements.pane.setAttribute("aria-busy", String(["queued", "processing"].includes(output.state)));
   if (output.state !== "ready" || !output.artifact) {
     elements.messageTitle.textContent = label;
@@ -2262,6 +2412,7 @@ function resetImu(message, badge = "Not planned", state = "not_requested") {
 function renderImuOutput(detail, output) {
   const label = output.state === "not_requested" ? "Not planned" : humanize(output.state);
   resetImu("No current compatible IMU bundle is ready.", label, output.state);
+  if (["queued", "processing"].includes(output.state)) imuElements.badge.hidden = true;
   imuElements.pane.setAttribute("aria-busy", String(["queued", "processing"].includes(output.state)));
   if (output.state !== "ready" || !output.artifact) {
     imuElements.status.textContent = {
@@ -2431,12 +2582,12 @@ function visibleImuSegment(segment, start, end) {
 
 function measureImuPlot(telemetry) {
   const rect = telemetry.plot.getBoundingClientRect();
-  const width = Math.max(interfacePixels(1), rect.width);
-  const height = Math.max(interfacePixels(160), rect.height);
-  const left = interfacePixels(28);
-  const right = interfacePixels(28);
-  const top = interfacePixels(30);
-  const bottom = interfacePixels(30);
+  const width = Math.max(1, rect.width);
+  const height = Math.max(160, rect.height);
+  const left = 28;
+  const right = 28;
+  const top = 30;
+  const bottom = 30;
   const plotWidth = Math.max(1, width - left - right);
   const plotHeight = Math.max(1, height - top - bottom);
   telemetry.plotLeft = left;
@@ -2493,21 +2644,21 @@ function drawImuTrace(telemetry, dimensions = measureImuPlot(telemetry), ratio =
   const mutedColor = chartColor("--chart-text-dim", "#787878");
   const accentColor = chartColor("--chart-accent", "#f4f4f5");
 
-  context.font = `${interfacePixels(9)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  context.font = `10px ui-monospace, SFMono-Regular, Menlo, monospace`;
   [...new Set([maximum, 0, minimum])].forEach((value) => {
     const lineY = y(value);
     const interiorZero = value === 0 && value !== minimum && value !== maximum;
     context.beginPath();
-    context.moveTo(left, lineY + interfacePixels(0.5));
-    context.lineTo(left + plotWidth, lineY + interfacePixels(0.5));
+    context.moveTo(left, lineY + 0.5);
+    context.lineTo(left + plotWidth, lineY + 0.5);
     context.strokeStyle = interiorZero ? strongLineColor : lineColor;
-    context.lineWidth = interfacePixels(interiorZero ? 1.75 : 1);
+    context.lineWidth = interiorZero ? 1.75 : 1;
     context.stroke();
     if (value !== 0) {
       context.fillStyle = mutedColor;
       context.textAlign = "left";
       context.textBaseline = "bottom";
-      context.fillText(value.toFixed(2), left, lineY - interfacePixels(4));
+      context.fillText(value.toFixed(2), left, lineY - 4);
     }
   });
 
@@ -2522,7 +2673,7 @@ function drawImuTrace(telemetry, dimensions = measureImuPlot(telemetry), ratio =
       context.fillStyle = accentColor;
       context.globalAlpha = 0.88;
       context.beginPath();
-      context.arc(x(visible[0].timeSeconds), y(visible[0].value), interfacePixels(1.75), 0, Math.PI * 2);
+      context.arc(x(visible[0].timeSeconds), y(visible[0].value), 1.75, 0, Math.PI * 2);
       context.fill();
       context.globalAlpha = 1;
       return;
@@ -2544,7 +2695,7 @@ function drawImuTrace(telemetry, dimensions = measureImuPlot(telemetry), ratio =
     tracePath();
     context.strokeStyle = accentColor;
     context.globalAlpha = 0.88;
-    context.lineWidth = interfacePixels(1.05);
+    context.lineWidth = 1.05;
     context.lineJoin = "round";
     context.lineCap = "round";
     context.stroke();
@@ -2553,10 +2704,10 @@ function drawImuTrace(telemetry, dimensions = measureImuPlot(telemetry), ratio =
   context.restore();
 
   context.fillStyle = mutedColor;
-  context.font = `${interfacePixels(9)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  context.font = `10px ui-monospace, SFMono-Regular, Menlo, monospace`;
   context.textAlign = "right";
   context.textBaseline = "top";
-  context.fillText(graphTimestamp(telemetry.viewEnd), left + plotWidth, top + plotHeight + interfacePixels(10));
+  context.fillText(graphTimestamp(telemetry.viewEnd), left + plotWidth, top + plotHeight + 10);
 }
 
 function updateImuAtGlobalTime(globalTime) {
@@ -2586,7 +2737,7 @@ function updateImuAtGlobalTime(globalTime) {
   const valueRange = Math.max(0.001, telemetry.renderedMaximum - telemetry.renderedMinimum);
   const markerY = ((telemetry.renderedMaximum - sample.value) / valueRange) * telemetry.plotHeight;
   telemetry.cursorMarker.hidden = reviewController.clock.playing && activeImuGesture?.type !== "scrub";
-  telemetry.cursorMarker.style.transform = `translate3d(-50%, ${markerY - interfacePixels(3.5)}px, 0)`;
+  telemetry.cursorMarker.style.transform = `translate3d(-50%, ${markerY - 3.5}px, 0)`;
   updateImuReadout(telemetry, `sample-${sample.timeNs}-${telemetry.selectedSeriesId}`, `${sample.value.toFixed(4)} ${telemetry.units}`, "");
 }
 
@@ -2959,7 +3110,7 @@ function endImuSeek(event) {
     const start = Math.min(activeImuGesture.start, value ?? activeImuGesture.current);
     const end = Math.max(activeImuGesture.start, value ?? activeImuGesture.current);
     const telemetry = reviewController.telemetry;
-    const minimumSelection = (telemetry.viewEnd - telemetry.viewStart) * (interfacePixels(8) / Math.max(interfacePixels(1), telemetry.plotWidth));
+    const minimumSelection = (telemetry.viewEnd - telemetry.viewStart) * (8 / Math.max(1, telemetry.plotWidth));
     if (end - start >= minimumSelection) setGraphWindow(start, end, { announceChange: true });
     finishImuGesture(event);
     event.preventDefault();
@@ -2998,14 +3149,14 @@ function updateImuSelection(start, end) {
   const selectionLeft = telemetry.plotLeft + first * telemetry.plotWidth;
   const selectionRight = telemetry.plotLeft + last * telemetry.plotWidth;
   imuElements.selection.style.left = `${selectionLeft}px`;
-  imuElements.selection.style.width = `${Math.max(interfacePixels(1), selectionRight - selectionLeft)}px`;
+  imuElements.selection.style.width = `${Math.max(1, selectionRight - selectionLeft)}px`;
   imuElements.selectionStart.textContent = graphTimestamp(Math.min(start, end));
   imuElements.selectionEnd.textContent = graphTimestamp(Math.max(start, end));
   imuElements.selection.hidden = false;
   const plotRight = telemetry.plotLeft + telemetry.plotWidth;
   const startWidth = imuElements.selectionStart.offsetWidth || 0;
   const endWidth = imuElements.selectionEnd.offsetWidth || 0;
-  const labelGap = interfacePixels(5);
+  const labelGap = 5;
   const startX = Math.max(telemetry.plotLeft + labelGap, Math.min(plotRight - startWidth - labelGap, selectionLeft + labelGap));
   const endX = Math.max(telemetry.plotLeft + endWidth + labelGap, Math.min(plotRight - labelGap, selectionRight - labelGap));
   imuElements.selectionStart.style.left = `${startX - selectionLeft}px`;
@@ -3211,8 +3362,16 @@ catalogElements.selectAll.addEventListener("change", () => {
   });
   updateSelectionState();
 });
-catalogElements.previous.addEventListener("click", () => { catalogState.page -= 1; renderRecordingTableWithHeightTransition(); });
-catalogElements.next.addEventListener("click", () => { catalogState.page += 1; renderRecordingTableWithHeightTransition(); });
+catalogElements.clearSelection.addEventListener("click", () => {
+  catalogState.selectedIds.clear();
+  catalogElements.rows.querySelectorAll(".row-select").forEach((checkbox) => { checkbox.checked = false; });
+  catalogElements.selectAll.checked = false;
+  catalogElements.selectAll.indeterminate = false;
+  updateSelectionState();
+  announce("Recording selection cleared.");
+});
+catalogElements.previous.addEventListener("click", () => { catalogState.page -= 1; renderRecordingTable(); });
+catalogElements.next.addEventListener("click", () => { catalogState.page += 1; renderRecordingTable(); });
 catalogElements.retry.addEventListener("click", () => loadCatalog({ initial: true }));
 catalogElements.rescan.addEventListener("click", rescanCatalog);
 catalogElements.prepare.addEventListener("click", openPreparationDialog);
@@ -3221,8 +3380,6 @@ preparationElements.form.querySelectorAll('[name="output_kind"]').forEach((input
 preparationElements.cancel.addEventListener("click", closePreparationDialog);
 preparationElements.dialog.addEventListener("cancel", (event) => { event.preventDefault(); closePreparationDialog(); });
 preparationElements.dialog.addEventListener("click", (event) => { if (event.target === preparationElements.dialog) closePreparationDialog(); });
-toastElements.dismiss.addEventListener("click", () => { toastElements.root.hidden = true; });
-toastElements.processing.addEventListener("click", () => { toastElements.root.hidden = true; navigate("/processing"); });
 function clearCatalogFilters() {
   catalogState.query = ""; catalogState.analysis = "all"; catalogState.health = "all"; catalogState.folderPath = ""; catalogState.page = 1;
   catalogElements.search.value = ""; catalogElements.analysisFilter.value = "all"; catalogElements.healthFilter.value = "all";
@@ -3233,7 +3390,6 @@ function clearCatalogFilters() {
 byId("clear-filters").addEventListener("click", clearCatalogFilters);
 catalogElements.clearFilters.addEventListener("click", clearCatalogFilters);
 catalogElements.collapseFolders.addEventListener("click", (event) => setFolderPanel(false, { returnFocus: event.detail === 0 }));
-catalogElements.expandFolders.addEventListener("click", (event) => setFolderPanel(true, { returnFocus: event.detail === 0 }));
 
 function updateFolderPanelState(open) {
   const recordingsView = byId("recordings-view");
@@ -3245,62 +3401,17 @@ function updateFolderPanelState(open) {
   const archiveViewButton = byId("archive-view-button");
   archiveViewButton?.setAttribute("aria-expanded", String(open));
   archiveViewButton?.setAttribute("aria-controls", "folder-panel");
-  syncFolderReveal();
+  syncFolderToggleState("recordings");
   try { localStorage.setItem("tectrace-folders", open ? "open" : "collapsed"); } catch { /* Visual preference remains in memory. */ }
-}
-
-function syncFolderReveal() {
-  const collapsed = byId("recordings-view").classList.contains("is-folders-collapsed");
-  const shouldShow = collapsed && currentRoute?.view === "recordings";
-  const sidebar = document.querySelector(".sidebar");
-  const slot = byId("folder-reveal-slot");
-  sidebar?.classList.toggle("has-folder-slot", shouldShow);
-  sidebar?.classList.toggle("has-folder-reveal", shouldShow);
-  slot.classList.toggle("is-reserved", shouldShow);
-  slot.classList.toggle("is-visible", shouldShow);
-  slot.setAttribute("aria-hidden", String(!shouldShow));
-  slot.toggleAttribute("inert", !shouldShow);
-  catalogElements.expandFolders.tabIndex = shouldShow ? 0 : -1;
 }
 
 function setFolderPanel(open, { returnFocus = true } = {}) {
   const recordingsView = byId("recordings-view");
-  if (recordingsView.classList.contains("is-folders-collapsed") === !open && folderPanelAnimations.length === 0) return;
-  const transitionVersion = ++folderPanelTransitionVersion;
-  const canAnimate = !reduceMotionQuery.matches
-    && typeof recordingsView.animate === "function"
-    && typeof catalogElements.folderPanel.animate === "function"
-    && typeof window.getComputedStyle === "function";
-  const oldGridColumns = canAnimate ? window.getComputedStyle(recordingsView).gridTemplateColumns : "";
-  const oldPanelStyle = canAnimate ? window.getComputedStyle(catalogElements.folderPanel) : null;
-  const oldPanelOpacity = oldPanelStyle?.opacity || "1";
-  const oldPanelTransform = oldPanelStyle?.transform === "none" ? "translate3d(0, 0, 0)" : oldPanelStyle?.transform || "translate3d(0, 0, 0)";
+  if (recordingsView.classList.contains("is-folders-collapsed") === !open) return;
   if (!open && catalogElements.folderPanel.contains(document.activeElement)) document.activeElement?.blur?.();
-  folderPanelAnimations.forEach((animation) => animation.cancel());
-  folderPanelAnimations = [];
   updateFolderPanelState(open);
-
-  const finish = () => {
-    if (folderPanelTransitionVersion !== transitionVersion) return;
-    folderPanelAnimations.forEach((animation) => animation.cancel());
-    folderPanelAnimations = [];
-    if (returnFocus) (open ? catalogElements.collapseFolders : catalogElements.expandFolders).focus();
-    announce(open ? "Folders shown" : "Folders hidden");
-  };
-  if (!canAnimate) { finish(); return; }
-
-  const newGridColumns = window.getComputedStyle(recordingsView).gridTemplateColumns;
-  if (oldGridColumns !== newGridColumns) {
-    folderPanelAnimations.push(recordingsView.animate([
-      { gridTemplateColumns: oldGridColumns },
-      { gridTemplateColumns: newGridColumns },
-    ], { duration: 260, easing: "cubic-bezier(.4, 0, .2, 1)", fill: "both" }));
-  }
-  folderPanelAnimations.push(catalogElements.folderPanel.animate([
-    { opacity: oldPanelOpacity, transform: oldPanelTransform },
-    { opacity: open ? 1 : 0, transform: open ? "translate3d(0, 0, 0)" : "translate3d(-100%, 0, 0)" },
-  ], { duration: 260, easing: "cubic-bezier(.4, 0, .2, 1)", fill: "both" }));
-  Promise.allSettled(folderPanelAnimations.map((animation) => animation.finished)).then(finish);
+  if (returnFocus) (open ? catalogElements.collapseFolders : byId("archive-view-button")).focus();
+  announce(open ? "Folders shown" : "Folders hidden. Use the folder button to show them again.");
 }
 
 function setRecordingDetailsCollapsed(collapsed, { returnFocus = true } = {}) {
@@ -3440,27 +3551,29 @@ processingElements.search.addEventListener("input", () => {
 });
 processingElements.historyMore.addEventListener("click", () => loadProcessingPage("history", { append: true }));
 processingElements.queueSelectAll.addEventListener("change", () => {
-  (processingState.overview?.queue || []).forEach((job) => {
-    if (processingElements.queueSelectAll.checked) processingState.selectedQueueIds.add(job.id);
-    else processingState.selectedQueueIds.delete(job.id);
+  (processingState.overview?.queue || []).forEach((group) => {
+    if (processingElements.queueSelectAll.checked) processingState.selectedQueueIds.add(group.id);
+    else processingState.selectedQueueIds.delete(group.id);
   });
   renderQueue();
 });
 function selectedQueueIdsInOrder() {
   return (processingState.overview?.queue || [])
-    .filter((job) => processingState.selectedQueueIds.has(job.id))
-    .map((job) => job.id);
+    .filter((group) => processingState.selectedQueueIds.has(group.id))
+    .flatMap((group) => groupJobIds(group, "queued"));
 }
 processingElements.moveEarlier.addEventListener("click", () => reorderJobs(selectedQueueIdsInOrder(), "earlier", processingElements.moveEarlier));
 processingElements.moveLater.addEventListener("click", () => reorderJobs(selectedQueueIdsInOrder(), "later", processingElements.moveLater));
 processingElements.cancelSelected.addEventListener("click", () => {
-  const selected = (processingState.overview?.queue || []).filter((job) => processingState.selectedQueueIds.has(job.id));
+  const selected = (processingState.overview?.queue || [])
+    .filter((group) => processingState.selectedQueueIds.has(group.id))
+    .flatMap((group) => (group.outputs || []).filter((job) => job.state === "queued"));
   requestCancellation(selected, processingElements.cancelSelected);
 });
 processingElements.failureSelectAll.addEventListener("change", () => {
-  (processingState.pages.failed?.items || []).forEach((job) => {
-    if (processingElements.failureSelectAll.checked) processingState.selectedFailureIds.add(job.id);
-    else processingState.selectedFailureIds.delete(job.id);
+  (processingState.pages.failed?.items || []).forEach((group) => {
+    if (processingElements.failureSelectAll.checked) processingState.selectedFailureIds.add(group.id);
+    else processingState.selectedFailureIds.delete(group.id);
   });
   renderProcessingPage("failed");
 });

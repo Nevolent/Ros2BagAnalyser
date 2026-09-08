@@ -6083,64 +6083,15 @@ html[data-theme="light"] .is-skeleton-loading :is(#detail-recorded, #detail-dura
 
 #processing-view .queue-duration { color: var(--data-text); font-size: 12px; font-weight: 400; }
 
-/* Roomier desktop density. Size the components themselves; laptop and split
-   windows retain the compact layout and existing responsive breakpoints. */
+/* Leave laptop sizing intact; give large desktop windows a modest size lift. */
 @media (min-width: 1800px) and (min-height: 950px) {
-  :root { --header-height: 49px; --rail-width: 55px; --sidebar-button-size: 41px; }
-  body { font-size: 14px; }
-  #recordings-view { --folders-width: 363px; --space: 11px; }
-  #recordings-view .recordings-page,
-  #recordings-view.is-folders-collapsed .recordings-page { padding: 14px 16px 12px; gap: 12px; }
-  #recordings-view .recordings-content { gap: 12px; }
-  #recordings-view .folder-panel > header { height: 44px; flex-basis: 44px; font-size: 15px; }
-  #recordings-view .folder-parent { height: 32px; font-size: 15px; }
-  #recordings-view .folder-parent strong { font-size: 12px; }
-  #recordings-view .folder-search { height: 35px; min-height: 35px; }
-  #recordings-view .folder-search input { height: 33px; line-height: 33px; font-size: 13px; }
-  #recordings-view .folder-icon { width: 18px; height: 18px; }
-  #recordings-view .rosbag-table { --recordings-grid-columns: 48px minmax(330px, 1fr) 231px 145px 112px 106px 139px; }
-  #recordings-view .rosbag-table td:nth-child(n) { font-size: 14px; padding-block: 11px; }
-  #recordings-view .rosbag-table:not(.is-thumbnail-view) td { height: 47px; }
-  #recordings-view .rosbag-table th { font-size: 13px; }
-  #recordings-view .recording-link { font-size: 14px; }
-  #recordings-view .table-filter-options { --recordings-filter-width: 171px; }
-  #recordings-view .table-filter-options :is(.select-filter, .recordings-clear-filters) { height: 38px; font-size: 13px; }
-  #recordings-view .table-filter-options .recordings-clear-filters { width: 38px; min-width: 38px; flex-basis: 38px; }
-  #recordings-view .table-search input { height: 38px; font-size: 13px; }
-  #processing-view { --space: 11px; padding: 16px 20px 14px; gap: 16px; }
-  #processing-view .processing-content { gap: 16px; }
-  #processing-view .processing-content > .processing-tabs { min-height: 49px; flex-basis: 49px; }
-  #processing-view .processing-filter-tabs > button { padding-inline: 20px; font-size: 14px; gap: 11px; }
-  #processing-view .processing-table td { height: 48px; padding-block: 11px; }
-  #processing-view .processing-table th { font-size: 13px; }
-  #processing-view :is(.processing-table td, .processing-child-row td,
-    .queue-age, .queue-age span, .queue-estimate, .queue-estimate strong,
-    .queue-duration, .processing-output-count, .failure-reason,
-    .history-completed, .history-completed time, .history-runtime, .history-size) { font-size: 14px; }
-  #processing-view .current-job-main .current-stage,
-  #processing-view .current-job-meta :is(dt, dd) { font-size: 12px; }
-  #processing-view .queue-controls button { width: 29px; min-width: 29px; height: 29px; }
-  #processing-view .current-job-actions button { width: 34px; min-width: 34px; height: 34px; min-height: 34px; }
-  #processing-view .current-job-progress .job-progress-track { height: 27px; }
-  #processing-view .queue-table th:nth-child(3) { width: 176px; }
-  #processing-view .queue-table th:nth-child(4) { width: 187px; }
-  #processing-view .queue-table th:nth-child(5) { width: 138px; }
-  #processing-view .queue-table th:nth-child(6) { width: 83px; }
-  #processing-view .queue-table th:nth-child(7) { width: 121px; }
-  #analyzer-view { --space: 11px; --library-width: 363px; --chart-font-size: 11px; }
-  #analyzer-view .camera-card { grid-template-rows: 32px auto; }
-  #analyzer-view .panel-label { height: 32px; min-height: 32px; padding-inline: 11px; }
-  #analyzer-view .library-empty-header { min-height: 32px; flex-basis: 32px; padding-inline: 11px; }
+  #recordings-view { --folders-width: 330px; }
+  .folder-parent { height: 29px; font-size: 14px; }
+  .folder-panel > header { height: 40px; flex-basis: 40px; font-size: 14px; }
+  #recordings-view .rosbag-table td,
+  #processing-view .processing-table td { font-size: 13px; padding-block: 10px; }
+  #recordings-view .rosbag-table th,
+  #processing-view .processing-table th { font-size: 12px; }
   #analyzer-view .panel-label strong,
-  #analyzer-view .telemetry-heading .sensor-picker-trigger strong { font-size: 14px; }
-  #analyzer-view .library-empty-header h1 { font-size: 13px; }
-  #analyzer-view .metadata-section h2 { font-size: 13px; }
-  #analyzer-view .metadata-properties :is(dt, dd),
-  #analyzer-view .metadata-item :is(strong, span, small),
-  #analyzer-view .metadata-status { font-size: 12px; }
-  #analyzer-view .metadata-item { padding-block: 11px; }
-  #analyzer-view .section-icon { width: 17px; height: 17px; flex-basis: 17px; }
-  #analyzer-view .chart-header-button { width: 29px; height: 29px; }
-  .prepare-output-summary strong { font-size: 12px; }
-  .prepare-output-summary .availability-pill { font-size: 11px; }
+  #analyzer-view .telemetry-heading .sensor-picker-trigger strong { font-size: 13px; }
 }

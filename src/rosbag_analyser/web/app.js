@@ -2688,7 +2688,7 @@ function drawImuTrace(telemetry, dimensions = measureImuPlot(telemetry), ratio =
   const mutedColor = chartColor("--chart-text-dim", "#787878");
   const accentColor = chartColor("--chart-accent", "#f4f4f5");
 
-  context.font = `${chartColor("--chart-font-size", "10px")} ui-monospace, SFMono-Regular, Menlo, monospace`;
+  context.font = `10px ui-monospace, SFMono-Regular, Menlo, monospace`;
   [...new Set([maximum, 0, minimum])].forEach((value) => {
     const lineY = y(value);
     const interiorZero = value === 0 && value !== minimum && value !== maximum;
@@ -2748,7 +2748,7 @@ function drawImuTrace(telemetry, dimensions = measureImuPlot(telemetry), ratio =
   context.restore();
 
   context.fillStyle = mutedColor;
-  context.font = `${chartColor("--chart-font-size", "10px")} ui-monospace, SFMono-Regular, Menlo, monospace`;
+  context.font = `10px ui-monospace, SFMono-Regular, Menlo, monospace`;
   context.textAlign = "right";
   context.textBaseline = "top";
   context.fillText(graphTimestamp(telemetry.viewEnd), left + plotWidth, top + plotHeight + 10);

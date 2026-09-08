@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 
 from rosbag_analyser.topic_audit import audit_recording_topics
 
@@ -71,3 +73,36 @@ def test_audit_exposes_metadata_database_disagreement(tmp_path: Path) -> None:
     assert configured["front"]["metadata_match"] is None
     assert configured["front"]["database_match"]["type"] == "sensor_msgs/msg/Image"
     assert configured["imu"]["usable"] is False
+
+
+def test_all_mode_writes_one_json_line_per_recording_and_summary(tmp_path: Path) -> None:
+    archive, _ = _recording(tmp_path, [
+        (1, "/different/front", "sensor_msgs/msg/Image", "cdr"),
+        (2, "/configured/imu", "sensor_msgs/msg/Imu", "cdr"),
+    ])
+    repository = Path(__file__).parents[2]
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(repository / "deploy/scripts/topic_audit.py"),
+            "--archive-root",
+            str(archive),
+            "--all",
+            "--front-topic",
+            "/configured/front",
+            "--imu-topic",
+            "/configured/imu",
+        ],
+        cwd=repository,
+        env={"PYTHONPATH": str(repository / "src")},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    lines = completed.stdout.splitlines()
+    assert len(lines) == 2
+    assert '"recording_path": "folder/bag-one"' in lines[0]
+    assert '"record_type": "summary"' in lines[1]
+    assert '"recording_count": 1' in lines[1]

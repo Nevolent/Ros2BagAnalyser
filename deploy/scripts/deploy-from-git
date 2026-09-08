@@ -97,6 +97,11 @@ for path in "${changed_paths[@]}"; do
     src/rosbag_analyser/web/*)
       [[ "$restart_mode" == "none" ]] && restart_mode="api"
       ;;
+    deploy/scripts/audit-recording-topics|deploy/scripts/topic_audit.py|deploy/scripts/deploy-from-git)
+      # Standalone operator tools and this Git launcher are not service or
+      # installation configuration. Package them without running the tools.
+      [[ "$restart_mode" == "none" ]] && restart_mode="api"
+      ;;
     deploy/scripts/*)
       requires_controlled_release=true
       ;;

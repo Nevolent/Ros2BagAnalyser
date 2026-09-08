@@ -63,6 +63,31 @@ def test_git_deployment_help_needs_no_private_settings() -> None:
     assert "Usage: ./deploy-vm" in result.stdout
 
 
+def test_deployment_change_classification_allows_operator_tools_only() -> None:
+    deployer = (ROOT / "deploy/scripts/deploy-from-git").read_text()
+    classification = deployer.split('restart_mode="none"', 1)[1].split(
+        '\n[[ "$requires_controlled_release"', 1
+    )[0]
+    for path, blocked in (
+        ("deploy/scripts/audit-recording-topics", "false"),
+        ("deploy/scripts/topic_audit.py", "false"),
+        ("deploy/scripts/deploy-from-git", "false"),
+        ("deploy/scripts/install-release", "true"),
+        ("deploy/scripts/activate-release", "true"),
+        ("deploy/systemd/example.service", "true"),
+        ("deploy/nginx/example.conf", "true"),
+        ("deploy/runtime-requirements.in", "true"),
+        ("src/rosbag_analyser/persistence/migrations/0008.sql", "true"),
+    ):
+        result = subprocess.run(
+            ["bash", "-c", 'restart_mode="none"; changed_paths=("$1");'
+             + classification + '\nprintf "%s" "$requires_controlled_release"',
+             "classification-test", path],
+            check=True, capture_output=True, text=True,
+        )
+        assert result.stdout == blocked, path
+
+
 def test_deployment_private_and_generated_files_are_ignored() -> None:
     ignored = (ROOT / ".gitignore").read_text(encoding="utf-8")
 

@@ -331,6 +331,7 @@ class FakeDocument {
     this.element("span", "imu-selection-end", selection);
     ["chart-reset", "chart-zoom-out", "chart-zoom-in", "collapse-recording-details"].forEach((id) => this.element("button", id, analyzer));
     this.element("button", "timeline-play", analyzer);
+    this.element("output", "", analyzer, "timeline-position sr-only");
     this.element("input", "global-time-slider", analyzer);
     this.element("span", "timeline-current", analyzer);
     this.element("span", "timeline-total", analyzer);
@@ -555,22 +556,22 @@ test("recording filters use attached custom menus and update the catalog state",
   assert.equal(trigger.getAttribute("aria-expanded"), "false");
 });
 
-test("folder selection, filtering, pagination, and visible selection use stable numeric IDs", async () => {
+test("folder selection, filtering, complete lists, and visible selection use stable numeric IDs", async () => {
   const many = Array.from({ length: 21 }, (_, index) => ({ ...catalogFixture().recordings[0], id: index + 1, name: `run-${index + 1}` }));
   const catalog = catalogFixture({ recordings: many, summary: { recordings: 21, ready: 0, processing: 0, queued: 0, failed: 0, damaged: 0 } });
   const harness = createHarness("/", async () => makeResponse(catalog));
   await flush();
-  assert.equal(harness.document.querySelector("#recording-rows").children.length, 20);
+  assert.equal(harness.document.querySelector("#recording-rows").children.length, 21);
   harness.document.querySelector("#select-all-recordings").checked = true;
   harness.document.querySelector("#select-all-recordings").dispatch("change");
-  assert.equal(harness.document.querySelector("#selected-count").textContent, "20");
+  assert.equal(harness.document.querySelector("#selected-count").textContent, "21");
   assert.equal(harness.document.querySelector(".table-filter-bar").classList.contains("has-selection"), true);
   assert.equal(harness.document.querySelector("#prepare-selected").getAttribute("aria-hidden"), "false");
   vm.runInContext("catalogState.page = 2; renderRecordingTable()", harness.context);
-  assert.equal(harness.document.querySelector("#recording-rows").children.length, 1);
-  assert.equal(harness.document.querySelector("#selected-count").textContent, "20");
+  assert.equal(harness.document.querySelector("#recording-rows").children.length, 21);
+  assert.equal(harness.document.querySelector("#selected-count").textContent, "21");
   vm.runInContext("selectFolder('site')", harness.context);
-  assert.equal(harness.document.querySelector("#recording-rows").children.length, 20);
+  assert.equal(harness.document.querySelector("#recording-rows").children.length, 21);
   harness.document.querySelector("#folder-search").value = "missing";
   harness.document.querySelector("#folder-search").dispatch("input");
   assert.match(harness.document.querySelector("#folder-tree").children.at(-1).textContent, /No folders found/);
@@ -714,8 +715,8 @@ test("Processing preserves authoritative queue positions, server estimates, offl
   await flush();
   const queueRow = harness.document.querySelector("#queue-rows").children[0];
   assert.equal(vm.runInContext("processingState.overview.queue[0].outputs[0].queue_position", harness.context), 7);
-  assert.match(queueRow.children[3].textContent, /≈ 1 min/);
-  assert.match(harness.document.querySelector("#current-job-host").textContent, /Likely duration:≈ 0:05/);
+  assert.match(queueRow.children[3].textContent, /15:00/);
+  assert.match(harness.document.querySelector("#current-job-host").textContent, /Likely duration:0:05/);
   assert.equal(vm.runInContext("estimateText({status: 'unavailable', sample_count: 0})", harness.context), "Not enough history");
   assert.equal(vm.runInContext("estimateText({status: 'exceeded'})", harness.context), "Estimate exceeded");
   assert.equal([...harness.timers.values()][0].delay, 1500);
@@ -800,7 +801,7 @@ test("empty Processing pages render truthful empty failures and history", async 
   await flush();
   assert.equal(harness.document.querySelector("#history-rows").children.length, 0);
   assert.equal(harness.document.querySelector("#history-empty").hidden, false);
-  assert.equal(harness.document.querySelector("#history-description").textContent, "Showing 0 completed jobs");
+  assert.equal(harness.document.querySelector("#history-description").textContent, "Showing 0 processed recordings");
 });
 
 test("Recordings distinguish a partially prepared output set", async () => {
@@ -894,8 +895,9 @@ test("failure detail is safe, restores focus, retry is idempotent, and history c
   assert.equal(harness.calls.filter((call) => call.url.endsWith("/retry")).length, 1);
   await vm.runInContext("setProcessingTab('history')", harness.context);
   await flush();
-  await vm.runInContext("loadProcessingPage('history', {append: true})", harness.context);
-  assert.equal(harness.document.querySelector("#history-rows").children.length, 2);
+  assert.equal(historyPage, 2);
+  assert.equal(harness.document.querySelector("#history-more").hidden, true);
+  assert.equal(harness.document.querySelector("#history-rows").children.length, 1);
   const completed = harness.document.querySelector("#history-rows").children[0].querySelector(".history-completed");
   assert.equal(completed.querySelector("time").dateTime, failed.finished_at);
   assert.notEqual(completed.querySelector("time").textContent, "Unavailable");
@@ -952,7 +954,7 @@ test("direct Analyzer route binds identity URLs, precise health, six IMU channel
   assert.equal(harness.document.querySelector("#imu-cursor-marker").hidden, false);
   harness.document.querySelector("#imu-plot").dispatch("wheel", { deltaY: 1, deltaX: 0 });
   assert.equal(vm.runInContext("reviewController.clock.globalTime > 1", harness.context), true);
-  vm.runInContext("showMediaFailure('front')", harness.context);
+  vm.runInContext("reviewController.players.front.autoRetries = 2; showMediaFailure('front')", harness.context);
   assert.equal(harness.document.querySelector("#front-video").hidden, true);
   assert.equal(harness.document.querySelector("#topdown-video").hidden, false);
   assert.equal(vm.runInContext("window.ImuGraph.sampleAtOrBefore(reviewController.telemetry.samples, 2).value", harness.context), null);
@@ -1332,37 +1334,84 @@ test("static runtime contains no mock arrays, static preview sources, fake progr
 });
 
 
-test("real flat jobs group adjacent outputs without changing queue order or inventing attempts", async () => {
+test("flat queue jobs group each recording once and retain all controllable job IDs", async () => {
   const first = overviewFixture().queue[0];
   const queue = [first, { ...first, id: 33, kind: "imu_series", queue_position: 8,
     queue_estimate: { status: "unavailable", ready_in_ms: null } },
     { ...first, id: 34, recording_id: 8, queue_position: 9 },
     { ...first, id: 35, queue_position: 10 }];
-  const harness = createHarness("/processing", async () => makeResponse(overviewFixture({ queue, queued_count: 4 })));
+  const harness = createHarness("/processing", async () => makeResponse(overviewFixture({ queue, queued_count: 2 })));
   await flush();
   const groups = JSON.parse(vm.runInContext("JSON.stringify(processingState.overview.queue)", harness.context));
-  assert.deepEqual(groups.map((group) => group.outputs.map((job) => job.id)), [[32, 33], [34], [35]]);
-  assert.equal(groups[0].queue_estimate.status, "unavailable");
-  assert.equal(harness.document.querySelector("#processing-queue-count").textContent, "4");
-  assert.equal(harness.document.querySelector("#queue-rows").children.length, 3);
+  assert.deepEqual(groups.map((group) => group.outputs.map((job) => job.id)), [[32, 33, 35], [34]]);
+  assert.equal(groups[0].queue_estimate.status, "available");
+  assert.equal(harness.document.querySelector("#processing-queue-count").textContent, "2");
+  assert.equal(harness.document.querySelector("#queue-rows").children.length, 2);
   const checkbox = harness.document.querySelector(".queue-row-select");
   checkbox.checked = true;
   checkbox.dispatch("change");
-  assert.deepEqual(JSON.parse(vm.runInContext("JSON.stringify(selectedQueueIdsInOrder())", harness.context)), [32, 33]);
+  assert.deepEqual(JSON.parse(vm.runInContext("JSON.stringify(selectedQueueIdsInOrder())", harness.context)), [32, 33, 35]);
   assert.equal(harness.calls.every((call) => !call.options.method || call.options.method === "GET"), true);
 });
 
-test("history loads one bounded page and retains the cursor until requested", async () => {
+test("history automatically loads all bounded pages without a load button", async () => {
   const job = { ...overviewFixture().current, state: "succeeded", runtime_ms: 5000, output_size_bytes: "1024" };
   const harness = createHarness("/processing", async (url) => {
     if (url === "/api/v1/processing/overview") return makeResponse(overviewFixture());
-    return makeResponse({ items: [job], next_cursor: "more" });
+    return makeResponse({ items: [job], next_cursor: url.includes("cursor=more") ? null : "more" });
   });
   await flush();
   vm.runInContext("setProcessingTab('history')", harness.context);
   await flush();
   const requests = harness.calls.filter((call) => call.url.includes("view=history"));
-  assert.equal(requests.length, 1);
-  assert.match(requests[0].url, /limit=25/);
-  assert.equal(harness.document.querySelector("#history-more").hidden, false);
+  assert.equal(requests.length, 2);
+  assert.match(requests[0].url, /limit=100/);
+  assert.equal(harness.document.querySelector("#history-more").hidden, true);
+});
+
+test("front-only recordings expose a working timeline and suppress optional topdown diagnostics", async () => {
+  const detail = detailFixture();
+  detail.duration_ns = "0";
+  detail.components.push({ role: "topdown_video", condition: "missing", diagnostic: { message: "The expected companion source is missing." } });
+  detail.outputs[1] = { kind: "topdown_preview", state: "unavailable", artifact: null, diagnostic: { code: "topdown_video_unavailable", message: "The top-down video companion is unavailable." } };
+  detail.outputs[2] = { kind: "imu_series", state: "unavailable", artifact: null, diagnostic: null };
+  const harness = createHarness("/recordings/7", async () => makeResponse(detail));
+  await flush();
+  assert.equal(harness.document.querySelector("#imu-graph").hidden, false);
+  assert.equal(vm.runInContext("reviewController.telemetry.timelineOnly", harness.context), true);
+  assert.equal(harness.document.querySelector("#selected-sensor-label").textContent, "Recording timeline");
+  assert.equal(harness.document.querySelector("#global-time-slider").disabled, false);
+  assert.equal(harness.document.querySelector("#global-time-slider").max, "9");
+  assert.doesNotMatch(harness.document.querySelector("#detail-error").textContent, /companion/);
+  const slider = harness.document.querySelector("#global-time-slider");
+  slider.value = "5";
+  slider.dispatch("input");
+  assert.equal(harness.document.querySelector("#front-video").currentTime, 4);
+  harness.document.querySelector("#front-video").dispatch("error");
+  assert.equal(vm.runInContext("reviewController.players.front.autoRetries", harness.context), 1);
+  const retryTimer = [...harness.timers.values()].find((timer) => timer.delay === 750);
+  assert.ok(retryTimer);
+  retryTimer.callback();
+  assert.equal(harness.document.querySelector("#front-media-retry").hidden, true);
+  assert.equal(harness.document.querySelector("#front-video").src, detail.outputs[0].artifact.url);
+});
+
+test("a transient IMU request failure retries automatically", async () => {
+  const imu = imuFixture([["1000000000", 1, 2, 3, 4, 5, 6]]);
+  let attempts = 0;
+  const harness = createHarness("/recordings/7", async (url) => {
+    if (url === "/api/v1/recordings/7") return makeResponse(detailFixture());
+    if (url === "/api/recordings/7/imu-series") {
+      attempts += 1;
+      if (attempts === 1) throw new Error("temporary connection failure");
+      return makeResponse({ state: "ready", artifact: imu.artifact });
+    }
+    return makeResponse(imu.payload);
+  });
+  await flush();
+  [...harness.timers.values()].find((timer) => timer.delay === 750).callback();
+  await flush();
+  assert.equal(attempts, 2);
+  assert.equal(harness.document.querySelector("#imu-graph").hidden, false);
+  assert.equal(vm.runInContext("reviewController.telemetry.timelineOnly", harness.context), false);
 });

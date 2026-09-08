@@ -222,6 +222,8 @@ class ProcessingOverviewData:
     canceled_count: int
     running: ProcessingJobViewRecord | None
     queue: tuple[ProcessingJobViewRecord, ...]
+    current_stage: int = 1
+    current_stage_count: int = 1
 
 
 class ProcessingRepository:
@@ -946,8 +948,8 @@ class ProcessingRepository:
                 ),
             )
 
-    def processing_overview(self, *, queue_limit: int) -> ProcessingOverviewData:
-        if queue_limit <= 0:
+    def processing_overview(self, *, queue_limit: int | None) -> ProcessingOverviewData:
+        if queue_limit is not None and queue_limit <= 0:
             raise ValueError("The queue overview limit must be positive.")
         with open_connection(self.database_url) as connection:
             connection.execute(
@@ -967,7 +969,7 @@ class ProcessingRepository:
                     ORDER BY job.recording_id, job.kind,
                              job.finished_at DESC, job.id DESC
                 ), actionable_failures AS (
-                    SELECT failure.id
+                    SELECT failure.id, failure.recording_id
                     FROM latest_failures AS failure
                     WHERE NOT EXISTS (
                         SELECT 1 FROM jobs AS active
@@ -985,9 +987,14 @@ class ProcessingRepository:
                 )
                 SELECT CURRENT_TIMESTAMP AS server_time,
                        (SELECT count(*) FROM jobs WHERE state = 'running') AS running_count,
-                       (SELECT count(*) FROM jobs WHERE state = 'queued') AS queued_count,
-                       (SELECT count(*) FROM actionable_failures) AS failed_count,
-                       (SELECT count(*) FROM jobs WHERE state = 'succeeded') AS succeeded_count,
+                       (SELECT count(DISTINCT recording_id) FROM jobs WHERE state = 'queued') AS queued_count,
+                       (SELECT count(DISTINCT recording_id) FROM actionable_failures) AS failed_count,
+                       (SELECT count(DISTINCT recording_id) FROM jobs AS completed
+                         WHERE state = 'succeeded' AND NOT EXISTS (
+                             SELECT 1 FROM jobs AS active
+                             WHERE active.recording_id = completed.recording_id
+                               AND active.state IN ('queued', 'running')
+                         )) AS succeeded_count,
                        (SELECT count(*) FROM jobs WHERE state = 'canceled') AS canceled_count
                 """
             ).fetchone()
@@ -1034,6 +1041,16 @@ class ProcessingRepository:
                 """,
                 (queue_limit,),
             ).fetchall()
+            stages = []
+            if running_row is not None:
+                stages = connection.execute(
+                    """
+                    SELECT DISTINCT ON (kind) kind, state
+                    FROM jobs WHERE recording_id = %s
+                    ORDER BY kind, queued_at DESC, id DESC
+                    """,
+                    (running_row["recording_id"],),
+                ).fetchall()
         return ProcessingOverviewData(
             server_time=count_row["server_time"],  # type: ignore[arg-type]
             running_count=int(count_row["running_count"]),
@@ -1043,6 +1060,8 @@ class ProcessingRepository:
             canceled_count=int(count_row["canceled_count"]),
             running=None if running_row is None else _job_view_from_row(running_row),
             queue=tuple(_job_view_from_row(row) for row in queue_rows),
+            current_stage=1 + sum(row["state"] in {"succeeded", "failed", "canceled"} for row in stages),
+            current_stage_count=max(1, len(stages)),
         )
 
     def list_processing_jobs(
@@ -1179,6 +1198,19 @@ class ProcessingRepository:
                      AND artifact.kind = job.kind
                      AND artifact.cache_identity = job.cache_identity
                     WHERE job.state = %s
+                      AND (job.state <> 'succeeded' OR (
+                          NOT EXISTS (
+                              SELECT 1 FROM jobs AS active
+                              WHERE active.recording_id = job.recording_id
+                                AND active.state IN ('queued', 'running')
+                          ) AND NOT EXISTS (
+                              SELECT 1 FROM jobs AS newer
+                              WHERE newer.recording_id = job.recording_id
+                                AND newer.kind = job.kind
+                                AND newer.state = 'succeeded'
+                                AND (newer.finished_at, newer.id) > (job.finished_at, job.id)
+                          )
+                      ))
                       AND (%s = '' OR recording.display_name ILIKE %s ESCAPE '\\')
                       AND (
                           %s::timestamptz IS NULL
@@ -1318,28 +1350,19 @@ class ProcessingRepository:
             by_id = {int(row["id"]): row for row in rows}
             if any(job_id not in by_id for job_id in job_ids):
                 return QueueReorderResult("conflict", ())
-            selected = set(job_ids)
-            ordered = list(rows)
-            if direction == "earlier":
-                for index in range(1, len(ordered)):
-                    if (
-                        int(ordered[index]["id"]) in selected
-                        and int(ordered[index - 1]["id"]) not in selected
-                    ):
-                        ordered[index - 1], ordered[index] = (
-                            ordered[index],
-                            ordered[index - 1],
-                        )
-            else:
-                for index in range(len(ordered) - 2, -1, -1):
-                    if (
-                        int(ordered[index]["id"]) in selected
-                        and int(ordered[index + 1]["id"]) not in selected
-                    ):
-                        ordered[index], ordered[index + 1] = (
-                            ordered[index + 1],
-                            ordered[index],
-                        )
+            # Move whole recordings so one click crosses one visible queue row.
+            selected = {int(by_id[job_id]["recording_id"]) for job_id in job_ids}
+            groups: dict[int, list] = {}
+            for row in rows:
+                groups.setdefault(int(row["recording_id"]), []).append(row)
+            recording_ids = list(groups)
+            indexes = (range(1, len(recording_ids)) if direction == "earlier"
+                       else range(len(recording_ids) - 2, -1, -1))
+            for index in indexes:
+                neighbor = index - 1 if direction == "earlier" else index + 1
+                if recording_ids[index] in selected and recording_ids[neighbor] not in selected:
+                    recording_ids[index], recording_ids[neighbor] = recording_ids[neighbor], recording_ids[index]
+            ordered = [row for recording_id in recording_ids for row in groups[recording_id]]
             for queue_order, row in enumerate(ordered, start=1):
                 connection.execute(
                     """

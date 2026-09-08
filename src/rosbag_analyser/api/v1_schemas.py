@@ -268,6 +268,8 @@ class ProcessingOverviewResponse(BaseModel):
     current: ProcessingJobResponse | None
     queue: list[ProcessingJobResponse]
     recommended_poll_interval_ms: int
+    current_stage: int
+    current_stage_count: int
 
 
 class ProcessingJobsResponse(BaseModel):
@@ -440,6 +442,8 @@ def processing_overview_response(
         current=None if view.current is None else _job_response(view.current),
         queue=[_job_response(item) for item in view.queue],
         recommended_poll_interval_ms=view.recommended_poll_interval_ms,
+        current_stage=view.current_stage,
+        current_stage_count=view.current_stage_count,
     )
 
 

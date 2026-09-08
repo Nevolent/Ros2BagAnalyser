@@ -175,7 +175,6 @@ const ROLE_LABELS = {
   topdown_video: "Top-down video",
   topdown_timestamps: "Top-down timestamps",
 };
-const ROWS_PER_PAGE = 20;
 const MINIMUM_POLL_MS = 1000;
 const MAXIMUM_POLL_MS = 30000;
 const VIDEO_DRIFT_TOLERANCE_SECONDS = 0.1;
@@ -337,7 +336,7 @@ function renderProcessingSkeleton() {
   body.append(identity, progress, actions);
   article.append(body);
   processingElements.currentHost.append(article);
-  processingElements.queueRows.replaceChildren(...Array.from({ length: 5 }, (_, index) => createProcessingSkeletonRow(6, index)));
+  processingElements.queueRows.replaceChildren(...Array.from({ length: 5 }, (_, index) => createProcessingSkeletonRow(7, index)));
   processingElements.queueEmpty.hidden = true;
   ["processing-queue-count", "processing-failed-count", "processing-history-count"].forEach((id) => {
     byId(id).textContent = "";
@@ -559,7 +558,7 @@ function activateRoute(route, { focus = false } = {}) {
   });
   if (route.view === "recordings") {
     if (catalogState.data) renderCatalog();
-    else loadCatalog({ initial: true });
+    loadCatalog({ initial: !catalogState.data, retained: Boolean(catalogState.data) });
   } else if (route.view === "processing") {
     if (processingState.overview) renderProcessingOverview();
     else renderProcessingSkeleton();
@@ -1026,7 +1025,7 @@ function createRecordingRow(recording) {
     : recording.analysis_state === "not_planned" ? "Not planned"
       : humanize(recording.analysis_state);
   const analysisIcon = isPartial ? "analysis-subset"
-    : { ready: "status-check", processing: "analysis-processing", queued: "clock", failed: "status-alert", not_planned: "clock" }[recording.analysis_state];
+    : { ready: "status-check", processing: "analysis-processing", queued: "queue", failed: "status-alert", not_planned: "clock", canceled: "status-x" }[recording.analysis_state];
   const analysisClass = isPartial ? "partial" : recording.analysis_state.replaceAll("_", "-");
   analysisCell.append(statusIndicator(analysisLabel, `table-status--${analysisClass}`, analysisDetails(recording), analysisIcon));
   row.append(healthCell, analysisCell);
@@ -1040,10 +1039,9 @@ function createRecordingRow(recording) {
 function renderRecordingTable() {
   if (!catalogState.data) return;
   const matching = filteredRecordings();
-  const totalPages = Math.max(1, Math.ceil(matching.length / ROWS_PER_PAGE));
-  catalogState.page = Math.min(catalogState.page, totalPages);
-  const start = (catalogState.page - 1) * ROWS_PER_PAGE;
-  const visible = matching.slice(start, start + ROWS_PER_PAGE);
+  const totalPages = 1;
+  catalogState.page = 1;
+  const visible = matching;
   catalogElements.rows.replaceChildren(...visible.map(createRecordingRow));
   [...catalogElements.rows.children].at(-1)?.classList.add("is-last-visible");
   catalogElements.empty.hidden = catalogState.data.recordings.length !== 0;
@@ -1309,22 +1307,24 @@ function stopProcessingActivity() {
 }
 
 function groupProcessingJobs(jobs) {
-  const groups = [];
+  const byRecording = new Map();
   jobs.forEach((job) => {
-    let group = groups[groups.length - 1];
-    if (!group || group.recording_id !== job.recording_id
-        || group.outputs.some((output) => output.kind === job.kind)) {
-      group = { ...job, outputs: [] };
-      groups.push(group);
+    let group = byRecording.get(job.recording_id);
+    if (!group) {
+      group = { ...job, id: job.recording_id, outputs: [] };
+      byRecording.set(job.recording_id, group);
     }
-    group.outputs.push(job);
+    if (job.state !== "succeeded" || !group.outputs.some((output) => output.kind === job.kind)) group.outputs.push(job);
   });
+  const groups = [...byRecording.values()];
   return groups.map((group) => {
     const outputs = group.outputs;
     const last = outputs[outputs.length - 1];
     return {
       ...group,
-      // These rows summarize only returned jobs, never an invented lifecycle.
+      estimate: outputs.every((job) => job.estimate?.estimated_total_ms != null)
+        ? { status: "available", estimated_total_ms: outputs.reduce((sum, job) => sum + job.estimate.estimated_total_ms, 0) }
+        : { status: "unavailable" },
       queue_estimate: last.queue_estimate,
       allowed_controls: [...new Set(outputs.flatMap((job) => job.allowed_controls || []))].filter((control) =>
         control.startsWith("move_")
@@ -1361,7 +1361,14 @@ async function loadProcessing({ manual = false } = {}) {
     finishProcessingSkeleton();
     renderProcessingOverview();
     showNotice(processingElements.notice, overview.worker_online ? "" : "Worker offline. Queued work is paused until the serial worker returns.", overview.worker_online ? "" : "warning");
-    if (processingState.tab !== "queue") await loadProcessingPage(processingState.tab, { append: false });
+    if (processingState.tab !== "queue") {
+      const signature = `${overview.succeeded_count}:${overview.failed_count}:${overview.current?.id}:${overview.queued_count}`;
+      if (manual || processingState.pageSignature !== signature || Date.now() - (processingState.pageLoadedAt || 0) > 300_000) {
+        await loadProcessingPage(processingState.tab, { append: false });
+        processingState.pageSignature = signature;
+        processingState.pageLoadedAt = Date.now();
+      }
+    }
   } catch (error) {
     if (error?.name !== "AbortError") {
       processingState.pollFailures += 1;
@@ -1461,7 +1468,7 @@ function renderCurrentJob() {
       node(
         "p",
         queuedCount > 0
-          ? `${queuedCount} ${queuedCount === 1 ? "job is" : "jobs are"} waiting in the queue.`
+          ? `${queuedCount} ${queuedCount === 1 ? "recording is" : "recordings are"} waiting in the queue.`
           : "The queue is empty.",
       ),
     );
@@ -1489,7 +1496,7 @@ function renderCurrentJob() {
   titleLine.append(heading);
   const outputs = group?.outputs || [job];
   const displayedElapsed = job.elapsed_ms ?? 0;
-  const stage = node("p", OUTPUT_LABELS[job.kind], "current-stage");
+  const stage = node("p", `Stage ${processingState.overview.current_stage || 1} of ${processingState.overview.current_stage_count || 1} - ${OUTPUT_LABELS[job.kind]}`, "current-stage");
   copy.append(titleLine, stage);
   main.append(copy);
   const meta = node("dl", null, "current-job-meta");
@@ -1536,7 +1543,7 @@ function renderCurrentJob() {
 
 function groupEstimateText(estimate) {
   if (!estimate || estimate.status !== "available") return estimateText(estimate);
-  return `≈ ${formatMilliseconds(estimate.estimated_total_ms)}`;
+  return formatMilliseconds(estimate.estimated_total_ms);
 }
 
 function estimateText(estimate) {
@@ -1586,7 +1593,7 @@ function startElapsedTicker(job) {
 
 function outputCount(group) {
   const count = (group.outputs || []).length;
-  return `${count} output${count === 1 ? "" : "s"}`;
+  return String(count);
 }
 
 function formatEstimatedMinutes(milliseconds) {
@@ -1687,7 +1694,11 @@ function renderQueue() {
     const queued = node("td", null, "queue-age");
     queued.append(node("span", formatDateTime(group.queued_at)));
     const ready = node("td", null, "queue-estimate");
-    ready.append(node("strong", group.queue_estimate?.status === "available" ? `≈ ${formatEstimatedMinutes(group.queue_estimate.ready_in_ms)}` : "Unavailable"));
+    const readyAt = new Date(new Date(processingState.overview.server_time).getTime() + (group.queue_estimate?.ready_in_ms || 0));
+    ready.append(node("strong", group.queue_estimate?.status === "available"
+      ? new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Tallinn", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(readyAt)
+      : "Unavailable"));
+    const duration = node("td", groupEstimateText(group.estimate), "queue-duration");
     const outputs = node("td", outputCount(group), "processing-output-count");
     const controlsCell = document.createElement("td");
     const controls = node("div", null, "queue-controls");
@@ -1708,7 +1719,7 @@ function renderQueue() {
       controls.append(button);
     });
     controlsCell.append(controls);
-    row.append(selectionCell, recording, queued, ready, outputs, controlsCell);
+    row.append(selectionCell, recording, queued, ready, duration, outputs, controlsCell);
     rows.push(row);
   });
   processingElements.queueRows.replaceChildren(...rows);
@@ -1755,11 +1766,22 @@ async function loadProcessingPage(view, { append = false } = {}) {
   const previous = processingState.pages[view];
   const cursor = append ? previous?.next_cursor : null;
   const query = processingElements.search.value.trim();
-  const params = new URLSearchParams({ view, limit: "25" });
+  const params = new URLSearchParams({ view, limit: "100" });
   if (cursor) params.set("cursor", cursor);
   if (query) params.set("q", query);
   try {
-    const page = await requestJson(`/api/v1/processing/jobs?${params}`, { signal: controller.signal });
+    const page = { items: [], next_cursor: null };
+    const seenCursors = new Set();
+    do {
+      const batch = await requestJson(`/api/v1/processing/jobs?${params}`, { signal: controller.signal });
+      page.items.push(...batch.items);
+      page.next_cursor = batch.next_cursor;
+      if (batch.next_cursor) {
+        if (seenCursors.has(batch.next_cursor)) throw new ApiError("The processing cursor did not advance.", "validation");
+        seenCursors.add(batch.next_cursor);
+        params.set("cursor", batch.next_cursor);
+      }
+    } while (page.next_cursor && !controller.signal.aborted);
     if (serial !== processingState.requestSerial || processingState.tab !== view || !Array.isArray(page.items)) return;
     const jobs = append ? (previous?.items || []).flatMap((group) => group.outputs) : [];
     const ids = new Set(jobs.map((job) => job.id));
@@ -1802,8 +1824,8 @@ function renderProcessingPage(view) {
     processingElements.historyEmpty.textContent = "No completed processing history is available.";
     processingElements.historyRows.replaceChildren(...items.flatMap(createHistoryRows));
     processingElements.historyEmpty.hidden = items.length !== 0;
-    processingElements.historyDescription.textContent = `Showing ${items.reduce((count, group) => count + group.outputs.length, 0)} completed jobs`;
-    processingElements.historyMore.hidden = !page.next_cursor;
+    processingElements.historyDescription.textContent = `Showing ${items.length} processed recordings`;
+    processingElements.historyMore.hidden = true;
   }
 }
 
@@ -2192,8 +2214,8 @@ function renderDetail(detail) {
   const diagnosticMessages = [
     detail.diagnostic?.message,
     zeroDurationWarning ? "Metadata reports zero duration. The catalog verified the ROS SQLite schema but did not count messages or verify their timestamp span." : null,
-    ...detail.components.map((component) => component.diagnostic?.message),
-    ...detail.outputs.map((output) => output.diagnostic?.message),
+    ...detail.components.filter((component) => !(component.role.startsWith("topdown_") && component.condition === "missing")).map((component) => component.diagnostic?.message),
+    ...detail.outputs.filter((output) => !isOptionalTopdownAbsence(output)).map((output) => output.diagnostic?.message),
   ].filter(Boolean).filter((message, index, messages) => messages.indexOf(message) === index);
   detailElements.error.textContent = diagnosticMessages.join("\n");
   detailElements.error.hidden = diagnosticMessages.length === 0;
@@ -2381,7 +2403,7 @@ function attachReadyVideo(kind, recordingId, artifact) {
   };
   reviewController.players[kind] = {
     video: elements.video, coverageStart, coverageEnd, coverageMessage: elements.coverage,
-    mediaRetry: elements.retry, mediaFailed: false, insideCoverage: false, playAttempt: 0, playPending: false,
+    mediaRetry: elements.retry, mediaFailed: false, autoRetries: 0, insideCoverage: false, playAttempt: 0, playPending: false,
     playRequestedAt: null, playRetryAt: 0, buffering: false, seekPending: false,
     seekRequestedAt: null, seekTarget: null, queuedSeekTarget: null,
   };
@@ -2392,6 +2414,18 @@ function attachReadyVideo(kind, recordingId, artifact) {
 
 function formatSignedSeconds(value) {
   return `${value < 0 ? "−" : ""}${formatSeconds(Math.abs(value), true)}`;
+}
+
+function renderTimelineGraph() {
+  const duration = reviewController?.durationSeconds;
+  if (!(duration > 0)) return;
+  // A presentation-only baseline: no generated sensor data or artifact.
+  const series = { id: "timeline", component: "Recording timeline", displayLabel: "Recording timeline",
+    available: true, units: "", minimumValue: 0, maximumValue: 0, nonFiniteCount: 0 };
+  renderImuGraph(null, {
+    series: [series], defaultSeriesId: "timeline", coverageStart: 0, coverageEnd: duration,
+    rows: [0, duration].map((timeSeconds) => ({ timeSeconds, timeNs: BigInt(Math.round(timeSeconds * 1e9)), values: [0] })),
+  }, { timelineOnly: true });
 }
 
 function resetImu(message, badge = "Not planned", state = "not_requested") {
@@ -2407,6 +2441,7 @@ function resetImu(message, badge = "Not planned", state = "not_requested") {
   imuElements.currentValue.textContent = "—";
   imuElements.pickerTrigger.disabled = true;
   setStateBadge(imuElements.badge, badge, state);
+  if (!["loading", "ready"].includes(state)) renderTimelineGraph();
 }
 
 function renderImuOutput(detail, output) {
@@ -2428,7 +2463,8 @@ function renderImuOutput(detail, output) {
   loadReadyImu(detail.id, output.artifact);
 }
 
-async function loadReadyImu(recordingId, v1Artifact) {
+async function loadReadyImu(recordingId, v1Artifact, attempt = 0) {
+  const generation = routeGeneration;
   if (!validArtifactUrl("imu", recordingId, v1Artifact)) {
     resetImu("The ready IMU artifact URL was invalid.", "Data unavailable", "failed");
     return;
@@ -2444,11 +2480,16 @@ async function loadReadyImu(recordingId, v1Artifact) {
       throw new ApiError("The IMU artifact identity no longer matches the recording detail.", "validation");
     }
     const document = await requestJson(artifact.data_url, { signal: routeController.signal });
-    if (currentRoute?.recordingId !== recordingId || !reviewController) return;
+    if (generation !== routeGeneration || currentRoute?.recordingId !== recordingId || !reviewController) return;
     const parsed = window.ImuGraph.parseSeries(document, artifact);
     renderImuGraph(artifact, parsed);
   } catch (error) {
-    if (error?.name === "AbortError") return;
+    if (error?.name === "AbortError" || generation !== routeGeneration) return;
+    if (attempt < 2) {
+      await new Promise((resolve) => window.setTimeout(resolve, 750 * (attempt + 1)));
+      if (generation === routeGeneration) return loadReadyImu(recordingId, v1Artifact, attempt + 1);
+      return;
+    }
     resetImu("The ready IMU data could not be loaded and validated.", "Data unavailable", "failed");
     imuElements.action.textContent = "Reload data";
     imuElements.action.hidden = false;
@@ -2461,14 +2502,15 @@ async function loadReadyImu(recordingId, v1Artifact) {
   }
 }
 
-function renderImuGraph(artifact, parsed) {
+function renderImuGraph(artifact, parsed, { timelineOnly = false } = {}) {
   if (!reviewController) return;
+  removeImuGraph();
   imuElements.message.hidden = true;
   imuElements.graph.hidden = false;
   imuElements.pickerTrigger.disabled = false;
   setStateBadge(imuElements.badge, "Ready", "ready");
   const telemetry = {
-    artifact, parsed, selectedSeriesId: null, samples: [], coverageStart: parsed.coverageStart,
+    artifact, parsed, timelineOnly, selectedSeriesId: null, samples: [], coverageStart: parsed.coverageStart,
     coverageEnd: parsed.coverageEnd, minimumValue: 0, maximumValue: 0, units: "",
     canvas: imuElements.canvas, plot: imuElements.plot, cursor: imuElements.cursor,
     cursorMarker: imuElements.cursorMarker, currentValue: imuElements.currentValue,
@@ -2494,6 +2536,8 @@ function renderImuGraph(artifact, parsed) {
   });
   telemetry.resizeObserver.observe(imuElements.plot);
   applyImuSeriesSelection(parsed.defaultSeriesId);
+  imuElements.pickerTrigger.disabled = timelineOnly;
+  if (timelineOnly) imuElements.badge.hidden = true;
   updateGraphControls();
   updateTransportAvailability();
   applyGlobalTime(reviewController.clock.globalTime, true);
@@ -2644,7 +2688,7 @@ function drawImuTrace(telemetry, dimensions = measureImuPlot(telemetry), ratio =
   const mutedColor = chartColor("--chart-text-dim", "#787878");
   const accentColor = chartColor("--chart-accent", "#f4f4f5");
 
-  context.font = `10px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  context.font = `${chartColor("--chart-font-size", "10px")} ui-monospace, SFMono-Regular, Menlo, monospace`;
   [...new Set([maximum, 0, minimum])].forEach((value) => {
     const lineY = y(value);
     const interiorZero = value === 0 && value !== minimum && value !== maximum;
@@ -2704,7 +2748,7 @@ function drawImuTrace(telemetry, dimensions = measureImuPlot(telemetry), ratio =
   context.restore();
 
   context.fillStyle = mutedColor;
-  context.font = `10px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  context.font = `${chartColor("--chart-font-size", "10px")} ui-monospace, SFMono-Regular, Menlo, monospace`;
   context.textAlign = "right";
   context.textBaseline = "top";
   context.fillText(graphTimestamp(telemetry.viewEnd), left + plotWidth, top + plotHeight + 10);
@@ -2738,7 +2782,7 @@ function updateImuAtGlobalTime(globalTime) {
   const markerY = ((telemetry.renderedMaximum - sample.value) / valueRange) * telemetry.plotHeight;
   telemetry.cursorMarker.hidden = reviewController.clock.playing && activeImuGesture?.type !== "scrub";
   telemetry.cursorMarker.style.transform = `translate3d(-50%, ${markerY - 3.5}px, 0)`;
-  updateImuReadout(telemetry, `sample-${sample.timeNs}-${telemetry.selectedSeriesId}`, `${sample.value.toFixed(4)} ${telemetry.units}`, "");
+  updateImuReadout(telemetry, `sample-${sample.timeNs}-${telemetry.selectedSeriesId}`, telemetry.timelineOnly ? "" : `${sample.value.toFixed(4)} ${telemetry.units}`, "");
 }
 
 function updateImuReadout(telemetry, key, value, state) {
@@ -2841,7 +2885,9 @@ function ensureGraphWindowContains(globalTime) {
 
 function createGlobalTimeline(detail) {
   resetTimeline();
-  const durationSeconds = detail.duration_ns === null ? 0 : Number(BigInt(detail.duration_ns)) / 1e9;
+  const recordedDuration = detail.duration_ns === null ? 0 : Number(BigInt(detail.duration_ns)) / 1e9;
+  const durationSeconds = recordedDuration > 0 ? recordedDuration : Math.max(0,
+    ...detail.outputs.map((output) => output.artifact?.coverage_end_ns == null ? 0 : Number(BigInt(output.artifact.coverage_end_ns)) / 1e9));
   const startSeconds = detail.start_time_ns === null ? null : Number(BigInt(detail.start_time_ns)) / 1e9;
   timelineElements.slider.max = String(durationSeconds);
   timelineElements.total.textContent = startSeconds === null ? formatSeconds(durationSeconds, true) : (startSeconds + durationSeconds).toFixed(3);
@@ -3202,6 +3248,14 @@ function wheelImuSeek(event) {
 function showMediaFailure(kind) {
   const player = reviewController?.players[kind];
   if (!player) return;
+  if (player.autoRetries < 2) {
+    player.autoRetries += 1;
+    const generation = routeGeneration;
+    window.setTimeout(() => {
+      if (generation === routeGeneration && reviewController?.players[kind] === player) previewElements(kind).retry.onclick();
+    }, 750 * player.autoRetries);
+    return;
+  }
   player.mediaFailed = true;
   player.buffering = false;
   clearPlayerSeek(player, { discardQueued: true });

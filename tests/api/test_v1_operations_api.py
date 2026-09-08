@@ -442,6 +442,8 @@ async def test_processing_views_retry_and_cursor_errors() -> None:
         conflict = await client.post("/api/v1/processing/jobs/409/retry")
 
     assert overview.status_code == 200
+    assert overview.json()["current_stage"] == 1
+    assert overview.json()["current_stage_count"] == 1
     assert overview.json()["current"]["elapsed_ms"] == 2000
     assert overview.json()["current"]["estimate"]["remaining_ms"] == 3000
     assert page.status_code == 200

@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_PROCESSING_LIMIT = 25
 MAX_PROCESSING_LIMIT = 100
 MAX_PROCESSING_SEARCH = 100
-OVERVIEW_QUEUE_LIMIT = 20
-RECOMMENDED_POLL_INTERVAL_MS = 1_000
+OVERVIEW_QUEUE_LIMIT = None
+RECOMMENDED_POLL_INTERVAL_MS = 15_000
 
 
 @dataclass(frozen=True)
@@ -84,6 +84,8 @@ class ProcessingOverview:
     current: ProcessingJobView | None
     queue: tuple[ProcessingJobView, ...]
     recommended_poll_interval_ms: int
+    current_stage: int = 1
+    current_stage_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -161,6 +163,8 @@ class ProcessingViewService:
             current=current,
             queue=queue,
             recommended_poll_interval_ms=RECOMMENDED_POLL_INTERVAL_MS,
+            current_stage=data.current_stage,
+            current_stage_count=data.current_stage_count,
         )
 
     def jobs(

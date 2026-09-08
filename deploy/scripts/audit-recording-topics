@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly release_root="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+  pwd -P
+)"
+[[ -x "$release_root/venv/bin/python" ]] || {
+  echo "The installed release virtual environment is unavailable." >&2
+  exit 1
+}
+exec "$release_root/venv/bin/python" \
+  "$release_root/deploy/scripts/topic_audit.py" "$@"

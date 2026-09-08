@@ -81,6 +81,23 @@ does not change the preview timing policy or make an invalid recording
 processable. It reads source payloads, so it may run only under an approved
 real-data annex with the required before/after source-inventory evidence.
 
+## Read-only selected-recording topic audit
+
+`scripts/audit-recording-topics` investigates front/IMU unavailability without
+queuing work, decoding messages, or traversing the archive. It accepts an
+absolute non-symlink archive root, explicit archive-relative recording paths,
+and the exact configured front and IMU topic names. For each recording it
+compares the bounded `metadata.yaml` topic facts with the SQLite `topics` table,
+opened through a read-only file descriptor using SQLite immutable and query-only
+mode. Its JSON report identifies exact configured matches, type/serialization
+mismatches, and alternative standard Image or Imu topic names.
+
+The audit does not count or read message payload rows; metadata remains the
+source of reported message counts. Redirect output only to an approved evidence
+location outside the source mount. Because the tool reads authoritative source
+content, its exact recordings, command, evidence path, and before/after source
+inventory remain subject to the real-data annex approval.
+
 ## Routine Git deployments
 
 After the initial reviewed installation, routine source changes can use the

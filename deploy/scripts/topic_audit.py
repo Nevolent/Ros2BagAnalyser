@@ -30,6 +30,8 @@ def main() -> int:
     parser.add_argument("--max-entries", type=int, default=100_000)
     parser.add_argument("--max-directories", type=int, default=10_000)
     parser.add_argument("--max-recordings", type=int, default=5_000)
+    parser.add_argument("--max-directory-entries", type=int, default=2_000)
+    parser.add_argument("--max-recording-entries", type=int, default=256)
     arguments = parser.parse_args()
 
     recordings = arguments.recording or []
@@ -40,6 +42,8 @@ def main() -> int:
                 max_entries=arguments.max_entries,
                 max_directories=arguments.max_directories,
                 max_recordings=arguments.max_recordings,
+                max_directory_entries=arguments.max_directory_entries,
+                max_recording_entries=arguments.max_recording_entries,
             )
             recordings = [
                 archive_relative_path(arguments.archive_root, item.path)

@@ -605,18 +605,26 @@ def _iter_topic_messages(
         topic_id = _topic_id(connection, descriptor)
         cursor = connection.execute(
             """
-            SELECT id, timestamp, length(data)
+            SELECT timestamp, length(data),
+                   CASE WHEN length(data) BETWEEN 1 AND ? THEN data ELSE NULL END
             FROM messages
             WHERE topic_id = ?
             ORDER BY timestamp, id
             """,
-            (topic_id,),
+            (MAX_SERIALIZED_IMAGE_BYTES, topic_id),
         )
-        data_cursor = connection.cursor()
-        for message_id, timestamp, serialized_size in cursor:
-            yield int(timestamp), _message_data(
-                data_cursor, int(message_id), serialized_size
-            )
+        for timestamp, serialized_size, data in cursor:
+            if (
+                not isinstance(serialized_size, int)
+                or serialized_size <= 0
+                or serialized_size > MAX_SERIALIZED_IMAGE_BYTES
+                or data is None
+            ):
+                raise FrontPreviewProcessingError(
+                    "front_serialized_payload_invalid",
+                    "A front-camera serialized image exceeds the supported size.",
+                )
+            yield int(timestamp), data if isinstance(data, bytes) else bytes(data)
 
 
 @contextmanager

@@ -176,6 +176,94 @@ function parseSeries(document, artifact) {
   };
 }
 
+async function parseSeriesStream(body, artifact) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const samples = [];
+  let pending = "";
+  let state = "prefix";
+  let first = true;
+  const consume = () => {
+    while (true) {
+      pending = pending.trimStart();
+      if (state === "prefix") {
+        const match = /^\{\s*"schema_version"\s*:\s*2\s*,\s*"samples"\s*:\s*\[/.exec(pending);
+        if (!match) {
+          if (pending.length > 1024) throw new Error("The IMU series format is unsupported.");
+          return;
+        }
+        pending = pending.slice(match[0].length);
+        state = "row";
+      }
+      if (state === "row") {
+        pending = pending.trimStart();
+        if (!pending) return;
+        if (pending[0] === "]") {
+          if (!first) throw new Error("The IMU series contains a trailing separator.");
+          pending = pending.slice(1);
+          state = "suffix";
+          continue;
+        }
+        if (pending[0] !== "[") throw new Error("The IMU series contains an invalid sample.");
+        let depth = 0;
+        let quoted = false;
+        let escaped = false;
+        let end = -1;
+        for (let index = 0; index < pending.length; index += 1) {
+          const character = pending[index];
+          if (escaped) { escaped = false; continue; }
+          if (quoted && character === "\\") { escaped = true; continue; }
+          if (character === '"') { quoted = !quoted; continue; }
+          if (quoted) continue;
+          if (character === "[") depth += 1;
+          if (character === "]" && --depth === 0) { end = index + 1; break; }
+        }
+        if (end < 0) {
+          if (pending.length > 2 * 1024 * 1024) throw new Error("The IMU series sample is too large.");
+          return;
+        }
+        samples.push(JSON.parse(pending.slice(0, end)));
+        pending = pending.slice(end);
+        first = false;
+        state = "separator";
+      }
+      if (state === "separator") {
+        pending = pending.trimStart();
+        if (!pending) return;
+        if (pending[0] === ",") { pending = pending.slice(1); state = "row"; continue; }
+        if (pending[0] === "]") { pending = pending.slice(1); state = "suffix"; continue; }
+        throw new Error("The IMU series contains an invalid separator.");
+      }
+      if (state === "suffix") {
+        pending = pending.trimStart();
+        if (!pending) return;
+        if (pending[0] !== "}") throw new Error("The IMU series format is unsupported.");
+        pending = pending.slice(1);
+        state = "done";
+      }
+      if (state === "done") {
+        if (pending.trim()) throw new Error("The IMU series contains trailing data.");
+        pending = "";
+        return;
+      }
+    }
+  };
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      consume();
+    }
+    pending += decoder.decode();
+    consume();
+    if (state !== "done") throw new Error("The IMU series is incomplete.");
+    return parseSeries({ schema_version: 2, samples }, artifact);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function selectSeries(parsed, seriesId) {
   const definition = parsed.series.find((candidate) => candidate.id === seriesId);
   if (!definition?.available) {
@@ -244,14 +332,77 @@ function traceSegments(samples) {
   return segments;
 }
 
+function visibleTraceSegments(samples, start, end, pixelWidth) {
+  if (!samples.length || !(end > start)
+      || samples[0].timeSeconds > end
+      || samples.at(-1).timeSeconds < start) return [];
+  let low = 0;
+  let high = samples.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (samples[middle].timeSeconds < start) low = middle + 1;
+    else high = middle;
+  }
+  const first = Math.max(0, low - 1);
+  low = first;
+  high = samples.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (samples[middle].timeSeconds <= end) low = middle + 1;
+    else high = middle;
+  }
+  const last = Math.min(samples.length, low + 1);
+  const width = Math.max(1, Math.ceil(pixelWidth));
+  const segments = [];
+  let segment = [];
+  let bucket = null;
+  const flushBucket = () => {
+    if (!bucket) return;
+    const points = [bucket.first, bucket.minimum, bucket.maximum, bucket.last];
+    points.sort((left, right) => left.index - right.index);
+    for (const point of points) {
+      if (segment.at(-1) !== point.sample) segment.push(point.sample);
+    }
+    bucket = null;
+  };
+  const finishSegment = () => {
+    flushBucket();
+    if (segment.length) segments.push(segment);
+    segment = [];
+  };
+  for (let index = first; index < last; index += 1) {
+    const sample = samples[index];
+    if (sample.value === null) {
+      finishSegment();
+      continue;
+    }
+    const column = Math.min(width - 1, Math.max(0, Math.floor(
+      (sample.timeSeconds - start) / (end - start) * width,
+    )));
+    const point = { index, sample };
+    if (bucket && bucket.column !== column) flushBucket();
+    if (!bucket) {
+      bucket = { column, first: point, minimum: point, maximum: point, last: point };
+    } else {
+      bucket.last = point;
+      if (sample.value < bucket.minimum.sample.value) bucket.minimum = point;
+      if (sample.value > bucket.maximum.sample.value) bucket.maximum = point;
+    }
+  }
+  finishSegment();
+  return segments;
+}
+
 const ImuGraph = Object.freeze({
   parseSeries,
+  parseSeriesStream,
   selectSeries,
   sampleAtOrBefore,
   cursorFraction,
   timeFromPlotPosition,
   snappedCursorPosition,
   traceSegments,
+  visibleTraceSegments,
 });
 
 if (typeof window !== "undefined") window.ImuGraph = ImuGraph;

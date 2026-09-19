@@ -786,6 +786,8 @@ def main() -> None:
         )
         if not locked:
             raise SystemExit("Another ROS Bag Analyser worker is already running.")
+        lock_connection.commit()
+        worker.repository.set_worker_control_connection(lock_connection)
         interrupted = worker.recover_interrupted_jobs()
         if interrupted:
             logger.warning(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -289,7 +290,16 @@ def create_app(
 
     @application.get("/health/ready", include_in_schema=False)
     async def health_ready() -> JSONResponse:
-        report = application.state.health_service.readiness()
+        future = application.state.catalog_read_executor.submit(
+            application.state.health_service.readiness
+        )
+        try:
+            while not future.done():
+                await asyncio.sleep(0.01)
+            report = future.result()
+        except BaseException:
+            future.cancel()
+            raise
         return JSONResponse(
             report.as_dict(),
             status_code=200 if report.ready else 503,

@@ -60,6 +60,25 @@ test("parses the fixed bundle and preserves explicit gaps per selected channel",
   assert.equal(ImuGraph.traceSegments(selected.samples).length, 2);
 });
 
+test("streams a bundle across arbitrary network chunk boundaries", async () => {
+  const samples = [
+    ["100000000", 1, 2, 3, 4, 5, 6],
+    ["100000000", 7, 8, null, 10, 11, 12],
+    ["200000000", 13, 14, 15, 16, 17, 18],
+  ];
+  const bytes = new TextEncoder().encode(JSON.stringify(payload(samples)));
+  let position = 0;
+  const body = new ReadableStream({
+    pull(controller) {
+      if (position >= bytes.length) { controller.close(); return; }
+      controller.enqueue(bytes.slice(position, position + 7));
+      position += 7;
+    },
+  });
+  const parsed = await ImuGraph.parseSeriesStream(body, artifact(samples));
+  assert.deepEqual(ImuGraph.selectSeries(parsed, "angular_velocity_z").samples.map((row) => row.value), [3, null, 15]);
+});
+
 test("selecting another channel uses the same timestamps without reparsing", () => {
   const samples = [
     ["100000000", 1, 2, 3, 4, 5, 6],
@@ -89,6 +108,20 @@ test("current lookup uses the last duplicate at or before global time", () => {
   assert.equal(ImuGraph.sampleAtOrBefore(samples, 0.2).value, 3);
   assert.equal(ImuGraph.sampleAtOrBefore(samples, 0.35).value, 3);
   assert.equal(ImuGraph.sampleAtOrBefore(samples, 0.4).value, 4);
+});
+
+test("visible trace bounds work and retains spikes and gaps within each pixel", () => {
+  const samples = Array.from({ length: 10_000 }, (_, index) => ({
+    timeSeconds: index / 100,
+    value: index === 5500 ? 99 : index === 5501 ? null : index === 5502 ? -88 : 1,
+  }));
+  const segments = ImuGraph.visibleTraceSegments(samples, 50, 60, 100);
+  const points = segments.flat();
+  assert.ok(points.length < 500);
+  assert.ok(points.some((point) => point.value === 99));
+  assert.ok(points.some((point) => point.value === -88));
+  assert.equal(segments.length, 2);
+  assert.deepEqual(ImuGraph.visibleTraceSegments(samples, 101, 102, 100), []);
 });
 
 test("global cursor and graph pointer positions clamp and pixel-snap", () => {

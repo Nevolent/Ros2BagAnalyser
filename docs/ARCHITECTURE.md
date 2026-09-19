@@ -103,6 +103,16 @@ as decimal strings; duplicate-time lookup selects the last sample at or before
 the clock. Non-finite values are per-axis null gaps. The browser owns one
 bag-relative clock, corrects camera drift at 100 ms, and clears/hides consumers
 outside their measured coverage. Graph zoom changes the view, not the clock.
+IMU JSON is capped at 64 MiB and validated row by row; the browser parses the
+response stream and draws only a bounded set of points for the visible window,
+preserving spikes and null gaps. Camera panes show buffering until media can play.
+
+Video validation streams packet timestamps through ffprobe instead of collecting
+the full packet list. Probe time limits scale with output size and remain bounded.
+Worker control checks reuse its advisory-lock database session in short
+transactions. Front-camera and IMU processors fetch bounded payloads with one
+ordered SQLite query per stream. Readiness runs in the bounded catalog read pool
+so database and mount checks do not block other HTTP requests.
 
 Incomplete output stays in a contained job workspace. Validation precedes
 publication; failed replacement preserves valid output. Files, manifests,

@@ -1188,11 +1188,14 @@ test("buffering suppresses automatic correction and canplay performs one catch-u
 
   vm.runInContext("applyGlobalTime(5, true)", harness.context);
   video.dispatch("waiting");
+  assert.equal(harness.document.querySelector("#front-coverage").textContent, "Buffering front preview…");
+  assert.equal(harness.document.querySelector("#front-coverage").hidden, false);
   harness.setNow(3000);
   vm.runInContext("applyGlobalTime(6)", harness.context);
   assert.deepEqual(video.currentTimeAssignments, [4]);
 
   video.dispatch("canplay");
+  assert.equal(harness.document.querySelector("#front-coverage").hidden, true);
   assert.deepEqual(video.currentTimeAssignments, [4, 5]);
 });
 

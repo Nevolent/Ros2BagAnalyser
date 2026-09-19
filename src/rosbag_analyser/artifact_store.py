@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass, replace
 from fractions import Fraction
 import hashlib
@@ -8,10 +9,13 @@ import logging
 import math
 import os
 from pathlib import Path, PurePosixPath
+import re
+import select
 import shutil
 import stat
 import subprocess
 import tempfile
+import time
 from typing import Any
 
 from rosbag_analyser.config import PreviewProfile
@@ -21,7 +25,7 @@ from rosbag_analyser.timeline import media_pts_digest_chunk
 
 logger = logging.getLogger(__name__)
 MAX_MANIFEST_BYTES = 1024 * 1024
-MAX_SERIES_ARTIFACT_BYTES = 32 * 1024 * 1024
+MAX_SERIES_ARTIFACT_BYTES = 64 * 1024 * 1024
 SUPPORTED_ARTIFACT_KINDS = frozenset(
     {"front_preview", "topdown_preview", "imu_series"}
 )
@@ -151,19 +155,19 @@ class ArtifactStore:
                 "preview_output_invalid", "The generated preview is invalid."
             )
 
-        stream_entries = "codec_name,pix_fmt,width,height,nb_read_packets"
+        stream_entries = "codec_name,pix_fmt,width,height"
+        if expected_media_pts_sha256 is None:
+            stream_entries += ",nb_read_packets"
+        else:
+            stream_entries += ",time_base"
         show_entries = f"stream={stream_entries}:format=duration,size"
-        if expected_media_pts_sha256 is not None:
-            show_entries = (
-                f"stream={stream_entries},time_base:format=duration,size:packet=pts"
-            )
         command = [
             os.fspath(self.ffprobe_path),
             "-v",
             "error",
             "-select_streams",
             "v:0",
-            "-count_packets",
+            *(["-count_packets"] if expected_media_pts_sha256 is None else []),
             "-show_entries",
             show_entries,
             "-of",
@@ -176,13 +180,27 @@ class ArtifactStore:
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=_probe_timeout_seconds(details.st_size),
             )
             if control is not None:
                 control.checkpoint("validating", force=True)
             document = json.loads(completed.stdout)
             stream = document["streams"][0]
             format_facts = document["format"]
+            frame_count = (
+                int(stream["nb_read_packets"])
+                if expected_media_pts_sha256 is None
+                else _validate_media_pts(
+                    self.ffprobe_path,
+                    media_path,
+                    expected_frame_count,
+                    profile.media_timescale,
+                    str(stream["time_base"]),
+                    expected_media_pts_sha256,
+                    details.st_size,
+                    control,
+                )
+            )
             validation = MediaValidation(
                 size_bytes=int(format_facts["size"]),
                 device_id=details.st_dev,
@@ -193,7 +211,7 @@ class ArtifactStore:
                 codec=str(stream["codec_name"]),
                 pixel_format=str(stream["pix_fmt"]),
                 duration_seconds=float(format_facts["duration"]),
-                frame_count=int(stream["nb_read_packets"]),
+                frame_count=frame_count,
             )
         except (
             OSError,
@@ -224,14 +242,6 @@ class ArtifactStore:
             raise ArtifactStoreError(
                 "preview_validation_mismatch",
                 "The generated preview does not match the requested profile.",
-            )
-
-        if expected_media_pts_sha256 is not None:
-            _validate_media_pts(
-                document,
-                expected_frame_count,
-                profile.media_timescale,
-                expected_media_pts_sha256,
             )
 
         if profile.container == "mp4":
@@ -348,35 +358,15 @@ class ArtifactStore:
                 or before.st_size > MAX_SERIES_ARTIFACT_BYTES
             ):
                 raise OSError("invalid series file")
-            with series_path.open("rb") as series_file:
-                payload = series_file.read(MAX_SERIES_ARTIFACT_BYTES + 1)
-            if len(payload) != before.st_size or len(payload) > MAX_SERIES_ARTIFACT_BYTES:
-                raise OSError("invalid series size")
-            document = json.loads(
-                payload.decode("utf-8"),
-                parse_constant=_reject_json_constant,
-            )
-        except (OSError, UnicodeError, RecursionError, json.JSONDecodeError, ValueError) as error:
+        except OSError as error:
             raise ArtifactStoreError(
                 "imu_series_validation_failed",
                 "The generated IMU series could not be validated.",
             ) from error
 
         try:
-            if not isinstance(document, dict) or set(document) != {
-                "schema_version",
-                "samples",
-            }:
-                raise ValueError("unexpected series document")
-            if document["schema_version"] != expected_schema_version:
-                raise ValueError("unexpected series schema")
-            samples = document["samples"]
-            if (
-                not isinstance(samples, list)
-                or len(samples) != expected_sample_count
-                or not expected_columns
-            ):
-                raise ValueError("unexpected sample count")
+            if not expected_columns:
+                raise ValueError("missing series columns")
 
             finite_counts = [0] * len(expected_columns)
             non_finite_counts = [0] * len(expected_columns)
@@ -385,46 +375,51 @@ class ArtifactStore:
             last_time: int | None = None
             minimum_values: list[float | None] = [None] * len(expected_columns)
             maximum_values: list[float | None] = [None] * len(expected_columns)
-            for sample in samples:
-                if control is not None:
-                    control.checkpoint("validating")
-                if (
-                    not isinstance(sample, list)
-                    or len(sample) != len(expected_columns) + 1
-                ):
-                    raise ValueError("invalid sample")
-                time_text = sample[0]
-                if not isinstance(time_text, str) or not _is_decimal_integer(time_text):
-                    raise ValueError("invalid sample time")
-                time_ns = int(time_text)
-                if previous_time is not None and time_ns < previous_time:
-                    raise ValueError("unordered sample time")
-                if first_time is None:
-                    first_time = time_ns
-                previous_time = time_ns
-                last_time = time_ns
-                for index, raw_value in enumerate(sample[1:]):
-                    if raw_value is None:
-                        non_finite_counts[index] += 1
-                        continue
+            sample_count = 0
+            with closing(_iter_series_samples(series_path, expected_schema_version)) as samples:
+                for sample in samples:
+                    sample_count += 1
+                    if sample_count > expected_sample_count:
+                        raise ValueError("unexpected sample count")
+                    if control is not None:
+                        control.checkpoint("validating")
                     if (
-                        isinstance(raw_value, bool)
-                        or not isinstance(raw_value, (int, float))
-                        or not math.isfinite(float(raw_value))
+                        not isinstance(sample, list)
+                        or len(sample) != len(expected_columns) + 1
                     ):
-                        raise ValueError("invalid sample value")
-                    value = float(raw_value)
-                    finite_counts[index] += 1
-                    minimum_values[index] = (
-                        value
-                        if minimum_values[index] is None
-                        else min(minimum_values[index], value)
-                    )
-                    maximum_values[index] = (
-                        value
-                        if maximum_values[index] is None
-                        else max(maximum_values[index], value)
-                    )
+                        raise ValueError("invalid sample")
+                    time_text = sample[0]
+                    if not isinstance(time_text, str) or not _is_decimal_integer(time_text):
+                        raise ValueError("invalid sample time")
+                    time_ns = int(time_text)
+                    if previous_time is not None and time_ns < previous_time:
+                        raise ValueError("unordered sample time")
+                    if first_time is None:
+                        first_time = time_ns
+                    previous_time = time_ns
+                    last_time = time_ns
+                    for index, raw_value in enumerate(sample[1:]):
+                        if raw_value is None:
+                            non_finite_counts[index] += 1
+                            continue
+                        if (
+                            isinstance(raw_value, bool)
+                            or not isinstance(raw_value, (int, float))
+                            or not math.isfinite(float(raw_value))
+                        ):
+                            raise ValueError("invalid sample value")
+                        value = float(raw_value)
+                        finite_counts[index] += 1
+                        minimum_values[index] = (
+                            value
+                            if minimum_values[index] is None
+                            else min(minimum_values[index], value)
+                        )
+                        maximum_values[index] = (
+                            value
+                            if maximum_values[index] is None
+                            else max(maximum_values[index], value)
+                        )
             columns_match = all(
                 finite_counts[index] == expectation.finite_count
                 and non_finite_counts[index] == expectation.non_finite_count
@@ -433,7 +428,8 @@ class ArtifactStore:
                 for index, expectation in enumerate(expected_columns)
             )
             if (
-                first_time is None
+                sample_count != expected_sample_count
+                or first_time is None
                 or last_time is None
                 or not columns_match
                 or first_time != expected_coverage_start_ns
@@ -448,7 +444,8 @@ class ArtifactStore:
                 or after.st_size != before.st_size
             ):
                 raise ValueError("series changed during validation")
-        except (OSError, TypeError, ValueError, OverflowError) as error:
+        except (OSError, UnicodeError, RecursionError, json.JSONDecodeError,
+                TypeError, ValueError, OverflowError) as error:
             raise ArtifactStoreError(
                 "imu_series_validation_mismatch",
                 "The generated IMU series does not match its expected data.",
@@ -1060,11 +1057,15 @@ def _validate_publish_manifest(
 
 
 def _validate_media_pts(
-    document: dict[str, Any],
+    ffprobe_path: Path,
+    media_path: Path,
     expected_frame_count: int,
     media_timescale: int,
+    time_base_text: str,
     expected_sha256: str,
-) -> None:
+    file_size: int,
+    control: JobControlToken | None,
+) -> int:
     if len(expected_sha256) != 64 or any(
         character not in "0123456789abcdef" for character in expected_sha256
     ):
@@ -1073,35 +1074,70 @@ def _validate_media_pts(
             "The expected preview timing is invalid.",
         )
     try:
-        streams = document["streams"]
-        packets = document["packets"]
-        if (
-            not isinstance(streams, list)
-            or len(streams) != 1
-            or not isinstance(packets, list)
-            or len(packets) != expected_frame_count
-        ):
-            raise ValueError("Unexpected ffprobe timestamp result.")
-        stream = streams[0]
-        if not isinstance(stream, dict):
-            raise ValueError("Unexpected ffprobe stream result.")
-        time_base = Fraction(str(stream["time_base"]))
+        time_base = Fraction(time_base_text)
         if time_base <= 0:
             raise ValueError("Invalid media time base.")
         digest = hashlib.sha256()
         previous_pts: int | None = None
-        for packet in packets:
-            if not isinstance(packet, dict):
-                raise ValueError("Unexpected ffprobe packet result.")
-            scaled_pts = Fraction(int(packet["pts"])) * time_base * media_timescale
-            if scaled_pts.denominator != 1:
-                raise ValueError("Media timestamp cannot be represented exactly.")
-            media_pts = scaled_pts.numerator
-            if previous_pts is not None and media_pts <= previous_pts:
-                raise ValueError("Media timestamps are not strictly increasing.")
-            digest.update(media_pts_digest_chunk(media_pts))
-            previous_pts = media_pts
-    except (KeyError, TypeError, ValueError, ZeroDivisionError, OverflowError) as error:
+        count = 0
+        command = [
+            os.fspath(ffprobe_path), "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "packet=pts", "-of", "csv=p=0", os.fspath(media_path),
+        ]
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+        assert process.stdout is not None
+        pending = b""
+        started = last_output = time.monotonic()
+        # The overall bound grows with file size; the shorter idle bound detects
+        # a stalled probe even when the file is large.
+        maximum_seconds = _probe_timeout_seconds(file_size)
+        try:
+            while True:
+                if control is not None:
+                    control.checkpoint("validating")
+                now = time.monotonic()
+                if now - started > maximum_seconds or now - last_output > 30:
+                    raise TimeoutError("Media timestamp inspection timed out.")
+                readable, _, _ = select.select([process.stdout], [], [], 0.25)
+                if not readable:
+                    continue
+                chunk = os.read(process.stdout.fileno(), 64 * 1024)
+                if not chunk:
+                    break
+                last_output = time.monotonic()
+                pending += chunk
+                if len(pending) > 128 * 1024:
+                    raise ValueError("Media timestamp row is too large.")
+                lines = pending.split(b"\n")
+                pending = lines.pop()
+                for line in lines:
+                    if line.strip():
+                        count += 1
+                        if count > expected_frame_count:
+                            raise ValueError("Unexpected packet count.")
+                        scaled_pts = Fraction(int(line)) * time_base * media_timescale
+                        if scaled_pts.denominator != 1:
+                            raise ValueError("Media timestamp cannot be represented exactly.")
+                        media_pts = scaled_pts.numerator
+                        if previous_pts is not None and media_pts <= previous_pts:
+                            raise ValueError("Media timestamps are not strictly increasing.")
+                        digest.update(media_pts_digest_chunk(media_pts))
+                        previous_pts = media_pts
+            if pending.strip() or count != expected_frame_count or process.wait(timeout=5) != 0:
+                raise ValueError("Unexpected ffprobe timestamp result.")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2)
+            process.stdout.close()
+    except (OSError, TypeError, ValueError, ZeroDivisionError, OverflowError,
+            TimeoutError, subprocess.SubprocessError) as error:
         raise ArtifactStoreError(
             "preview_timestamp_validation_failed",
             "The generated preview timestamps could not be validated.",
@@ -1111,6 +1147,93 @@ def _validate_media_pts(
             "preview_timestamp_mismatch",
             "The generated preview timestamps do not match the source timing.",
         )
+    return count
+
+
+def _probe_timeout_seconds(file_size: int) -> float:
+    return min(3600.0, 30.0 + file_size / (512 * 1024))
+
+
+def _iter_series_samples(path: Path, schema_version: int):
+    """Validate the fixed series envelope while decoding one row at a time."""
+    try:
+        yield from _iter_series_samples_unchecked(path, schema_version)
+    except (OSError, UnicodeError, ValueError, RecursionError,
+            json.JSONDecodeError) as error:
+        raise ArtifactStoreError(
+            "imu_series_validation_failed",
+            "The generated IMU series could not be validated.",
+        ) from error
+
+
+def _iter_series_samples_unchecked(path: Path, schema_version: int):
+    decoder = json.JSONDecoder(parse_constant=_reject_json_constant)
+    prefix = re.compile(
+        r'^\s*\{\s*"schema_version"\s*:\s*'
+        + re.escape(str(schema_version))
+        + r'\s*,\s*"samples"\s*:\s*\['
+    )
+    with path.open("rb") as source:
+        buffer = ""
+        eof = False
+
+        def refill() -> None:
+            nonlocal buffer, eof
+            chunk = source.read(64 * 1024)
+            if chunk:
+                buffer += chunk.decode("ascii")
+            else:
+                eof = True
+
+        while True:
+            match = prefix.match(buffer)
+            if match is not None:
+                buffer = buffer[match.end():]
+                break
+            if eof or len(buffer) > 1024:
+                raise ValueError("invalid series envelope")
+            refill()
+
+        first = True
+        while True:
+            buffer = buffer.lstrip()
+            if not buffer:
+                if eof:
+                    raise ValueError("unfinished series")
+                refill()
+                continue
+            if buffer[0] == "]":
+                buffer = buffer[1:]
+                break
+            if not first:
+                if buffer[0] != ",":
+                    raise ValueError("invalid series separator")
+                buffer = buffer[1:]
+                while not buffer:
+                    if eof:
+                        raise ValueError("unfinished series")
+                    refill()
+                if buffer.lstrip().startswith("]"):
+                    raise ValueError("trailing series separator")
+            while True:
+                buffer = buffer.lstrip()
+                try:
+                    sample, used = decoder.raw_decode(buffer)
+                    break
+                except json.JSONDecodeError:
+                    if eof or len(buffer) > 2 * 1024 * 1024:
+                        raise ValueError("invalid series sample")
+                    refill()
+            buffer = buffer[used:]
+            first = False
+            yield sample
+
+        while not eof:
+            refill()
+            if len(buffer) > 1024:
+                raise ValueError("invalid series ending")
+        if buffer.strip() != "}":
+            raise ValueError("invalid series ending")
 
 
 def _manifest_output_size(manifest: dict[str, Any]) -> int | None:

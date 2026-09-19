@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+import time
 
 import httpx
 import pytest
@@ -74,3 +76,26 @@ async def test_liveness_and_readiness_are_separate_and_sanitized() -> None:
     assert "/srv/" not in serialized
     assert "postgresql://" not in serialized
     assert "traceback" not in serialized.lower()
+
+
+def test_slow_readiness_does_not_block_other_requests() -> None:
+    class SlowHealth(HealthService):
+        def readiness(self) -> ReadinessReport:
+            time.sleep(0.25)
+            return super().readiness()
+
+    app = create_app(NoSourceCatalogService(), health_service=SlowHealth("test"))
+    ready_route = next(route for route in app.router.routes if route.path == "/health/ready")
+    live_route = next(route for route in app.router.routes if route.path == "/health/live")
+    async def check() -> None:
+        async with app.router.lifespan_context(app):
+            ready = asyncio.create_task(ready_route.endpoint())
+            await asyncio.sleep(0.01)
+            started = time.monotonic()
+            live = await live_route.endpoint()
+            elapsed = time.monotonic() - started
+            assert live.status_code == 200
+            assert elapsed < 0.2
+            assert (await ready).status_code == 200
+
+    asyncio.run(check())

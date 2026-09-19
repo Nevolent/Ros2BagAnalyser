@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -47,6 +49,46 @@ class _StateConnection:
                 }
             )
         return _QueryResult()
+
+
+def test_worker_checkpoint_reuses_worker_session_and_commits_each_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transaction_count = 0
+
+    class WorkerConnection:
+        @contextmanager
+        def transaction(self):
+            nonlocal transaction_count
+            yield self
+            transaction_count += 1
+
+    connection = WorkerConnection()
+    repository = processing_repository.ProcessingRepository("unused")
+    repository.set_worker_control_connection(connection)  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        processing_repository,
+        "open_connection",
+        lambda _: pytest.fail("worker checkpoint opened another database session"),
+    )
+    monkeypatch.setattr(
+        processing_repository,
+        "_select_job_for_update",
+        lambda selected_connection, _job_id: (
+            {"state": "running"} if selected_connection is connection else None
+        ),
+    )
+    monkeypatch.setattr(
+        processing_repository,
+        "_job_from_row",
+        lambda _row: SimpleNamespace(
+            state="running", control_state="cancel_requested", execution_phase="processing"
+        ),
+    )
+
+    assert repository.worker_checkpoint(7, "processing").state == "running"
+    assert repository.worker_checkpoint(7, "processing").state == "running"
+    assert transaction_count == 2
 
 
 def test_visible_processing_state_uses_one_repeatable_read_snapshot(

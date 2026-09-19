@@ -2397,7 +2397,7 @@ function attachReadyVideo(kind, recordingId, artifact) {
     elements.coverage.hidden = true;
     elements.retry.hidden = true;
     const player = reviewController?.players[kind];
-    if (player) player.mediaFailed = false;
+    if (player) { player.mediaFailed = false; player.buffering = false; }
     setStateBadge(elements.badge, "Ready", "ready");
     finishPreviewLoading(kind);
   };
@@ -2410,6 +2410,20 @@ function attachReadyVideo(kind, recordingId, artifact) {
   finishPreviewLoading(kind);
   updateTransportAvailability();
   applyGlobalTime(reviewController.clock.globalTime, true);
+}
+
+function setPlayerBuffering(kind, buffering) {
+  const player = reviewController?.players[kind];
+  if (!player || player.mediaFailed) return;
+  player.buffering = buffering;
+  if (!player.insideCoverage) return;
+  const elements = previewElements(kind);
+  player.coverageMessage.textContent = buffering
+    ? `Buffering ${kind === "front" ? "front" : "top-down"} preview…`
+    : `Outside ${kind === "front" ? "front" : "top-down"} coverage`;
+  player.coverageMessage.hidden = !buffering;
+  player.video.hidden = buffering;
+  elements.pane.setAttribute("aria-busy", String(buffering));
 }
 
 function formatSignedSeconds(value) {
@@ -2479,9 +2493,15 @@ async function loadReadyImu(recordingId, v1Artifact, attempt = 0) {
     if (state.state !== "ready" || !artifact || artifact.data_url !== v1Artifact.url || !Array.isArray(artifact.series)) {
       throw new ApiError("The IMU artifact identity no longer matches the recording detail.", "validation");
     }
-    const document = await requestJson(artifact.data_url, { signal: routeController.signal });
+    const response = await fetch(artifact.data_url, {
+      signal: routeController.signal,
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) throw new ApiError("The IMU data request failed.", "http", response.status);
+    const parsed = response.body?.getReader
+      ? await window.ImuGraph.parseSeriesStream(response.body, artifact)
+      : window.ImuGraph.parseSeries(await response.json(), artifact);
     if (generation !== routeGeneration || currentRoute?.recordingId !== recordingId || !reviewController) return;
-    const parsed = window.ImuGraph.parseSeries(document, artifact);
     renderImuGraph(artifact, parsed);
   } catch (error) {
     if (error?.name === "AbortError" || generation !== routeGeneration) return;
@@ -2607,23 +2627,6 @@ function graphTimestamp(globalTime) {
     : (reviewController.startSeconds + globalTime).toFixed(3);
 }
 
-function visibleImuSegment(segment, start, end) {
-  if (!segment.length || segment.at(-1).timeSeconds < start || segment[0].timeSeconds > end) return [];
-  const visible = [];
-  if (segment[0].timeSeconds <= start && segment.at(-1).timeSeconds >= start) {
-    const boundary = window.ImuGraph.sampleAtOrBefore(segment, start) || segment[0];
-    visible.push({ ...boundary, timeSeconds: start });
-  }
-  segment.forEach((sample) => {
-    if (sample.timeSeconds > start && sample.timeSeconds < end) visible.push(sample);
-  });
-  if (segment[0].timeSeconds <= end && segment.at(-1).timeSeconds >= end) {
-    const boundary = window.ImuGraph.sampleAtOrBefore(segment, end) || segment[0];
-    visible.push({ ...boundary, timeSeconds: end });
-  }
-  return visible;
-}
-
 function measureImuPlot(telemetry) {
   const rect = telemetry.plot.getBoundingClientRect();
   const width = Math.max(1, rect.width);
@@ -2710,8 +2713,9 @@ function drawImuTrace(telemetry, dimensions = measureImuPlot(telemetry), ratio =
   context.beginPath();
   context.rect(left, top, plotWidth, plotHeight);
   context.clip();
-  window.ImuGraph.traceSegments(telemetry.samples).forEach((segment) => {
-    const visible = visibleImuSegment(segment, telemetry.viewStart, telemetry.viewEnd);
+  window.ImuGraph.visibleTraceSegments(
+    telemetry.samples, telemetry.viewStart, telemetry.viewEnd, plotWidth * ratio,
+  ).forEach((visible) => {
     if (!visible.length) return;
     if (visible.length === 1) {
       context.fillStyle = accentColor;
@@ -3029,14 +3033,15 @@ function applyGlobalTime(value, forceSeek = false) {
       if (!player.video.paused || player.playPending) pausePlayer(player);
       clearPlayerSeek(player, { discardQueued: true });
       player.video.hidden = true;
+      player.coverageMessage.textContent = `Outside ${kind === "front" ? "front" : "top-down"} coverage`;
       player.coverageMessage.hidden = false;
+      previewElements(kind).pane.setAttribute("aria-busy", "false");
       player.insideCoverage = false;
       return;
     }
     const entered = !player.insideCoverage;
     player.insideCoverage = true;
-    player.coverageMessage.hidden = true;
-    player.video.hidden = false;
+    if (entered) setPlayerBuffering(kind, player.buffering);
     const desired = controller.clock.globalTime - player.coverageStart;
     requestPlayerTime(player, desired, forceSeek || entered);
     if (controller.clock.playing) requestPlayerPlayback(player, controller);
@@ -3727,13 +3732,12 @@ byId("collapse-recording-details").addEventListener("click", () => {
     if (reviewController?.clock.playing) applyGlobalTime(reviewController.clock.globalTime);
   });
   ["waiting", "stalled"].forEach((eventName) => elements.video.addEventListener(eventName, () => {
-    const player = reviewController?.players[kind];
-    if (player) player.buffering = true;
+    setPlayerBuffering(kind, true);
   }));
   ["canplay", "playing"].forEach((eventName) => elements.video.addEventListener(eventName, () => {
     const player = reviewController?.players[kind];
     if (!player) return;
-    player.buffering = false;
+    setPlayerBuffering(kind, false);
     player.playRetryAt = 0;
     if (eventName === "playing") {
       player.playPending = false;

@@ -21,7 +21,7 @@ from rosbag_analyser.job_control import JobControlToken
 
 
 MAX_SERIALIZED_IMU_BYTES = 1024 * 1024
-MAX_SERIES_BYTES = 32 * 1024 * 1024
+MAX_SERIES_BYTES = 64 * 1024 * 1024
 
 
 class ImuSeriesProcessingError(RuntimeError):
@@ -288,15 +288,15 @@ def _iter_topic_messages(
             )
         cursor = connection.execute(
             """
-            SELECT id, timestamp, length(data)
+            SELECT timestamp, length(data),
+                   CASE WHEN length(data) BETWEEN 1 AND ? THEN data ELSE NULL END
             FROM messages
             WHERE topic_id = ?
             ORDER BY timestamp, id
             """,
-            (topic_id,),
+            (MAX_SERIALIZED_IMU_BYTES, topic_id),
         )
-        data_cursor = connection.cursor()
-        for message_id, timestamp, serialized_size in cursor:
+        for timestamp, serialized_size, data in cursor:
             if (
                 not isinstance(serialized_size, int)
                 or serialized_size <= 0
@@ -306,15 +306,11 @@ def _iter_topic_messages(
                     "imu_serialized_payload_invalid",
                     "An IMU message exceeds the supported serialized size.",
                 )
-            row = data_cursor.execute(
-                "SELECT data FROM messages WHERE id = ?", (message_id,)
-            ).fetchone()
-            if row is None:
+            if data is None:
                 raise ImuSeriesProcessingError(
                     "imu_database_read_failed",
                     "The IMU stream could not be read from the ROS database.",
                 )
-            data = row[0]
             if not isinstance(data, bytes):
                 data = bytes(data)
             yield int(timestamp), data

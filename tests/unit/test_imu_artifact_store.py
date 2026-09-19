@@ -172,9 +172,13 @@ def test_series_validation_accepts_timestamp_finalization_and_records_it(
             '["10",1,1,1,1,1,1],["0",2,2,2,2,2,2]]}',
             "imu_series_validation_mismatch",
         ),
+        (
+            '{"schema_version":2,"samples":[["0",1,1,1,1,1,1],]}',
+            "imu_series_validation_failed",
+        ),
     ],
 )
-def test_invalid_json_constant_and_unordered_time_are_rejected(
+def test_invalid_series_format_and_unordered_time_are_rejected(
     tmp_path: Path, payload: str, expected_code: str
 ) -> None:
     derived = tmp_path / "derived"
@@ -188,17 +192,43 @@ def test_invalid_json_constant_and_unordered_time_are_rejected(
         store.validate_series(
             series,
             expected_schema_version=2,
-            expected_sample_count=1 if "NaN" in payload else 2,
+            expected_sample_count=2 if '"10"' in payload else 1,
             expected_columns=(
-                _columns(0, 1, None, None)
-                if "NaN" in payload
-                else _columns(2, 0, 1.0, 2.0)
+                _columns(2, 0, 1.0, 2.0)
+                if '"10"' in payload
+                else _columns(1, 0, 1.0, 1.0)
             ),
             expected_coverage_start_ns=0,
-            expected_coverage_end_ns=0 if "NaN" in payload else 10,
+            expected_coverage_end_ns=10 if '"10"' in payload else 0,
         )
 
     assert captured.value.code == expected_code
+
+
+def test_series_validation_streams_across_read_boundaries(tmp_path: Path) -> None:
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    store = _store(derived)
+    workspace = store.create_workspace(36)
+    series = workspace / "series.json"
+    count = 5_000
+    series.write_text(
+        '{"schema_version":2,"samples":['
+        + ",".join(f'["{index}",1,1,1,1,1,1]' for index in range(count))
+        + "]}"
+    )
+    assert series.stat().st_size > 64 * 1024
+
+    validation = store.validate_series(
+        series,
+        expected_schema_version=2,
+        expected_sample_count=count,
+        expected_columns=_columns(count, 0, 1.0, 1.0),
+        expected_coverage_start_ns=0,
+        expected_coverage_end_ns=count - 1,
+    )
+
+    assert validation.size_bytes == series.stat().st_size
 
 
 def test_published_series_tampering_is_not_served(tmp_path: Path) -> None:

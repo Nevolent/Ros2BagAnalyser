@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 import json
@@ -229,6 +230,23 @@ class ProcessingOverviewData:
 class ProcessingRepository:
     def __init__(self, database_url: str) -> None:
         self.database_url = database_url
+        self._worker_control_connection: psycopg.Connection | None = None
+
+    def set_worker_control_connection(
+        self, connection: psycopg.Connection | None
+    ) -> None:
+        """Reuse the worker's advisory-lock session for short control checks."""
+        self._worker_control_connection = connection
+
+    @contextmanager
+    def _control_transaction(self):
+        connection = self._worker_control_connection
+        if connection is None:
+            with open_connection(self.database_url) as fresh:
+                yield fresh
+        else:
+            with connection.transaction():
+                yield connection
 
     def get_source(self, recording_id: int) -> ProcessingSourceRecord | None:
         with open_connection(self.database_url) as connection:
@@ -1395,7 +1413,7 @@ class ProcessingRepository:
     def worker_checkpoint(self, job_id: int, phase: str) -> JobRecord:
         if phase not in {"setup", "processing", "validating", "cleanup"}:
             raise ValueError("The worker phase is invalid.")
-        with open_connection(self.database_url) as connection:
+        with self._control_transaction() as connection:
             row = _select_job_for_update(connection, job_id)
             if row is None:
                 raise RuntimeError("The worker job no longer exists.")
@@ -1412,7 +1430,7 @@ class ProcessingRepository:
             return job
 
     def acknowledge_pause(self, job_id: int) -> JobRecord:
-        with open_connection(self.database_url) as connection:
+        with self._control_transaction() as connection:
             row = _select_job_for_update(connection, job_id)
             if row is None:
                 raise RuntimeError("The worker job no longer exists.")
@@ -1434,7 +1452,7 @@ class ProcessingRepository:
             return job
 
     def enter_publishing(self, job_id: int) -> JobRecord:
-        with open_connection(self.database_url) as connection:
+        with self._control_transaction() as connection:
             row = _select_job_for_update(connection, job_id)
             if row is None:
                 raise RuntimeError("The worker job no longer exists.")

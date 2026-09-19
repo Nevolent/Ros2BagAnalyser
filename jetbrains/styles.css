@@ -1,0 +1,251 @@
+:root{color-scheme:dark;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;font-size:calc(100vw / 102.4);color:#bfc1c6;background:#25282b;font-weight:400;font-synthesis:none}*{box-sizing:border-box}body{margin:0;width:100vw;height:100vh;overflow:hidden}svg{width:1.2rem;height:1.2rem;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}.svg-library{position:absolute;width:0;height:0;overflow:hidden}.topbar{height:4.6875vh;display:flex;align-items:center;gap:.45rem;padding:0 1rem 0 1.15rem;background:#25282b;white-space:nowrap}.traffic{display:flex;gap:.8rem;margin-right:.9rem}.traffic i{height:.85rem;width:.85rem;background:#57595c;border-radius:50%}.project-badge{background:#a64fe0;border-radius:.25rem;color:#f4e8ff;padding:.12rem .17rem;font-size:1rem;line-height:1.1}.down{height:.36rem;width:.36rem;border:solid #a4a6ac;border-width:0 .07rem .07rem 0;transform:rotate(45deg);display:inline-block;margin-left:.15rem;margin-top:-.2rem}.git-label{display:flex;align-items:center;gap:.55rem;margin-left:1.6rem}.git-label svg{width:1rem}.run-tools{margin-left:auto;display:flex;align-items:center;gap:1.25rem}.run-label{display:flex;align-items:center;gap:.45rem;margin-left:1.6rem}.play{color:#529f6d;font-size:1.6rem;line-height:1}.green,.code-icon{color:#57925a}.global-tools{display:flex;align-items:center;gap:1.6rem;margin-left:4.7rem}.global-tools svg{width:1.35rem;height:1.35rem}.swirl{font-size:1.7rem;line-height:1}.settings{position:relative}.settings i{position:absolute;background:#ecc35e;width:.42rem;height:.42rem;right:0;top:0;border-radius:50%}.workspace{position:absolute;top:4.6875vh;left:2.9rem;right:2.9rem;bottom:3.4375vh;display:grid;grid-template-columns:calc((100% - .7rem) * 29.6 / 99.3) minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:.35rem}.panel{background:#191a1c;border-radius:.8rem;overflow:hidden;min-width:0;position:relative}.panel-header{height:2.9rem;display:flex;align-items:center;padding:0 .85rem;gap:.45rem;border-bottom:1px solid #2b2c2f;font-size:.98rem}.panel-header strong{font-weight:650}.project-header{border:0}.panel-actions{margin-left:auto;display:flex;align-items:center;gap:.95rem;color:#989ba1}.panel-actions>span{line-height:.45rem;font-size:1rem}.panel-actions .crosshair{font-size:1.4rem}.file-tree{padding:.3rem .85rem}.tree-row{height:1.72rem;display:flex;align-items:center;gap:.22rem;white-space:nowrap;font-size:.98rem}.tree-row svg{width:1.1rem;height:1.1rem;color:#a7abb1}.tree-row .chev{width:.9rem;height:.9rem;margin-right:.4rem;padding:.13rem}.expanded{transform:rotate(90deg)}.root b{font-weight:650}.path{margin-left:.2rem;color:#74767c;overflow:hidden}.level-1{padding-left:1.35rem}.level-2{padding-left:2.7rem}.file{padding-left:2.8rem}.highlighted{background:#2d4775;border-radius:.25rem}.markdown{font-size:.79rem;color:#5489f4;font-weight:800;letter-spacing:-.06rem;min-width:1.1rem}.xml{color:#bd7953;font-size:1.15rem;letter-spacing:-.12rem;width:1.1rem}.ignored{font-size:1.4rem;line-height:1;color:#a3a7ae;width:1.1rem}.library-icon{font-size:1.1rem;width:1.1rem}.scratch-icon{position:relative;font-size:1.35rem;width:1.1rem;line-height:1}.scratch-icon i{position:absolute;right:-.05rem;top:-.1rem;font-style:normal;font-size:.65rem;color:#588cf5}.editor-tabs{padding:0 .45rem;gap:.65rem}.editor-tab{display:flex;align-items:center;gap:.4rem;padding:.42rem .5rem;white-space:nowrap}.editor-tab.current{background:#25282c;border:2px solid #36393f;border-radius:.45rem;padding:.32rem .45rem}.code-icon{font-size:1.2rem;line-height:1}.close{color:#73767e;font-size:1.15rem;margin-left:.1rem}.editor-tab svg{width:1rem;height:1rem}.blue{color:#4c81ea}.editor-menu{margin-left:auto;color:#96999f}.editor-content{position:relative;height:calc(100% - 2.9rem);padding-top:.05rem;font-family:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;font-size:.93rem;line-height:1.57rem}.editor-content:before{content:"";position:absolute;left:4.5rem;top:0;bottom:0;width:1px;background:#323337}.code-line{display:flex;height:1.57rem;white-space:pre}.line-number{width:4.65rem;flex-shrink:0;padding-left:1rem;color:#555b64;font-size:.86rem}.code-line:first-of-type .line-number{padding-left:1rem}code{font:inherit;color:#bcbec4;letter-spacing:0}.tag{color:#c6ac6b}.string{color:#69a66d}.comment{color:#777b83}.spell{text-decoration:underline wavy #5c8e57;text-underline-offset:.2rem;text-decoration-thickness:1px}.current-line{background:#202124}.current-line .line-number{color:#969aa2}.inspection{position:absolute;right:.45rem;top:.3rem;display:flex;gap:.6rem;align-items:center;font: .83rem -apple-system,BlinkMacSystemFont,sans-serif;color:#989da5}.inspection .green{font-size:1.4rem;margin-right:-.45rem;line-height:1}.database-toolbar{height:2.45rem;display:flex;align-items:center;padding:0 .85rem;gap:.7rem;color:#999ca1}.database-toolbar svg{width:1rem;height:1rem}.database-toolbar>svg:first-child{width:1.2rem;height:1.2rem}.database-toolbar i{height:1.35rem;width:1px;background:#3c3d40;margin-left:-.25rem;margin-right:-.25rem}.dim{opacity:.4}.ddl{font-size:.78rem;color:#71747c}.db-settings{position:relative;height:1rem}.db-settings small{position:absolute;right:-.23rem;bottom:-.23rem;font-size:.7rem;color:#5684d4}.database-empty{position:absolute;top:40.2%;width:100%;text-align:center;color:#74777e;font-size:.98rem}.database-empty p{margin:.5rem 0;color:#6397f8}.database-empty p span{color:#73767d}.terminal-panel{grid-column:1 / -1}.terminal-header{gap:.8rem}.terminal-tab{display:flex;align-items:center;gap:.6rem;border:2px solid #34373d;border-radius:.4rem;background:#25282c;padding:.35rem .45rem;margin-left:.6rem}.terminal-header>svg{width:1.2rem}.terminal-actions{display:flex;align-items:center;gap:.8rem;margin-left:auto}.terminal-actions>span:last-child{margin-left:.3rem}.terminal-content{font-family:"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;font-size:.94rem;padding:.5rem .9rem;white-space:nowrap}.cursor{display:inline-block;width:.58rem;height:1.3rem;border:1px solid #c2c5cc;vertical-align:middle;margin-top:-.15rem}.rail{position:absolute;top:4.6875vh;bottom:3.4375vh;width:2.85rem;display:flex;align-items:center;flex-direction:column;gap:.65rem;padding-top:.25rem}.left-rail{left:0}.right-rail{right:0}.rail-button{width:2.15rem;height:2.15rem;display:flex;align-items:center;justify-content:center;font-size:1.5rem;border-radius:.45rem;color:#b4b8bf}.rail-button svg{width:1.45rem;height:1.45rem}.rail-button.active{background:#3571e1;color:#f0f5ff}.rail-button.selected{background:#45494d}.rail-separator{height:1px;width:1.7rem;background:#45454c;margin:-.1rem 0 -.05rem}.rail-bottom{margin-top:auto;display:flex;flex-direction:column;gap:.65rem;padding-bottom:.2rem}.ellipsis{letter-spacing:.1rem}.slider-icon{font-size:1.6rem;transform:scaleX(1.35)}.statusbar{position:absolute;bottom:0;left:0;right:0;height:3.4375vh;display:flex;align-items:center;justify-content:space-between;padding:0 1rem;color:#999da3;font-size:.94rem}.breadcrumb{margin:0 .55rem;font-size:1.3rem}.status-right{display:flex;align-items:center;gap:.9rem}.status-right svg{width:1.05rem;height:1.05rem}.status-right>span:last-child{margin-left:2rem}
+
+/* Reference geometry: 2048 × 1280; 58 px rails, 60 px top bar. */
+/* SVG controls share one stroke weight, without platform-dependent glyphs. */
+.panel-actions{gap:.7rem}
+.panel-actions svg{width:1.2rem;height:1.2rem}
+.panel-actions svg:nth-child(2){border-left:1px solid #3c3d40;padding-left:.4rem;width:1.65rem}
+.line-number{font-variant-numeric:tabular-nums}
+.code-line:nth-last-child(-n+2) .line-number{padding-left:.5rem}
+.code-icon{width:1rem;height:1rem}
+.inspection svg{width:1rem;height:1rem}
+.inspection .green{margin-right:-.4rem}
+.rail-button.active svg{fill:none}
+.rail-button.active use{fill:none}
+.spaces{display:flex;align-items:center;gap:.35rem}
+.status-right>svg:last-child{margin-left:2rem}
+.tree-row svg{stroke-width:1.6}
+
+/* Folder card: retain the existing IDE sizing and selection color. */
+.folder-row {
+  width: 100%;
+  padding: 0 .3rem 0 calc(.3rem + var(--folder-depth) * 1.35rem);
+  border: 0;
+  border-radius: .25rem;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+  gap: .3rem;
+}
+.folder-row.highlighted { background: #2d4775; }
+.folder-select:focus-visible,
+.folder-disclosure:focus-visible,
+.folders-toggle:focus-visible { outline: 1px solid #6397f8; outline-offset: -1px; }
+.folder-row span { overflow: hidden; text-overflow: ellipsis; }
+.folders-toggle {
+  margin-left: auto;
+  padding: .25rem;
+  border: 0;
+  border-radius: .25rem;
+  background: transparent;
+  color: #989ba1;
+  display: flex;
+  cursor: pointer;
+}
+.folders-toggle:hover { background: #25282c; }
+.folders-toggle svg { width: 1rem; height: 1rem; }
+
+/* The saved three-panel layout lives in snapshots/with-terminal-and-database/. */
+.file-tree { max-height: calc(100% - 2.9rem); overflow: auto; }
+.folder-select {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.folder-disclosure, .folder-disclosure-spacer {
+  width: .9rem;
+  height: 1.4rem;
+  flex: 0 0 .9rem;
+}
+.folder-disclosure {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.folder-disclosure svg { width: .7rem; height: .7rem; }
+.folder-children[hidden], #folder-list[hidden] { display: none; }
+
+/* Recordings use the same quiet header and spacing as the folders card. */
+.recordings-panel { display: flex; flex-direction: column; }
+.recordings-header { flex-shrink: 0; border-bottom: 0; gap: .65rem; }
+.last-scan { margin-left: .25rem; color: #777e87; font-size: .68rem; font-weight: 400; }
+.last-scan time { margin-left: .3rem; }
+.scan-retry { display: flex; align-items: center; padding: .2rem; border: 0; border-radius: .2rem; background: transparent; color: #777e87; cursor: pointer; }
+.scan-retry svg { width: .68rem; height: .68rem; }
+.scan-retry:hover { color: #bfc1c6; }
+.recordings-toolbar { display: flex; gap: .5rem; align-items: center; padding: .3rem .85rem .85rem; }
+.recordings-search { display: flex; align-items: center; flex: 1; min-width: 8rem; gap: .5rem; height: 1.9rem; padding: 0 .55rem; border: 1px solid #34373d; border-radius: .25rem; background: #202226; }
+.recordings-search svg { width: .95rem; height: .95rem; color: #858b95; }
+.recordings-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #bfc1c6; font: inherit; font-size: .8rem; }
+.recordings-search input::placeholder { color: #797f89; }
+.recordings-search:focus-within { border-color: #5489f4; }
+.recording-filter { height: 1.9rem; padding: 0 .4rem; border: 1px solid #34373d; border-radius: .25rem; background: #202226; color: #a4a9b1; font: inherit; font-size: .75rem; cursor: pointer; }
+.recordings-panel button:focus-visible, .recordings-panel select:focus-visible, .recordings-panel input[type="checkbox"]:focus-visible { outline: 1px solid #6397f8; outline-offset: 2px; }
+.recordings-table-scroll { flex: 1; overflow: auto; min-height: 0; }
+.recordings-table { width: 100%; border-collapse: separate; border-spacing: 0; text-align: left; white-space: nowrap; font-size: .85rem; }
+.recordings-table th { position: sticky; top: 0; z-index: 1; height: 1.9rem; padding: 0 .85rem; background: #191a1c; border-bottom: 1px solid #303237; color: #80868f; font-size: .75rem; font-weight: 400; }
+.recordings-table td { height: 2rem; padding: .2rem .85rem; color: #bfc1c6; }
+.recordings-table th:nth-child(2) { width: 40%; }
+.recordings-table .checkbox-cell { width: 2.3rem; padding-right: .2rem; }
+.recordings-table input[type="checkbox"] { appearance: none; display: block; width: .75rem; height: .75rem; margin: 0; border: 1px solid #60656e; border-radius: .15rem; background: transparent; cursor: pointer; }
+.recordings-table input[type="checkbox"]:checked { background: #426fbb; border-color: #5489f4; }
+.recordings-table input[type="checkbox"]:checked::after { content: ''; display: block; width: .2rem; height: .4rem; margin: .02rem auto; border: solid #e3e9f2; border-width: 0 1px 1px 0; transform: rotate(45deg); }
+.recordings-table input[type="checkbox"]:indeterminate { background: #426fbb; border-color: #5489f4; }
+.recordings-table input[type="checkbox"]:indeterminate::after { content: ''; display: block; width: .4rem; height: 1px; margin: .3rem auto; background: #e3e9f2; }
+.recordings-table tr.is-selected td { background: #253751; }
+.recordings-table .recording-status, .recordings-table .recording-health { color: #9299a2; font-size: .8rem; }
+.recordings-table .health-warning { color: #b7a17b; }
+.recordings-empty:not([hidden]) { display: flex; flex-direction: column; align-items: center; gap: .5rem; padding: 4rem 1rem; color: #79818c; font-size: .8rem; }
+.recordings-empty strong { color: #bfc1c6; font-weight: 400; }
+
+.scan-separator { margin: 0 .45rem; }
+.last-scan time, .recorded-date, .recordings-table .numeric { font-variant-numeric: tabular-nums; }
+.recordings-table .numeric { text-align: left; }
+
+/* Align the scan metadata with the title and simplify the table controls. */
+.recordings-header { gap: .55rem; }
+.last-scan { display: inline-flex; align-items: center; gap: .3rem; margin-left: .45rem; line-height: 1; }
+.last-scan time { margin-left: 0; }
+.scan-retry { padding: .15rem; }
+.recordings-toolbar { padding: .15rem .85rem .65rem; gap: .7rem; }
+.recordings-search { height: 1.8rem; border-color: transparent; border-bottom-color: #34373d; border-radius: 0; background: transparent; padding: 0 .15rem; }
+.recording-filter { height: 1.8rem; border: 0; border-radius: 0; background: transparent; color: #9299a2; padding: 0 .15rem; font-size: .75rem; }
+.recording-filter option { background: #202226; }
+.recordings-table { table-layout: fixed; }
+.recordings-table th, .recordings-table td { text-align: left; padding-left: .85rem; padding-right: .85rem; }
+.recordings-table .checkbox-cell { width: 2.2rem; padding-left: .85rem; }
+.recordings-table th:nth-child(2) { width: auto; }
+.recordings-table th:nth-child(3) { width: 11rem; }
+.recordings-table th:nth-child(4) { width: 7.8rem; }
+.recordings-table th:nth-child(5) { width: 7.8rem; }
+.recordings-table th:nth-child(6) { width: 7.8rem; }
+.recordings-table th:nth-child(7) { width: 7.8rem; }
+.recordings-table td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
+.recordings-table .recorded-date, .recordings-table td.numeric { color: #9299a2; font-size: .8rem; }
+
+/* A real IDE splitter occupies the existing gap between the two panels. */
+.workspace { grid-template-columns: var(--folders-width, calc((100% - .7rem) * 29.6 / 99.3)) .35rem minmax(0, 1fr); column-gap: 0; }
+.panel-divider { position: relative; cursor: col-resize; touch-action: none; outline: none; }
+.panel-divider::after { content: ''; position: absolute; inset: 0 -.15rem; z-index: 2; }
+.panel-divider:focus-visible { outline: 1px solid #777e87; outline-offset: -1px; }
+.workspace.is-resizing { user-select: none; cursor: col-resize; }
+.workspace.folders-hidden { grid-template-columns: minmax(0, 1fr); }
+.workspace.folders-hidden .project-panel, .workspace.folders-hidden .panel-divider { display: none; }
+.folders-rail-toggle { border: 0; padding: 0; background: transparent; cursor: pointer; }
+.folders-rail-toggle:focus-visible { outline: 1px solid #6397f8; outline-offset: 1px; }
+
+.recordings-table { min-width: 63rem; }
+
+/* Keep scan details close to the title and give controls their own row. */
+.recordings-header { gap: .4rem; }
+.last-scan { margin-left: 0; transform: translateY(.1rem); }
+.scan-retry { margin-left: -.2rem; transform: translateY(.1rem); padding: .1rem; }
+.recordings-toolbar {
+  flex-shrink: 0;
+  gap: 1rem;
+  padding: .65rem .85rem;
+  margin: .15rem 0 .8rem;
+  background: #1d1f21;
+  border-top: 1px solid #282b30;
+  border-bottom: 1px solid #282b30;
+}
+.recordings-search { max-width: 28rem; height: 2rem; border: 0; }
+.recordings-search:focus-within { box-shadow: inset 0 -1px #5489f4; }
+.recording-filter { height: 2rem; }
+
+/* Controls sit on the panel surface, like the IDE's own toolbars. */
+.recordings-toolbar {
+  background: transparent;
+  border: 0;
+  padding: .55rem .85rem .75rem;
+  margin: 0 0 .55rem;
+  gap: .7rem;
+}
+.recordings-search {
+  flex: 0 1 24rem;
+  max-width: none;
+  height: 1.85rem;
+  padding: 0 .5rem;
+  background: #202226;
+  border: 1px solid #35383e;
+  border-radius: .25rem;
+}
+.recordings-search:focus-within { border-color: #5489f4; box-shadow: none; }
+.recording-filter {
+  height: 1.85rem;
+  padding: 0 .35rem;
+  color: #a1a6ae;
+  background: transparent;
+  border: 0;
+  border-radius: .2rem;
+}
+.recording-filter:hover { background: #25282c; }
+
+/* Match the first folder row: 2.9rem header + .3rem inset, 1.72rem height. */
+.recordings-toolbar { padding: .3rem .85rem .45rem; margin: 0 0 .2rem; gap: .35rem; }
+.recordings-search, .recording-filter { height: 1.72rem; }
+.filter-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 1.5rem;
+  height: 1.72rem;
+  padding: .25rem;
+  border: 0;
+  border-radius: .2rem;
+  background: transparent;
+  color: #9299a2;
+  cursor: pointer;
+}
+.filter-reset svg { width: .85rem; height: .85rem; }
+.filter-reset:hover { background: #25282c; color: #bfc1c6; }
+
+/* A single control row: selected actions take space from the search field. */
+.recordings-search { flex: 1 1 24rem; min-width: 5rem; }
+.recording-filter, .filter-reset, .prepare-selected {
+  height: 1.72rem;
+  border: 1px solid #35383e;
+  border-radius: .25rem;
+  background: #202226;
+  color: #a1a6ae;
+}
+.recording-filter, .prepare-selected {
+  flex: 0 0 8.5rem;
+  width: 8.5rem;
+  padding: 0 .5rem;
+  font: inherit;
+  font-size: .75rem;
+}
+.filter-reset { flex-basis: 1.72rem; }
+.prepare-selected { cursor: pointer; white-space: nowrap; }
+.prepare-selected[hidden] { display: none; }
+.prepare-selected:hover, .filter-reset:hover, .recording-filter:hover { background: #25282c; }
+
+/* Simplified chrome: keep only the top toolbar and upper-left tools. */
+.workspace { right: .35rem; bottom: .35rem; }
+.left-rail { bottom: .35rem; }
+.run-tools { gap: 1.05rem; }
+.run-label { margin-left: 0; margin-right: .4rem; }
+.global-tools { margin-left: 1.05rem; gap: 1.05rem; }
+
+.snapshot-link { text-decoration: none; cursor: pointer; }
+.snapshot-link:hover { background: #35393e; }
+.snapshot-link:focus-visible { outline: 1px solid #6397f8; outline-offset: 1px; }

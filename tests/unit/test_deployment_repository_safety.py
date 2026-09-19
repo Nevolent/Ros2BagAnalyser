@@ -5,7 +5,7 @@ import re
 
 
 ROOT = Path(__file__).parents[2]
-SCANNED_ROOTS = (ROOT / "deploy", ROOT / "docs" / "NAS_TRIAL_RUNBOOK.md", ROOT / "docs" / "ENGINEER_TRIAL_GUIDE.md")
+SCANNED_ROOTS = (ROOT / "deploy", ROOT / "docs" / "OPERATIONS.md", ROOT / "docs" / "ENGINEER_GUIDE.md")
 TEXT_SUFFIXES = {"", ".conf", ".in", ".md", ".py", ".service", ".template"}
 
 

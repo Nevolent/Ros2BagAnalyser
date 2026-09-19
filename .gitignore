@@ -44,8 +44,14 @@ releases/
 *-inventory-*.json
 *-manifest.json
 
-# The authored archive page is a design reference. Its generated/mock payloads
-# and macOS packaging metadata are not source assets and must not enter Git.
-archive/__MACOSX/
-archive/assets/previews/
-archive/figure8-imu-bundle.json
+# Local recovery copies, editor state, and imported packaging metadata.
+.local-backup/
+.idea/
+.vscode/
+.DS_Store
+__MACOSX/
+._*
+*:Zone.Identifier
+
+# The one intentional archive is documentation history, not a release payload.
+!docs/history/legacy-docs-2026-09-19.tar.gz

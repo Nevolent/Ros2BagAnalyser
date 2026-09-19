@@ -1,0 +1,28 @@
+/* Shared header aligned to the 2.85rem tool rails in both views. */
+.techtrace-topbar { padding: 0; background: #25282b; }
+.techtrace-brand { display: grid; grid-template-columns: 2.85rem auto; align-items: center; column-gap: 0; color: #bfc1c6; font-size: 1rem; font-weight: 400; white-space: nowrap; }
+.techtrace-logo { justify-self: center; width: 1.65rem; height: 1.2rem; fill: currentColor; stroke: none; }
+.app-settings { margin-left: auto; margin-right: .35rem; width: 2.15rem; height: 2.15rem; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border: 0; padding: 0; background: transparent; border-radius: .45rem; color: #b4b8bf; cursor: pointer; }
+.app-settings svg { width: 1.45rem; height: 1.45rem; }
+.app-settings:hover { background: #35393e; color: #d6dae0; }
+.app-settings:focus-visible { outline: 1px solid #6397f8; outline-offset: -4px; border-radius: .3rem; }
+
+.rail-button[href] { text-decoration: none; cursor: pointer; }
+.rail-button[href]:focus-visible { outline: 1px solid #6397f8; outline-offset: 1px; }
+.left-rail .rail-separator { margin: -.1rem 0; }
+
+/* Wide desktop reference: 2559 × 1399 IntelliJ capture. Keep the original
+   laptop geometry below 1800 CSS px; reduce the viewport-scaled UI above it. */
+@media (min-width: 1800px) {
+  :root { font-size: calc(100vw / 120); }
+
+  /* Approximately 64 px toolbar and 62 px left inset at native 2K width. */
+  .topbar { height: 3rem; }
+  .workspace, .rail { top: 3rem; }
+
+  /* The reference folder card spans 838 / 2559 of the capture width.
+     An explicit splitter adjustment still takes precedence. */
+  .workspace:not(.analyzer-workspace):not(.processing-workspace):not(.folders-hidden) {
+    grid-template-columns: var(--folders-width, 32.75vw) .35rem minmax(0, 1fr);
+  }
+}

@@ -1825,7 +1825,7 @@ def test_actionable_failures_history_join_and_stable_cursor(postgres_url: str) -
 
 
 @pytest.mark.postgres
-def test_prompt_2a_pause_resume_cancel_and_publication_gate_are_durable(
+def test_pause_resume_cancel_and_publication_gate_are_durable(
     postgres_url: str,
 ) -> None:
     catalog = CatalogRepository(postgres_url)
@@ -1894,7 +1894,7 @@ def test_prompt_2a_pause_resume_cancel_and_publication_gate_are_durable(
 
 
 @pytest.mark.postgres
-def test_prompt_2a_queue_insert_claim_and_reorder_share_one_order(
+def test_queue_insert_claim_and_reorder_share_one_order(
     postgres_url: str,
 ) -> None:
     catalog = CatalogRepository(postgres_url)
@@ -1945,7 +1945,7 @@ def test_prompt_2a_queue_insert_claim_and_reorder_share_one_order(
 
 
 @pytest.mark.postgres
-def test_prompt_2a_claim_and_queued_cancel_serialize_truthfully(
+def test_claim_and_queued_cancel_serialize_truthfully(
     postgres_url: str,
 ) -> None:
     catalog = CatalogRepository(postgres_url)
@@ -1987,7 +1987,7 @@ def test_prompt_2a_claim_and_queued_cancel_serialize_truthfully(
 
 
 @pytest.mark.postgres
-def test_prompt_2a_restart_interrupts_every_nonterminal_control_state(
+def test_restart_interrupts_every_nonterminal_control_state(
     postgres_url: str,
 ) -> None:
     catalog = CatalogRepository(postgres_url)

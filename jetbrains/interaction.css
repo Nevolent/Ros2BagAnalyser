@@ -1,0 +1,40 @@
+/* Functional surfaces follow the existing restrained IDE chrome. */
+[hidden] { display: none !important; }
+button:disabled { opacity: .4; cursor: default; }
+button, input, select { accent-color: #5489f4; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 1px solid #6397f8; outline-offset: 2px; }
+.quiet-button { border: 1px solid #35383e; border-radius: .25rem; background: #25282c; color: #bfc1c6; padding: .3rem .6rem; font: inherit; font-size: .75rem; cursor: pointer; }
+.quiet-button:hover { background: #34383f; }
+.experiment-badge { font-size: .65rem; color: #9299a2; margin-left: .7rem; }
+.api-notice { position: fixed; bottom: .7rem; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 1rem; max-width: 75vw; padding: .6rem .8rem; background: #25282c; border: 1px solid #484d56; border-radius: .35rem; box-shadow: 0 .3rem 1.2rem #0008; font-size: .8rem; }
+.api-notice.is-error { border-color: #a27559; }
+.ide-dialog { color: #bfc1c6; background: #202226; border: 1px solid #484d56; border-radius: .45rem; padding: 0; width: min(32rem,90vw); max-height: 85vh; font: inherit; box-shadow: 0 .8rem 3rem #0008; }
+.ide-dialog::backdrop { background: #0006; }
+.ide-dialog h2 { font-size: .95rem; font-weight: 600; margin: 0; padding: .85rem 1rem; border-bottom: 1px solid #35383e; }
+.dialog-content { padding: 1rem; font-size: .8rem; line-height: 1.6; overflow: auto; max-height: 60vh; }
+.dialog-content h3 { font-size: .85rem; }
+.dialog-content p { color: #939aa5; }
+.dialog-content label { display: block; margin: .4rem 0; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: .5rem; border-top: 1px solid #35383e; padding: .75rem 1rem; }
+.scenario-choices { display: flex; flex-wrap: wrap; gap: .5rem; }
+.scenario-choices [aria-pressed=true] { border-color: #5489f4; }
+.recording-link { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; border: 0; background: transparent; color: inherit; font: inherit; padding: 0; cursor: pointer; text-align: left; }
+.recording-link:hover { color: #81a8ee; }
+.folder-count { margin-left: auto; color: #747c87; font-size: .7rem; }
+.jobs-actions { display: flex; align-items: center; gap: .4rem; padding: .4rem .85rem; min-height: 2.3rem; }
+.jobs-actions .jobs-summary { margin-left: auto; color: #9299a2; font-size: .75rem; }
+.job-state { color: #9299a2; font-size: .75rem; margin-left: .7rem; }
+.preview { position: relative; }
+.preview video { width: 100%; height: 100%; position: absolute; inset: 0; object-fit: contain; }
+.media-caption { position: absolute; left: .5rem; bottom: .5rem; padding: .15rem .35rem; font-size: .65rem; color: #c6c9d0; background: #191a1cdd; }
+.graph-empty { padding: 1rem; color: #858c96; text-align: center; font-size: .8rem; }
+.timeline { display: flex; gap: .6rem; align-items: center; padding: .4rem .85rem; font-size: .7rem; color: #9299a2; }
+.timeline input { min-width: 0; flex: 1; }
+.details-section dd, .detail-item span { overflow-wrap: anywhere; }
+.processing-tabs { overflow-x: auto; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* Preserve the analyzer's three panels and its separate details tool rail. */
+.analyzer-workspace { right: 2.9rem; column-gap: .35rem; }
+.synthetic-experiment .preview::after { content: 'Synthetic camera test pattern'; position: absolute; left: .5rem; bottom: .5rem; padding: .15rem .35rem; font-size: .65rem; color: #c6c9d0; background: #191a1cdd; pointer-events: none; }
+.dialog-content hr { border: 0; border-top: 1px solid #35383e; margin: 1rem 0; }

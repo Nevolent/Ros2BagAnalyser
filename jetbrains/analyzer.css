@@ -1,0 +1,62 @@
+/* Analyzer content inside the saved IDE chrome. */
+.analyzer-workspace {
+  grid-template-columns: minmax(0,16fr) minmax(0,12fr) minmax(18rem,8fr);
+  grid-template-rows: max-content minmax(6rem,1fr);
+  align-content: start;
+  overflow: auto;
+}
+.front-panel { grid-column: 1; grid-row: 1; }
+.top-panel { grid-column: 2; grid-row: 1; }
+.details-panel { grid-column: 3; grid-row: 1 / 3; min-height: 0; display: flex; flex-direction: column; }
+.velocity-panel { grid-column: 1 / 3; grid-row: 2; display: flex; flex-direction: column; min-height: 6rem; }
+.analyzer-workspace .panel-header { flex-shrink: 0; }
+.preview { width: 100%; background: #111214; display: flex; align-items: center; justify-content: center; }
+.front-preview { aspect-ratio: 16 / 9; }
+.top-preview { aspect-ratio: 4 / 3; }
+.preview-empty { padding: 1rem; text-align: center; color: #767c85; font-size: .75rem; }
+.preview-empty strong { color: #a6abb3; font-size: .85rem; font-weight: 500; }
+.preview-empty p { max-width: 24rem; margin: .65rem auto 0; line-height: 1.5; }
+.velocity-content { flex: 1; display: flex; align-items: center; justify-content: center; }
+.velocity-content .preview-empty p { max-width: none; }
+.velocity-header { gap: .65rem; }
+.play-control { display: flex; align-items: center; justify-content: center; padding: 0; background: none; border: 0; color: #6b727b; }
+.play-control svg { width: .9rem; height: .9rem; }
+.velocity-header select { font: inherit; font-size: .8rem; color: #969da7; background: #25282c; border: 1px solid #35393f; border-radius: .25rem; padding: .2rem .4rem; }
+.velocity-header select:focus-visible { outline: 1px solid #6397f8; }
+.details-content { overflow: auto; padding: 0 .85rem; font-size: .75rem; }
+.details-section { border-bottom: 1px solid #303237; padding: 1rem 0; }
+.details-section h2 { margin: 0 0 .9rem; font-size: .8rem; font-weight: 550; color: #b7bbc3; }
+.details-section dl { margin: 0; }
+.details-section dl>div { display: flex; justify-content: space-between; gap: .7rem; margin-top: .7rem; }
+.details-section dt { color: #7b818b; }
+.details-section dd { margin: 0; text-align: right; color: #a8aeb8; font-variant-numeric: tabular-nums; }
+.details-section code { background: #292c31; color: #9da3ad; padding: .05rem .3rem; border-radius: .15rem; font-size: .7rem; }
+.detail-item { margin: 1rem 0 0; }
+.detail-item>div { display: flex; justify-content: space-between; gap: .6rem; line-height: 1.5; }
+.detail-item>div>span:last-child, .detail-item>div+div { color: #7b818b; }
+.details-section .review { color: #bda16a; }
+.detail-item>div .readable { color: #72a482; }
+.details-note { margin: 1rem 0; color: #b88674; line-height: 1.5; font-size: .7rem; }
+.rail-button[href] { text-decoration: none; }
+.rail-button[href]:hover { background: #35393e; }
+
+/* Preview ratios determine the first row; the graph uses the remaining height. */
+.analyzer-workspace.details-hidden { grid-template-columns: minmax(0,16fr) minmax(0,12fr); }
+.details-panel[hidden] { display: none; }
+.velocity-content { background: #111214; }
+.details-toggle { border: 0; padding: 0; background: transparent; cursor: pointer; }
+.details-toggle.selected { background: #45494d; }
+.details-toggle:focus-visible { outline: 1px solid #6397f8; outline-offset: 1px; }
+
+.graph-tools { margin-left: auto; display: flex; align-items: center; gap: .5rem; }
+.graph-button { display: flex; align-items: center; justify-content: center; width: 1.25rem; height: 1.4rem; padding: .15rem; border: 0; border-radius: .2rem; background: transparent; color: #9299a2; font: inherit; font-size: .9rem; cursor: pointer; }
+.graph-button:hover { background: #292c31; color: #c8ccd3; }
+.graph-button:disabled { opacity: .35; cursor: default; }
+.graph-button:focus-visible { outline: 1px solid #6397f8; }
+.graph-button svg { width: .9rem; height: .9rem; }
+#graph-metric { background: transparent; border: 0; padding: 0 .2rem; font-size: .85rem; color: #b1b6bf; cursor: pointer; }
+#graph-metric option { background: #25282c; }
+.graph-content { position: relative; min-height: 5rem; overflow: hidden; }
+#imu-graph { display: block; width: 100%; height: 100%; position: absolute; inset: 0; cursor: crosshair; }
+
+.analyzer-workspace, .rail { bottom: .35rem; }

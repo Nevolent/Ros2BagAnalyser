@@ -34,8 +34,7 @@ scan, prepare, or migrate automatically at startup.
 | `api/`, `worker.py`, `web/` | HTTP delivery, serial execution and the served browser |
 | `config.py`, `deployment.py`, `preflight.py`, `health.py` | Validated settings, mount/capacity admission and service health |
 
-Paths above are relative to `src/rosbag_analyser/`. `jetbrains/` is a separate
-frontend reference and synthetic workspace; it is not loaded by the API.
+Paths above are relative to `src/rosbag_analyser/`.
 
 ## Catalog and persistence
 

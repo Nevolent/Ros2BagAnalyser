@@ -12,8 +12,6 @@ contains superseded reference material, not active instructions.
 - Keep changes focused and understandable. Prefer direct code and existing
   dependencies; discuss substantial architecture or dependency changes when
   they exceed the requested work.
-- Use `jetbrains/` as the retained frontend reference. The actual application
-  serves `src/rosbag_analyser/web/`; synthetic preview state must stay separate.
 - Keep documentation short and put each fact in its owning document. Update
   current guidance when behavior changes instead of adding another status log.
 

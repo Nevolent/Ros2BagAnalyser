@@ -37,27 +37,29 @@ python3 tools/serve_frontend_mock.py
 # Open http://127.0.0.1:4173/?mock=all-ready
 ```
 
-The retained [JetBrains frontend](jetbrains/README.md) is the design/workflow
-reference and has its own synthetic preview:
+The served frontend lives in `src/rosbag_analyser/web/`. Preview data is
+synthetic; use the full application to check actual ROS processing.
+
+## VM workflow
 
 ```bash
-python3 jetbrains/serve.py
-# Open http://127.0.0.1:4174/ (requires FFmpeg)
+./vm status                  # Bring service/release facts back to this PC
+./vm deploy --push           # Push an existing commit and deploy it
+./vm run tools/diagnostics/runtime_info.py
 ```
 
-The deployed frontend is `src/rosbag_analyser/web/`. Editing `jetbrains/` alone
-does not change the application. Both preview tools use invented data.
+Diagnostics return private reports to ignored `.vm-reports/` without requiring
+a release. See [Operations](docs/OPERATIONS.md) for source checks and custom scripts.
 
 ## Repository map
 
 | Location | Purpose |
 | --- | --- |
 | `src/rosbag_analyser/` | API, catalog, persistence, processors, worker, and served frontend |
-| `jetbrains/` | Retained frontend reference and isolated synthetic workspace |
 | `tests/` | Application, browser, database, ROS, and deployment verification |
-| `deploy/`, `deploy-vm` | VM release tooling, configuration examples, and service templates |
+| `vm`, `deploy/`, `deploy-vm` | VM commands, release tooling, configuration examples, and service templates |
 | `dev`, `scripts/`, `support/windows/` | Existing local development launcher and optional Windows shortcut |
-| `tools/` | Development helpers for the served frontend |
+| `tools/` | Frontend preview and VM diagnostic helpers |
 | `docs/` | Current guidance, with old documents bundled under `history/` |
 
 ## Documentation

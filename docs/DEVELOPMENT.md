@@ -1,10 +1,6 @@
 # Development
 
-## Workspaces
-
-Edit `src/rosbag_analyser/web/` to change the served frontend. The retained
-[JetBrains workspace](../jetbrains/README.md) is a separate design reference
-with synthetic data, not a second production backend.
+Edit `src/rosbag_analyser/web/` to change the served frontend.
 
 ## Python setup
 

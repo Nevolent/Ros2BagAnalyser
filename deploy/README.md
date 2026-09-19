@@ -4,6 +4,10 @@ The VM application is in use. This directory contains reusable tooling and
 templates; active site configuration lives outside Git. Start with
 [Operations](../docs/OPERATIONS.md) for checks, releases and recovery.
 
+Use `./vm` from the repository root for deployment, status, logs and diagnostics
+with reports returned to this PC. It reuses the existing `vm-deploy.env`; no
+second connection setup or diagnostic installation is required.
+
 | Files | Purpose |
 | --- | --- |
 | `environment.example` | Runtime roots, topics, bounds, mount and capacity settings |

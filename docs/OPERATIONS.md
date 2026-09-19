@@ -34,7 +34,21 @@ backup/restore procedure, recovery access and responsible operator.
 
 ## Routine checks
 
-On the VM:
+From this PC, use the existing private SSH settings:
+
+```bash
+./vm status
+./vm logs
+./vm deploy --push
+```
+
+`status` saves release, service and health facts; `logs` returns the last 200
+API/worker journal lines with common secrets and paths redacted. Reports land
+in a new private `.vm-reports/<timestamp>-<action>/` directory here. Each includes
+`report.json`, `stdout.txt`, `stderr.txt`, SSH errors and checksums. Reports are
+ignored by Git and remain available when a command fails. Review before sharing.
+
+For direct VM inspection:
 
 ```bash
 systemctl status rosbag-analyser-api.service rosbag-analyser-worker.service --no-pager
@@ -57,13 +71,20 @@ as well as their grouping target.
 ## Routine deployment
 
 ```text
-reviewed/tested commit → push → ./deploy-vm → immutable release → health/smoke
+reviewed/tested commit → ./vm deploy --push → immutable release → health/smoke
 ```
 
 Workstation settings live in mode-0600/0400
 `~/.config/rosbag-analyser/vm-deploy.env`, based on the example in `deploy/`.
-Local HEAD must match the remote branch exactly. Runtime changes must be
-committed; local README/docs edits are excluded from deployment.
+`--push` checks local eligibility, pushes the existing commit, then invokes
+`./deploy-vm`. It never commits files automatically. Omit `--push` if already
+pushed. `./deploy-vm --check` validates local eligibility without contacting the
+VM. Application/release changes must be committed; local docs, tests and
+diagnostic helpers do not block deployment and are not included.
+
+The committed deployment script is sent over SSH, so updating the deployment
+tool itself does not require manually copying it onto the VM first. Application
+code still comes from the exact pushed revision in the dedicated VM checkout.
 
 The VM fast-forwards its dedicated checkout and builds using the active checked
 wheelhouse. Frontend changes restart API only; other application changes drain
@@ -76,6 +97,44 @@ and configuration templates use the planned procedure below. The classifier in
 `deploy/scripts/deploy-from-git` is authoritative. It never scans or prepares.
 If health/smoke fails after activation, inspect the active pointer and services;
 the routine deployer does not automatically roll back.
+
+## Run a diagnostic and get the result back
+
+```bash
+./vm topics --recording 'folder/recording'
+./vm front-headers --recording 'folder/recording' --max-messages 100000
+./vm run tools/diagnostics/runtime_info.py
+./vm run --recording 'folder/recording' tools/diagnostics/my_check.py -- argument
+```
+
+Recording paths are relative to the configured archive root; repeat
+`--recording` for several. Root and topic settings come from the VM. Put wrapper
+options before the custom script path; arguments after it are passed literally
+to the script. `--timeout` changes the default five-minute limit (up to one hour);
+`--output` selects a new local report directory. Source inventories have explicit
+`--max-depth` and `--max-entries` bounds.
+
+`run` sends the current local Python file, including uncommitted edits. It needs
+no push, install, application release or restart. The VM stages it temporarily
+and uses the active release's Python environment plus ROS Humble. Print results
+to stdout (JSON/CSV/text); they return in `stdout.txt`. Arbitrary generated files
+and sibling Python modules are not transferred. A script's installed application
+imports reflect the running release, not uncommitted local backend edits.
+
+Diagnostics run as `rosbag-analyser` in a transient systemd sandbox: filesystem
+writes outside its temporary work area are blocked, network/database access and
+private service configuration are hidden, and runtime/memory/output are bounded.
+Without `--recording`, the source root is hidden too. With a selection, scripts
+must limit reads to it; the wrapper compares lightweight inventories before and
+after, including script failures. It reports incomplete evidence on hard kills
+or transport failures rather than claiming source safety was verified. Original
+source mounts must be read-only. No application service is restarted.
+
+Scripts receive `ROS_BAG_ANALYSER_ARCHIVE_ROOT`, configured front/IMU topic
+variables, and `VM_DIAGNOSTIC_RECORDINGS` (a JSON list of relative directories).
+The existing SSH operator needs non-interactive sudo for the receiver and
+systemd-run. Connection failure details are saved in `ssh-stderr.txt`; check VM
+power, network/VPN and the private SSH settings before retrying.
 
 ## Planned releases and new installations
 

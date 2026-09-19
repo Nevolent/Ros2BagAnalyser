@@ -5,14 +5,14 @@ product changes, without the former numbered building blocks.
 
 ## Next: finish the frontend
 
-- Bring the served Recordings, Processing, and Analyzer experience into line
-  with the retained JetBrains reference where it improves engineering use.
+- Finish the served Recordings, Processing, and Analyzer workflows for everyday
+  engineering use.
 - Resolve layout, navigation, selection, menus, and recording-level processing
   presentation across ordinary desktop sizes and narrow screens.
 - Make loading, unavailable output, partial preparation, failures, and recovery
   clear. Preserve real API behavior and accessible interaction.
-- Verify long-recording review and larger IMU bundles before porting the
-  JetBrains workspace's bounded renderer; it currently caps input at 200,000 samples.
+- Verify long-recording review and larger IMU bundles; keep graph rendering
+  responsive with measured input bounds.
 
 ## Engineer release readiness
 

@@ -46,6 +46,7 @@ releases/
 
 # Local recovery copies, editor state, and imported packaging metadata.
 .local-backup/
+.vm-reports/
 .idea/
 .vscode/
 .DS_Store

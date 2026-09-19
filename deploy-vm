@@ -14,11 +14,13 @@ fail() {
 
 usage() {
   cat <<'EOF'
-Usage: ./deploy-vm
+Usage: ./deploy-vm [--check]
 
-Deploy the checked-in main branch to the configured VM. This command refuses
-uncommitted work, an unpushed commit, migrations, dependency changes, and
-infrastructure/template changes. Handle those through the controlled runbook.
+Deploy the committed, pushed branch to the configured VM. Local documentation,
+tests and diagnostic scripts do not block deployment. Uncommitted application
+changes, migrations, dependencies and infrastructure changes need attention.
+Use ./vm deploy --push to push the commit first, or ./vm run for diagnostics.
+--check validates local settings, branch and changes without network access.
 EOF
 }
 
@@ -54,7 +56,7 @@ require_deployable_worktree() {
   )
   for changed_path in "${changed_paths[@]}"; do
     case "$changed_path" in
-      README.md|docs/*)
+      README.md|docs/*|AGENTS.md|tests/*|jetbrains/*|tools/*|vm|scripts/*|support/*|.gitignore)
         ;;
       *)
         fail "uncommitted runtime change: $changed_path; commit or stash it first"
@@ -62,7 +64,7 @@ require_deployable_worktree() {
     esac
   done
   if (( ${#changed_paths[@]} > 0 )); then
-    echo "Deploying the pushed commit; local README/docs changes are excluded."
+    echo "Deploying the pushed commit; local non-runtime changes are excluded."
   fi
 }
 
@@ -70,10 +72,13 @@ require_deployable_worktree() {
   usage
   exit 0
 }
-[[ $# -eq 0 ]] || {
+check_only=false
+if [[ $# -eq 1 && "$1" == "--check" ]]; then
+  check_only=true
+elif [[ $# -ne 0 ]]; then
   usage >&2
-  fail "this command takes no arguments"
-}
+  fail "unrecognized deployment arguments"
+fi
 
 require_command git
 require_command stat
@@ -101,6 +106,10 @@ readonly local_branch="$(git -C "$project_root" branch --show-current)"
 [[ "$local_branch" == "$deploy_branch" ]] \
   || fail "checked-out branch $local_branch does not match configured deployment branch $deploy_branch"
 readonly local_revision="$(git -C "$project_root" rev-parse --verify HEAD)"
+if [[ "$check_only" == true ]]; then
+  echo "Local deployment settings, branch and runtime changes are valid."
+  exit 0
+fi
 readonly remote_revision="$(
   git -C "$project_root" ls-remote --exit-code --heads origin "refs/heads/$deploy_branch" \
     | awk '{print $1}'
@@ -116,5 +125,5 @@ exec "$ssh_program" \
   -o StrictHostKeyChecking=yes \
   "$deploy_user@$deploy_host" \
   sudo --non-interactive \
-  /opt/rosbag-analyser/repository/deploy/scripts/deploy-from-git \
-  "$deploy_branch" "$local_revision"
+  bash -s -- "$deploy_branch" "$local_revision" \
+  < <(git -C "$project_root" show "$local_revision:deploy/scripts/deploy-from-git")

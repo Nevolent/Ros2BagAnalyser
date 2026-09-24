@@ -37,8 +37,23 @@ python3 tools/serve_frontend_mock.py
 # Open http://127.0.0.1:4173/?mock=all-ready
 ```
 
-The served frontend lives in `src/rosbag_analyser/web/`. Preview data is
-synthetic; use the full application to check actual ROS processing.
+The default served frontend remains in `src/rosbag_analyser/web/`. The replacement
+React frontend in `frontend/` runs separately against the same backend:
+
+```bash
+./dev start
+cd frontend
+npm ci
+npm run dev
+# New React UI: http://127.0.0.1:5173
+# Old default UI: http://127.0.0.1:8000
+```
+
+The imported React design is the visual reference for the replacement. It is
+not enabled by deployment or Python packaging yet. See
+[frontend setup](frontend/README.md) for proxy settings, explicit demo mode, and
+checks. Both demo previews use synthetic data; use the full application to
+check actual ROS processing.
 
 ## VM workflow
 
@@ -56,6 +71,7 @@ a release. See [Operations](docs/OPERATIONS.md) for source checks and custom scr
 | Location | Purpose |
 | --- | --- |
 | `src/rosbag_analyser/` | API, catalog, persistence, processors, worker, and served frontend |
+| `frontend/` | Separately runnable React/Vite replacement; existing backend remains the default UI |
 | `tests/` | Application, browser, database, ROS, and deployment verification |
 | `vm`, `deploy/`, `deploy-vm` | VM commands, release tooling, configuration examples, and service templates |
 | `dev`, `scripts/`, `support/windows/` | Existing local development launcher and optional Windows shortcut |

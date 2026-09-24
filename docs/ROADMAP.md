@@ -5,8 +5,9 @@ product changes, without the former numbered building blocks.
 
 ## Next: finish the frontend
 
-- Finish the served Recordings, Processing, and Analyzer workflows for everyday
-  engineering use.
+- Evaluate the separately runnable React frontend against a bounded real workflow
+  before making it the default. Keep the imported design as the visual reference
+  and retain the existing served UI until that transition is approved.
 - Resolve layout, navigation, selection, menus, and recording-level processing
   presentation across ordinary desktop sizes and narrow screens.
 - Make loading, unavailable output, partial preparation, failures, and recovery

@@ -1,6 +1,13 @@
 # Development
 
-Edit `src/rosbag_analyser/web/` to change the served frontend.
+The default served UI remains `src/rosbag_analyser/web/`. The replacement in
+`frontend/` uses React, TypeScript and Vite and preserves the imported design.
+Run `npm ci && npm run dev` from that folder with the backend running: the new
+UI uses port 5173 and proxies `/api` to port 8000, where the old UI remains
+available. Override `ROS_BAG_API_TARGET` for a different backend. Use Node
+22.12+ or 24. See [frontend development](../frontend/README.md) for its explicit
+visual demo, build, browser tests and visual comparison commands. Building it
+does not replace the default UI or change VM deployment.
 
 ## Python setup
 

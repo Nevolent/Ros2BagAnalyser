@@ -2,7 +2,10 @@
 
 ## Runtime
 
-One FastAPI application serves a dependency-free browser frontend. PostgreSQL
+One FastAPI application serves the existing dependency-free browser frontend.
+A separately runnable React/Vite frontend in `frontend/` connects to the same
+API through a local proxy; it is the visual reference for the replacement and
+is not yet served by FastAPI or packaged into VM releases. PostgreSQL
 stores catalog and job metadata; one serial ROS-aware worker creates files in
 the derived-data root. The VM runtime is Ubuntu 22.04, Python 3.10, and ROS 2
 Humble, as recorded in [the release contract](../deploy/release-contract.json).
@@ -132,8 +135,10 @@ processing overview/history, and job controls. Existing `/api/recordings/...`
 routes still deliver identity-bound media and IMU; their older naming does not
 make them unused. Schemas and routes in `api/` are the detailed API reference.
 
-Browser routes are `/`, `/processing`, and `/recordings/{id}`. Backend values
-are rendered as text and validated IDs/URLs, never arbitrary HTML. Errors are
+Default browser routes are `/`, `/processing`, and `/recordings/{id}`. The
+separate React app uses `#/recordings`, `#/processing`, and `#/analysis/{id}`;
+its integration is described in
+[frontend architecture](../frontend/docs/architecture.md). Backend values are rendered as text and validated IDs/URLs, never arbitrary HTML. Errors are
 sanitized; absolute source paths stay server-side. Polling, accessibility, and
 media synchronization are covered by the JavaScript runtime tests.
 

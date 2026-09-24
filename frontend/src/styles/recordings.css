@@ -1,0 +1,260 @@
+/* The recordings cards establish the spacing contract for future views. */
+.recordings-content {
+  --recordings-status-width: 112px;
+  --recordings-action-height: var(--control-height);
+  --recordings-action-width: 150px;
+}
+.recordings-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.recordings-rescan {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px 30px;
+  gap: 0;
+  width: var(--recordings-action-width);
+  height: var(--recordings-action-height);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  background: transparent;
+}
+.recordings-rescan [data-slot='button-group-separator'] {
+  display: block;
+  width: 1px;
+  margin: 0;
+  background: transparent;
+}
+.recordings-rescan button,
+.recordings-content .prepare-selected {
+  height: var(--recordings-action-height);
+  min-height: 0;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 0;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.recordings-rescan button {
+  width: 100%;
+  background: var(--secondary);
+}
+.recordings-rescan [data-scan-history] {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-left: 0;
+}
+.recordings-rescan [data-scan-history] svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+.recordings-rescan button:hover,
+.recordings-rescan button:focus-visible,
+.recordings-rescan [data-state='open'] {
+  background: color-mix(in oklab, var(--foreground) 8%, var(--secondary));
+}
+.recordings-rescan [data-rescan-archive]:disabled {
+  opacity: 1;
+  color: var(--muted-foreground);
+  cursor: wait;
+}
+.recordings-content .prepare-selected {
+  width: var(--recordings-action-width);
+  border-radius: var(--radius-control);
+}
+.recordings-content .prepare-selected:hover {
+  background: var(--action-emphasis-hover) !important;
+}
+
+.recordings-workspace .folder-list {
+  scrollbar-gutter: stable;
+}
+.recordings-workspace .folder-name {
+  flex: 1;
+}
+.recordings-workspace .folder-bag-count {
+  flex: none;
+  margin-left: auto;
+  padding-left: 4px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.recordings-workspace .folder-row.has-selected-descendant:after {
+  display: none;
+}
+.recordings-toolbar {
+  flex: none;
+  margin: 0 8px 6px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+.recordings-toolbar .bag-filter {
+  width: var(--recordings-status-width);
+  height: var(--search-control-height);
+  border-radius: var(--radius-sm);
+}
+.recordings-toolbar .bag-filter button {
+  border-radius: inherit;
+}
+.recordings-toolbar .bag-filter button:hover,
+.recordings-toolbar .bag-filter button[aria-expanded='true'] {
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+}
+.recordings-workspace .bag-health-column,
+.recordings-workspace .bag-analysis-column {
+  width: var(--recordings-status-width);
+}
+
+.recordings-prepare-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-dialog);
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: 0 16px 60px #0004;
+  font-size: 12px;
+  line-height: 18px;
+}
+.recordings-prepare-dialog::backdrop {
+  background: #0006;
+  backdrop-filter: blur(3px);
+}
+.recordings-prepare-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.recordings-prepare-dialog h2 {
+  font-size: 14px;
+  font-weight: 500;
+}
+.recordings-prepare-dialog header > span {
+  color: var(--muted-foreground);
+}
+.recordings-prepare-dialog p {
+  margin-top: 8px;
+  color: var(--muted-foreground);
+}
+.prepare-bag-list {
+  max-height: min(280px, 40dvh);
+  overflow: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+.prepare-bag-list li {
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+}
+.prepare-bag-list li:last-child {
+  border-bottom: 0;
+}
+.prepare-destination {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: fit-content;
+  cursor: pointer;
+}
+.recordings-prepare-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: 20px;
+}
+.recordings-prepare-dialog footer button {
+  height: 30px;
+  min-width: 80px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--secondary);
+  cursor: pointer;
+}
+.recordings-prepare-dialog footer button:hover {
+  background: var(--accent);
+}
+.recordings-prepare-dialog .prepare-confirm {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.recordings-prepare-dialog .prepare-confirm:hover {
+  background: color-mix(in oklab, var(--primary) 88%, var(--popover));
+}
+.recordings-notice {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 120;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--popover);
+  color: var(--foreground);
+  font-size: 12px;
+  box-shadow: 0 4px 20px #0002;
+}
+
+@media (max-width: 600px) {
+  .recordings-actions {
+    max-width: 100%;
+    flex-wrap: nowrap;
+  }
+  .recordings-rescan,
+  .recordings-content .prepare-selected {
+    width: var(--recordings-action-width);
+    max-width: none;
+    flex-shrink: 1;
+  }
+  .recordings-rescan {
+    grid-template-columns: minmax(0, 1fr) 1px 28px;
+  }
+  .recordings-rescan button,
+  .recordings-content .prepare-selected {
+    padding-inline: 8px;
+  }
+  .recordings-toolbar {
+    flex-wrap: wrap;
+  }
+  .recordings-toolbar .bag-search-field {
+    flex-basis: 100%;
+  }
+  .recordings-toolbar .bag-filter {
+    flex: 1;
+  }
+  .recordings-workspace .folder-reopen svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.recordings-workspace .bag-health-cell {
+  padding-left: 22px;
+}
+.recordings-workspace .bag-recorded-column {
+  width: 158px;
+}
+.recordings-workspace .bag-duration-column {
+  width: 110px;
+}
+
+.recordings-workspace .bag-panel-header {
+  justify-content: flex-start;
+}

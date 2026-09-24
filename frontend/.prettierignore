@@ -1,0 +1,7 @@
+node_modules
+dist
+artifacts
+package-lock.json
+test-results
+playwright-report
+src/styles/base.css

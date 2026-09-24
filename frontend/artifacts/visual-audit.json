@@ -1,0 +1,58 @@
+[
+  {
+    "name": "desktop",
+    "width": 1440,
+    "height": 1000,
+    "changed": 6,
+    "total": 1440000,
+    "percent": "0.0004"
+  },
+  {
+    "name": "search",
+    "width": 1440,
+    "height": 1000,
+    "changed": 0,
+    "total": 1440000,
+    "percent": "0.0000"
+  },
+  {
+    "name": "actions",
+    "width": 1440,
+    "height": 1000,
+    "changed": 6,
+    "total": 1440000,
+    "percent": "0.0004"
+  },
+  {
+    "name": "collapsed",
+    "width": 1440,
+    "height": 1000,
+    "changed": 6,
+    "total": 1440000,
+    "percent": "0.0004"
+  },
+  {
+    "name": "empty-agenda",
+    "width": 1440,
+    "height": 1000,
+    "changed": 631,
+    "total": 1440000,
+    "percent": "0.0438"
+  },
+  {
+    "name": "mobile",
+    "width": 390,
+    "height": 844,
+    "changed": 42,
+    "total": 329160,
+    "percent": "0.0128"
+  },
+  {
+    "name": "mobile-menu",
+    "width": 390,
+    "height": 844,
+    "changed": 0,
+    "total": 329160,
+    "percent": "0.0000"
+  }
+]

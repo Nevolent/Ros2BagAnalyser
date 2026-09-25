@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import logging
+import re
 import threading
 import time
 
@@ -105,6 +106,10 @@ async def test_list_detail_and_static_browser_contract() -> None:
         imu_script = await client.get("/imu_graph.js")
         stylesheet = await client.get("/styles.css")
         icon = await client.get("/assets/tectrace-icon.svg")
+        css_path = re.search(r'href="(/assets/index-[^"]+\.css)"', page.text)
+        assert css_path is not None
+        react_css = await client.get(css_path.group(1))
+        font = await client.get("/assets/geist-latin.woff2")
 
     assert listing.status_code == 200
     assert listing.json()["items"][0]["start_time_ns"] == "1700000000000000000"
@@ -116,6 +121,12 @@ async def test_list_detail_and_static_browser_contract() -> None:
     assert page.status_code == 200
     assert "Tectrace" in page.text
     assert 'id="app"' in page.text
+    assert 'style=' not in page.text
+    assert "style-src 'self'" in page.headers["content-security-policy"]
+    assert react_css.status_code == 200
+    assert re.search(r'--font-sans:\s*Geist', react_css.text)
+    assert font.status_code == 200
+    assert font.headers["content-type"].startswith("font/woff2")
     assert '/assets/index-' in page.text
     assert '/src/main.tsx' not in page.text
     assert 'preview-front.png' not in page.text

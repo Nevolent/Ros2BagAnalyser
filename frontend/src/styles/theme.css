@@ -14,6 +14,15 @@
   size-adjust: 104.76%;
 }
 
+:root {
+  --font-sans: Geist, 'Geist Fallback', Arial, sans-serif;
+  color-scheme: dark;
+}
+
+:root:not(.dark) {
+  color-scheme: light;
+}
+
 /* Shared geometry and semantic colors. Values preserve the tailored UI. */
 :root {
   --space-1: 4px;

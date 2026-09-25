@@ -9,10 +9,11 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import subprocess
 import sys
 import uuid
+
+import vm_ssh
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "ROS_BAG_ANALYSER_VM_DEPLOY_"
@@ -42,14 +43,22 @@ def connection_settings() -> dict[str, str]:
     return settings
 
 
-def ssh_command(settings: dict[str, str]) -> list[str]:
-    source = (ROOT / "tools/vm_remote.py").read_bytes()
-    remote = shlex.join(["sudo", "--non-interactive", "python3", "-c",
-                         f"exec(bytes.fromhex('{source.hex()}'))"])
-    return [settings["SSH"], "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-            "-o", "ConnectionAttempts=1", "-o", "StrictHostKeyChecking=yes",
-            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2",
-            f'{settings["USER"]}@{settings["HOST"]}', remote]
+def transport_error(stderr: bytes) -> str:
+    detail = stderr.decode("utf-8", errors="replace").strip()
+    # Keep terminal controls out of the displayed error; retain raw bytes in the report.
+    detail = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", detail)
+    return "No complete VM report received" + (":\n" + detail[-3000:] if detail else ".")
+
+
+def print_status(response: dict) -> None:
+    release = response.get("release", {})
+    print(f"Release: {release.get('release_id') or 'unavailable'}")
+    for name, value in response.get("services", {}).items():
+        properties = dict(line.split("=", 1) for line in value.splitlines() if "=" in line)
+        print(f"{name}: {properties.get('ActiveState', 'unavailable')} / {properties.get('SubState', 'unknown')}")
+    for name, value in response.get("health", {}).items():
+        body = value.get("body", {})
+        print(f"Health {name}: {body.get('status', 'unavailable')} (HTTP {value.get('http_status', 'unavailable')})")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -155,14 +164,15 @@ def main(argv: list[str] | None = None) -> int:
         directory.mkdir(mode=0o700)
         print(f"Running {args.action}; local report: {directory}", flush=True)
         try:
-            result = subprocess.run(ssh_command(settings), input=json.dumps(request).encode(),
-                                    capture_output=True, timeout=args.timeout + 90)
+            source = (ROOT / "tools/vm_remote.py").read_text()
+            result = vm_ssh.run(settings, ["python3", "-c", source], json.dumps(request).encode(),
+                                sudo=args.action != "status", timeout=args.timeout + 90)
             try:
                 response = json.loads(result.stdout)
                 if not isinstance(response, dict) or not isinstance(response.get("exit_code"), int):
                     raise ValueError
             except (ValueError, UnicodeDecodeError):
-                response = {"exit_code": result.returncode or 1, "error": "No complete VM report received",
+                response = {"exit_code": result.returncode or 1, "error": transport_error(result.stderr),
                             "stdout": result.stdout.decode("utf-8", errors="replace")}
             if result.returncode and not response["exit_code"]:
                 response["exit_code"] = result.returncode
@@ -175,6 +185,10 @@ def main(argv: list[str] | None = None) -> int:
             response, transport = {"exit_code": 1, "error": "Could not start SSH."}, b""
         save_report(directory, request, response, transport)
         code = response["exit_code"]
+        if args.action == "status" and "services" in response:
+            print_status(response)
+        elif args.action == "logs" and code == 0:
+            print(f"Service logs: {directory / 'stdout.txt'}")
         print(f"{'Completed' if code == 0 else 'Failed'} (exit {code}). See {directory / 'report.json'}")
         if response.get("error"):
             print(response["error"], file=sys.stderr)

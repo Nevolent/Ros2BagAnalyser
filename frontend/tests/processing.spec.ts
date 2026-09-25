@@ -47,16 +47,33 @@ test('progress ticks, pauses elapsed time, loops, and asks before cancellation',
   await expect(page.locator('[data-processing-status]')).toHaveText('Cancelled');
 });
 
-test('queue supports confirmed bulk cancellation without reorder controls', async ({ page }) => {
+test('queue supports moves and confirmed bulk cancellation', async ({ page }) => {
   await page.goto('/?demo=1#/processing');
   const rows = page.locator('.bag-table tbody .bag-name');
+  const moveUp = page.getByRole('button', { name: 'Move up' });
+  const moveDown = page.getByRole('button', { name: 'Move down' });
+  await page.getByRole('checkbox', { name: `Select ${names[0]}`, exact: true }).check();
+  await expect(moveUp).toBeDisabled();
+  await expect(moveDown).toBeEnabled();
+  await expect(moveUp).toHaveCSS('opacity', '0.3');
+  await page.getByRole('checkbox', { name: `Select ${names[0]}`, exact: true }).uncheck();
+  await page.getByRole('checkbox', { name: `Select ${names[3]}`, exact: true }).check();
+  await expect(moveUp).toBeEnabled();
+  await expect(moveDown).toBeDisabled();
+  await page.getByRole('checkbox', { name: `Select ${names[3]}`, exact: true }).uncheck();
   await page.getByRole('checkbox', { name: `Select ${names[1]}`, exact: true }).check();
   await page.getByRole('checkbox', { name: `Select ${names[2]}`, exact: true }).check();
   await expect(page.getByRole('checkbox', { name: 'Select all queued jobs' })).toHaveJSProperty(
     'indeterminate',
     true,
   );
-  await expect(page.getByRole('button', { name: /Move earlier|Move later/ })).toHaveCount(0);
+  await expect(moveUp).toBeEnabled();
+  await expect(moveDown).toBeEnabled();
+  await moveDown.click();
+  await expect(rows).toHaveText([names[0], names[3], names[1], names[2]]);
+  await expect(moveUp).toBeEnabled();
+  await expect(moveDown).toBeDisabled();
+  await moveUp.click();
   await expect(rows).toHaveText(names);
   await page.getByRole('button', { name: 'Cancel 2 selected', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Keep in queue' })).toHaveCSS(
@@ -70,7 +87,8 @@ test('queue supports confirmed bulk cancellation without reorder controls', asyn
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel 2 jobs' }).click();
   await expect(rows).toHaveText([names[0], names[3]]);
   await page.getByRole('checkbox', { name: 'Select all queued jobs' }).check();
-  await expect(page.getByRole('button', { name: /Move earlier|Move later/ })).toHaveCount(0);
+  await expect(moveUp).toBeDisabled();
+  await expect(moveDown).toBeDisabled();
 });
 
 test('failures retry only failed outputs and history stays read-only without tab resizing', async ({
@@ -164,12 +182,31 @@ for (const width of [390, 768, 1440]) {
     await page.getByRole('checkbox', { name: 'Go to Processing' }).check();
     await page.getByRole('button', { name: 'Confirm', exact: true }).click();
     await expect(page.locator('.bag-table tbody tr')).toHaveCount(211);
-    await page.locator('.bag-table-scroll').evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-    });
+    const viewport = page.locator('.bag-table-scroll');
+    await viewport.hover();
+    await page.mouse.wheel(0, 20000);
+    await expect.poll(async () => viewport.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
     await expect(page.getByRole('columnheader', { name: 'Name', exact: true })).toBeInViewport();
     await expect(page.getByRole('button', { name: 'Queue', exact: true })).toBeInViewport();
     await expect(page.locator('.bag-table tbody tr').last()).toBeInViewport();
+    if (width === 1440) {
+      const track = page.locator('.table-scrollbar-track');
+      await expect(track).toHaveAttribute('data-visible', 'true');
+      const thumb = (await page.locator('.table-scrollbar-thumb').boundingBox())!;
+      const trackBox = (await track.boundingBox())!;
+      await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        thumb.x + thumb.width / 2,
+        trackBox.y + thumb.height / 2,
+        { steps: 6 },
+      );
+      await page.mouse.up();
+      await expect.poll(async () => viewport.evaluate((el) => el.scrollTop)).toBeLessThan(500);
+      await viewport.hover();
+      await page.mouse.wheel(0, 20000);
+      await expect(page.locator('.bag-table tbody tr').last()).toBeInViewport();
+    }
     expect(
       await page.evaluate(
         () =>

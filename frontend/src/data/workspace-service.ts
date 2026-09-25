@@ -11,7 +11,7 @@ export interface WorkspaceService {
   getSnapshot(): WorkspaceSnapshot;
   subscribe(listener: () => void): () => void;
   prepare(recordingIds: ReadonlySet<string>): void | Promise<boolean>;
-  moveJobs(ids: ReadonlySet<string>, direction: MoveDirection): void;
+  moveJobs(ids: ReadonlySet<string>, direction: MoveDirection): void | Promise<boolean>;
   cancelJobs(ids: ReadonlySet<string>): void | Promise<boolean>;
   retryJobs(ids: ReadonlySet<string>): void | Promise<boolean>;
   toggleProcessing(): void | Promise<boolean>;

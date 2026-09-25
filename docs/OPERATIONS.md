@@ -48,6 +48,16 @@ in a new private `.vm-reports/<timestamp>-<action>/` directory here. Each includ
 `report.json`, `stdout.txt`, `stderr.txt`, SSH errors and checksums. Reports are
 ignored by Git and remain available when a command fails. Review before sharing.
 
+`status` runs without sudo and prints a short summary. Missing or denied checks
+produce an incomplete report and a nonzero exit; a complete report can still
+show failed services or unhealthy HTTP responses. `logs`, diagnostics and
+deployment use sudo. In a terminal, SSH prompts for the VM sudo password when
+required; the password is never stored in reports. Without a terminal, these
+commands require existing non-interactive sudo access and explain when it is
+missing. Interactive commands stage their input and captured output in a private
+VM `/tmp/rosbag-vm-*` directory, removed after collection. A broken connection
+can leave that directory behind; its location is reported if collection fails.
+
 For direct VM inspection:
 
 ```bash
@@ -132,9 +142,11 @@ source mounts must be read-only. No application service is restarted.
 
 Scripts receive `ROS_BAG_ANALYSER_ARCHIVE_ROOT`, configured front/IMU topic
 variables, and `VM_DIAGNOSTIC_RECORDINGS` (a JSON list of relative directories).
-The existing SSH operator needs non-interactive sudo for the receiver and
-systemd-run. Connection failure details are saved in `ssh-stderr.txt`; check VM
-power, network/VPN and the private SSH settings before retrying.
+The SSH operator needs sudo access for the receiver and systemd-run; no sudoers
+change is needed for normal password authentication in a terminal. Connection
+failures show their cause and are saved in `ssh-stderr.txt`; check VM power,
+network/VPN and the private SSH settings before retrying. Interactive sudo
+authentication errors appear directly in the terminal.
 
 ## Planned releases and new installations
 

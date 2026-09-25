@@ -1,9 +1,8 @@
 # React frontend
 
 This Vite, TypeScript and React application is the visual source of truth for the
-replacement UI. It connects to the existing ROS 2 Bag Analyser APIs. The legacy
-frontend remains the backend's default; this folder is separately runnable and
-is not included in the VM release yet.
+replacement UI. It connects to the existing ROS 2 Bag Analyser APIs. The packaged production build is the backend's default browser UI. This folder
+contains the source and separately runnable Vite development server.
 
 ## Run against the backend
 
@@ -31,35 +30,47 @@ For the original visual fixtures, open `http://127.0.0.1:5173/?demo=1`.
 Demo mode is explicit and available only in the development server. An
 unavailable API displays an error and never switches to simulated data.
 
+For a larger interactive UI playground, run `npm run dev -- --mode archive`
+and open `http://127.0.0.1:5173/`. This separate development mode creates
+over 500 in-memory recordings across nested folders, plus 100 failures, 180
+history rows and a queue. Preparation, retry, pause and cancellation update the
+local state. Each queued recording takes about 1–2 minutes; newly prepared or
+retried recordings move to the front of the waiting queue. The camera images and
+IMU graph are shared visual fixtures while recording details and output states
+change per selection. Reloading resets the simulation. No ROS bags, derived
+artifacts, backend API, or VM are accessed. The application UI has no mode label.
+
 ```sh
 npm run build
 npm run preview
 # http://127.0.0.1:4173; forwards /api to the same backend
 ```
 
-A build creates ignored `dist/`; it does not change Python packaging or deploy
-anything. The preview server is for local evaluation.
+A build creates ignored `dist/`. Copy its contents to
+`src/rosbag_analyser/web/react/` before committing a production UI change.
+The preview server is for local evaluation.
 
 ## Behavior
 
 - Recordings uses saved catalog data and the real folder tree. Recording names
-  open `#/analysis/{id}`. Filters include Processing, Partially prepared, and
+  open `#/analysis/{id}`. Filters include Processing, Ready, Failed, and
   Review (red for readable recordings with zero-duration metadata).
 - Rescan, preparation, pause/resume, cancellation and retry use the existing API.
-  Preparation requests the three outputs where available. Requests wait for
-  server results and preserve errors. No stage display or queue reordering is
-  exposed. Cancelling the active recording also cancels its remaining outputs.
+  Preparation requests the three outputs where available. Missing outputs are
+  skipped when another output can be prepared; scheduling failures remain visible. No stage display is exposed. Selected queue rows can be moved up or down
+  through the existing reorder API. Cancelling the active recording also cancels its remaining outputs.
 - Processing groups outputs by recording. History sums the returned latest
   successful output sizes and runtimes. Pages start with 100 backend output jobs;
   Load more follows the API cursor. Counts describe the loaded rows, so groups
   can gain outputs when more data loads. Queue estimates come from the server;
-  unavailable estimates and pending controls are shown truthfully. Elapsed time
-  includes pauses, as reported by the backend. The live
-  progress track does not claim a percentage the backend cannot measure.
+  unavailable estimates and pending controls are shown truthfully. The live
+  elapsed display ticks between polls and freezes for pause requests and pauses;
+  the progress track does not claim a percentage the backend cannot measure.
 - Analysis uses identity-bound video and validated six-axis IMU data, one
   recording-relative clock, measured camera coverage, explicit signal gaps,
-  last-sample lookup and bounded graph drawing. Camera-only review works.
-  Loading/queued/processing states are plain text. Diagnostics and media errors
+  last-sample lookup and bounded graph drawing. Camera-only review keeps the
+  recording clock while hiding IMU values and Unix labels without validated IMU
+  data. Loading/queued/processing states are plain text. Diagnostics and media errors
   are collected at the bottom of Recording details in the shared red.
 
 ## Checks

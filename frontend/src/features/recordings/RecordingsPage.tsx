@@ -103,7 +103,7 @@ export function RecordingsPage() {
             hidden={!selected.length}
             onClick={() => setPrepare(true)}
           >
-            Prepare Selected
+            <span>Prepare Selected</span>
           </Button>
         </div>
       }
@@ -147,14 +147,7 @@ export function RecordingsPage() {
             <FilterMenu
               name="analysis"
               label="Analysis"
-              options={[
-                'Ready',
-                'Not planned',
-                'Failed',
-                'Queued',
-                'Processing',
-                'Partially prepared',
-              ]}
+              options={['Ready', 'Not planned', 'Failed', 'Queued', 'Processing']}
               value={analysis}
               onChange={setAnalysis}
             />
@@ -166,6 +159,7 @@ export function RecordingsPage() {
             className="recordings-table-body"
             label="ROS bags"
             cardContent
+            scrollbarHeaderGap={1}
             empty={
               <EmptyState data-bag-empty="" hidden={!loading && (visible.size > 0 || !!error)}>
                 <p>

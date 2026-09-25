@@ -81,18 +81,38 @@ test('scrolling keeps filters and headers visible without shifting table columns
   const search = page.getByRole('searchbox', { name: 'Search recordings' });
   const nameHeader = page.getByRole('columnheader', { name: 'Name', exact: true });
   const before = await nameHeader.boundingBox();
-  // Force the classic scrollbar layout used by Windows browsers.
-  await page.addStyleTag({
-    content: '.recordings-table-body .bag-table-scroll { overflow-y: scroll; }',
-  });
+  const viewport = page.locator('.recordings-table-body .bag-table-scroll');
+  const track = page.locator('.recordings-table-body .table-scrollbar-track');
+  const thumb = page.locator('.recordings-table-body .table-scrollbar-thumb');
+  await expect(track).toHaveAttribute('data-visible', 'true');
+  const headerBox = await nameHeader.boundingBox();
+  const trackBefore = await track.boundingBox();
+  expect(trackBefore!.y).toBeGreaterThan(headerBox!.y + headerBox!.height);
+  const thumbBefore = await thumb.boundingBox();
   await search.fill('sensor_sync_validation');
   const filtered = await nameHeader.boundingBox();
   expect(filtered!.x).toBe(before!.x);
   expect(filtered!.width).toBe(before!.width);
+  await expect(track).toHaveAttribute('data-visible', 'false');
   await search.clear();
-  await page.locator('.bag-table-scroll').evaluate((el) => {
-    el.scrollTop = el.scrollHeight;
-  });
+  await viewport.hover();
+  await page.mouse.wheel(0, 700);
+  await expect.poll(async () => viewport.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  const thumbAtScroll = (await thumb.boundingBox())!;
+  const trackAfterScroll = (await track.boundingBox())!;
+  await page.mouse.move(
+    thumbAtScroll.x + thumbAtScroll.width / 2,
+    thumbAtScroll.y + thumbAtScroll.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    thumbAtScroll.x + thumbAtScroll.width / 2,
+    trackAfterScroll.y + trackAfterScroll.height - thumbAtScroll.height / 2,
+    { steps: 6 },
+  );
+  await page.mouse.up();
+  await expect.poll(async () => viewport.evaluate((el) => el.scrollTop)).toBeGreaterThan(700);
+  await expect.poll(async () => (await thumb.boundingBox())?.y).toBeGreaterThan(thumbBefore!.y);
   await expect(search).toBeInViewport();
   await expect(nameHeader).toBeInViewport();
   await expect(page.locator('.bag-table tbody tr').last()).toBeInViewport();

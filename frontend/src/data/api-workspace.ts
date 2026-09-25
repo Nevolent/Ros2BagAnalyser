@@ -116,8 +116,13 @@ export function createApiWorkspace(): WorkspaceService {
         result.items ??
         result.recordings?.flatMap((item) => item.outputs) ??
         (result.outcome ? [{ outcome: result.outcome }] : []);
+      const preparing = path === '/api/v1/recordings/prepare';
+      const prepared = items.some((item) =>
+        ['queued', 'retry_queued', 'active_reused', 'ready_reused'].includes(item.outcome),
+      );
       const rejected = items.filter(
         (item) =>
+          !(preparing && prepared && item.outcome === 'unavailable') &&
           !['topdown_video_unavailable', 'topdown_timestamps_unavailable'].includes(
             item.diagnostic?.code ?? '',
           ) &&
@@ -131,10 +136,15 @@ export function createApiWorkspace(): WorkspaceService {
           ].includes(item.outcome),
       );
       await refresh();
-      if (rejected.length) {
-        actionError = rejected
-          .map((item) => item.diagnostic?.message ?? `Action ${item.outcome.replaceAll('_', ' ')}.`)
-          .join(' ');
+      if (rejected.length || (preparing && !prepared)) {
+        actionError = rejected.length
+          ? rejected
+              .map(
+                (item) =>
+                  item.diagnostic?.message ?? `Action ${item.outcome.replaceAll('_', ' ')}.`,
+              )
+              .join(' ')
+          : 'No selected output is available for preparation.';
         publish({ error: actionError });
         return false;
       }
@@ -262,7 +272,11 @@ export function createApiWorkspace(): WorkspaceService {
         return { job_ids: [...new Set([active.id!, ...ids])] };
       });
     },
-    moveJobs: () => {},
+    moveJobs: (ids, direction) =>
+      mutate('/api/v1/processing/jobs/reorder', {
+        job_ids: selectedJobs(ids, snapshot.queue),
+        direction,
+      }),
     tickPreview: () => {},
   };
 }

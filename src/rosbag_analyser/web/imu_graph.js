@@ -354,8 +354,12 @@ function visibleTraceSegments(samples, start, end, pixelWidth) {
   const last = Math.min(samples.length, low + 1);
   const width = Math.max(1, Math.ceil(pixelWidth));
   const segments = [];
+  const smallSegments = new Map();
   let segment = [];
   let bucket = null;
+  const columnFor = (sample) => Math.min(width - 1, Math.max(0, Math.floor(
+    (sample.timeSeconds - start) / (end - start) * width,
+  )));
   const flushBucket = () => {
     if (!bucket) return;
     const points = [bucket.first, bucket.minimum, bucket.maximum, bucket.last];
@@ -367,7 +371,30 @@ function visibleTraceSegments(samples, start, end, pixelWidth) {
   };
   const finishSegment = () => {
     flushBucket();
-    if (segment.length) segments.push(segment);
+    if (segment.length) {
+      const column = columnFor(segment[0]);
+      if (column === columnFor(segment.at(-1))) {
+        const prior = smallSegments.get(column);
+        if (prior?.count >= 2) {
+          // Keep two distinct runs per pixel, then retain later extremes without
+          // creating one SVG path or circle for every subpixel gap.
+          const points = segments[prior.index].concat(segment);
+          let minimum = 0;
+          let maximum = 0;
+          for (let i = 1; i < points.length; i += 1) {
+            if (points[i].value < points[minimum].value) minimum = i;
+            if (points[i].value > points[maximum].value) maximum = i;
+          }
+          const indices = [...new Set([0, minimum, maximum, points.length - 1])].sort((a, b) => a - b);
+          segments[prior.index] = indices.map((index) => points[index]);
+        } else {
+          segments.push(segment);
+          smallSegments.set(column, { count: (prior?.count ?? 0) + 1, index: segments.length - 1 });
+        }
+      } else {
+        segments.push(segment);
+      }
+    }
     segment = [];
   };
   for (let index = first; index < last; index += 1) {
@@ -376,9 +403,7 @@ function visibleTraceSegments(samples, start, end, pixelWidth) {
       finishSegment();
       continue;
     }
-    const column = Math.min(width - 1, Math.max(0, Math.floor(
-      (sample.timeSeconds - start) / (end - start) * width,
-    )));
+    const column = columnFor(sample);
     const point = { index, sample };
     if (bucket && bucket.column !== column) flushBucket();
     if (!bucket) {

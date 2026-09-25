@@ -1,5 +1,16 @@
 import { test, expect } from '@playwright/test';
 
+test('browser tab uses the Tectrace icon and a dash title separator', async ({ page }) => {
+  await page.goto('/?demo=1');
+  await expect(page).toHaveTitle('Recordings — Tectrace');
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
+    'href',
+    '/assets/tectrace-icon.svg',
+  );
+  await page.getByRole('link', { name: 'Analysis', exact: true }).first().click();
+  await expect(page).toHaveTitle('Analysis — Tectrace');
+});
+
 test('switching pages keeps the document and sidebar mounted', async ({ page }) => {
   await page.goto('/?demo=1');
   await page.evaluate(() => {

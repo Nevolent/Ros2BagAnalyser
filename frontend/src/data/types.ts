@@ -1,6 +1,5 @@
 /** UI domain models. API payloads can be mapped to these at the service boundary. */
-export type RecordingStatus =
-  'Ready' | 'Failed' | 'Not planned' | 'Queued' | 'Processing' | 'Partially prepared';
+export type RecordingStatus = 'Ready' | 'Failed' | 'Not planned' | 'Queued' | 'Processing';
 export interface Recording {
   id: string;
   name: string;
@@ -47,6 +46,7 @@ export interface ActiveJob {
   elapsed: number;
   duration: number;
   paused: boolean;
+  pendingPause?: boolean;
   cancelled: boolean;
 }
 export interface WorkspaceSnapshot {

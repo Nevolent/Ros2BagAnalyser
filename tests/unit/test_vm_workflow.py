@@ -24,6 +24,8 @@ def load(name):
     return module
 
 
+ssh_transport = load("vm_ssh")
+sys.modules["vm_ssh"] = ssh_transport
 vm = load("vm")
 remote = load("vm_remote")
 runner = load("vm_diagnostic")
@@ -48,10 +50,10 @@ def test_local_script_arguments_and_spaces_remain_data(tmp_path):
         "run", "--recording", "folder/my bag", str(script), "--", dangerous_argument]))
     assert request["args"] == [dangerous_argument]
     assert request["recordings"] == ["folder/my bag"]
-    command = vm.ssh_command({"SSH": "/usr/bin/ssh", "USER": "operator", "HOST": "vm.example.invalid"})
+    command = ssh_transport.ssh_command({"SSH": "/usr/bin/ssh", "USER": "operator", "HOST": "vm.example.invalid"},
+                                        ["python3", "-c", ssh_transport.RUN])
     parsed = shlex.split(command[-1])
-    assert parsed[:4] == ["sudo", "--non-interactive", "python3", "-c"]
-    assert "exec(bytes.fromhex(" in parsed[-1]
+    assert parsed[:2] == ["python3", "-c"]
     assert dangerous_argument not in command[-1]
 
 
@@ -70,10 +72,11 @@ def test_private_settings_load_without_exposing_values(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_ssh_round_trip_saves_private_report_and_failure_output(tmp_path, monkeypatch, failure):
+def test_ssh_round_trip_saves_private_report_and_failure_output(tmp_path, monkeypatch, capsys, failure):
     fake_ssh = tmp_path / "ssh"
     fake_ssh.write_text("#!/usr/bin/env python3\nimport json,sys\n"
-                        "request=json.load(sys.stdin)\nassert request['action']=='status'\n"
+                        "envelope=json.load(sys.stdin)\nrequest=json.loads(envelope['stdin'])\nassert request['action']=='status'\n"
+                        "assert 'sudo' not in sys.argv[-1]\n"
                         + ("print('connection failed',file=sys.stderr);sys.exit(255)\n" if failure else
                            "print(json.dumps({'exit_code':0,'stdout':'collected data','stderr':'note','release':{'release_id':'test'}}))\n"))
     fake_ssh.chmod(0o755)
@@ -86,6 +89,7 @@ def test_ssh_round_trip_saves_private_report_and_failure_output(tmp_path, monkey
     assert (target / "report.json").stat().st_mode & 0o777 == 0o600
     if failure:
         assert "connection failed" in (target / "ssh-stderr.txt").read_text()
+        assert "connection failed" in capsys.readouterr().err
     else:
         assert (target / "stdout.txt").read_text() == "collected data"
     assert "report.json" in (target / "SHA256SUMS").read_text()
@@ -165,6 +169,63 @@ def test_log_redaction(monkeypatch):
     monkeypatch.setattr(remote, "command_text", lambda _: "password=secret /private/source/bag failed\n")
     assert "secret" not in remote.sanitized_logs()
     assert "/private/source" not in remote.sanitized_logs()
+
+
+@pytest.mark.parametrize("interactive", [False, True])
+def test_sudo_transport_preserves_input_output_exit_and_cleans_up(tmp_path, monkeypatch, interactive):
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text("#!/usr/bin/env python3\nimport subprocess,sys\n"
+                        "assert len(sys.argv[-1]) < 5000\n"
+                        "sys.exit(subprocess.call(sys.argv[-1],shell=True))\n")
+    fake_ssh.chmod(0o755)
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/usr/bin/env python3\nimport os,sys\n"
+                   "os.execvp(sys.argv[2],sys.argv[2:])\n")
+    sudo.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + ":" + os.environ["PATH"])
+    monkeypatch.setattr(ssh_transport, "terminal", lambda: open(os.devnull, "r+b") if interactive else None)
+    before = set(Path('/tmp').glob('rosbag-vm-*'))
+    argument = "$(touch SHOULD_NOT_EXIST); 'quoted'"
+    script = "import sys; print(sys.argv[1]); print(sys.stdin.read()); print('note',file=sys.stderr); sys.exit(7)\n#" + "x" * 40000
+    result = ssh_transport.run({"SSH": str(fake_ssh), "USER": "operator", "HOST": "local.test"},
+                               [sys.executable, "-c", script, argument], b"request data", sudo=True, timeout=10)
+    assert result.returncode == 7
+    assert result.stdout.decode() == argument + "\nrequest data\n"
+    assert result.stderr == b"note\n"
+    assert set(Path('/tmp').glob('rosbag-vm-*')) == before
+
+
+def test_sudo_without_terminal_explains_password_requirement(tmp_path, monkeypatch):
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text("#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n")
+    fake_ssh.chmod(0o755)
+    monkeypatch.setattr(ssh_transport, "terminal", lambda: None)
+    result = ssh_transport.run({"SSH": str(fake_ssh), "USER": "operator", "HOST": "local.test"},
+                               ["python3"], b"", sudo=True, timeout=10)
+    assert result.returncode == 1
+    assert b"interactive terminal" in result.stderr
+
+
+def test_status_preserves_observed_failure_and_reports_missing_information(monkeypatch):
+    monkeypatch.setattr(remote, "command_text", lambda _: "LoadState=loaded\nActiveState=failed\nSubState=failed\n")
+    monkeypatch.setattr(remote, "health", lambda _: {"http_status": 503, "body": {"status": "unavailable"}})
+    result = remote.status_report({"release_id": "test"})
+    assert result["complete"] and result["exit_code"] == 0
+    assert "ActiveState=failed" in next(iter(result["services"].values()))
+    assert result["health"]["ready"]["http_status"] == 503
+    def denied(_):
+        raise ValueError("Permission denied")
+    monkeypatch.setattr(remote, "command_text", denied)
+    result = remote.status_report({"available": False, "error": "Permission denied"})
+    assert not result["complete"] and result["exit_code"] == 1
+    assert "Permission denied" in result["error"]
+    assert result["health"]["ready"]["http_status"] == 503
+
+
+def test_journal_failure_is_not_reported_as_success(monkeypatch):
+    monkeypatch.setattr(remote.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, b"", b"Permission denied"))
+    with pytest.raises(ValueError, match="Permission denied"):
+        remote.sanitized_logs()
 
 
 @pytest.mark.parametrize("path,allowed", [("tools/check.py", True), ("jetbrains/styles.css", True),

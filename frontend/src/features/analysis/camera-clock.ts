@@ -4,6 +4,7 @@ interface CameraState {
   playToken: number;
   pendingPlay: boolean;
   retryAfter: number;
+  hasFrame: boolean;
 }
 const states = new WeakMap<HTMLVideoElement, CameraState>();
 export function stopCamera(video: HTMLVideoElement) {
@@ -18,18 +19,26 @@ export function stopCamera(video: HTMLVideoElement) {
 export function syncCamera(video: HTMLVideoElement, time: number, playing: boolean) {
   let state = states.get(video);
   if (!state) {
-    state = { seekStarted: 0, playStarted: 0, playToken: 0, pendingPlay: false, retryAfter: 0 };
+    state = {
+      seekStarted: 0,
+      playStarted: 0,
+      playToken: 0,
+      pendingPlay: false,
+      retryAfter: 0,
+      hasFrame: false,
+    };
     states.set(video, state);
   }
+  if (video.readyState >= 2) state.hasFrame = true;
   const start = Number(video.dataset.coverageStart ?? 0);
   const end = Number(video.dataset.coverageEnd ?? 0);
   const status = video.parentElement?.querySelector<HTMLElement>('[data-camera-state]');
-  const message = (text: string) => {
+  const message = (text: string, hideVideo = !!text) => {
     if (status) {
       status.textContent = text;
       status.hidden = !text;
     }
-    video.style.visibility = text ? 'hidden' : 'visible';
+    video.style.visibility = hideVideo ? 'hidden' : 'visible';
   };
   if (video.error) {
     stopCamera(video);
@@ -42,7 +51,7 @@ export function syncCamera(video: HTMLVideoElement, time: number, playing: boole
     return;
   }
   if (video.readyState < 1) {
-    message('Loading camera…');
+    message(state.hasFrame ? '' : 'Loading camera…');
     return;
   }
   const now = performance.now();
@@ -80,5 +89,5 @@ export function syncCamera(video: HTMLVideoElement, time: number, playing: boole
         if (pending.playToken === token) pending.pendingPlay = false;
       });
   }
-  message(video.readyState < 2 || video.seeking ? 'Loading camera…' : '');
+  message(state.hasFrame ? '' : 'Loading camera…');
 }

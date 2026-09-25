@@ -7,12 +7,15 @@ test('timeline plays, pauses and scrubs', async ({ page }) => {
   const value = page.locator('[data-timeline-value]');
   const originalValue = await value.textContent();
   const originalCursor = await page.locator('.timeline-cursor').getAttribute('transform');
+  await expect(page.locator('.timeline-cursor circle')).toHaveCount(1);
   await page.getByRole('button', { name: 'Play timeline', exact: true }).click();
+  await expect(page.locator('.timeline-cursor circle')).toHaveCount(0);
   await page.clock.runFor(2100);
   expect(Number(await slider.getAttribute('aria-valuenow'))).toBeGreaterThan(2);
   expect(await value.textContent()).not.toBe(originalValue);
   expect(await page.locator('.timeline-cursor').getAttribute('transform')).not.toBe(originalCursor);
   await page.getByRole('button', { name: 'Pause timeline', exact: true }).click();
+  await expect(page.locator('.timeline-cursor circle')).toHaveCount(1);
   const paused = await slider.getAttribute('aria-valuenow');
   await page.clock.runFor(1000);
   await expect(slider).toHaveAttribute('aria-valuenow', paused!);

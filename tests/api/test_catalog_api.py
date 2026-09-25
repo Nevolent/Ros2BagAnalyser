@@ -104,7 +104,7 @@ async def test_list_detail_and_static_browser_contract() -> None:
         script = await client.get("/app.js")
         imu_script = await client.get("/imu_graph.js")
         stylesheet = await client.get("/styles.css")
-        icon = await client.get("/assets/tech-trace-icon.svg")
+        icon = await client.get("/assets/tectrace-icon.svg")
 
     assert listing.status_code == 200
     assert listing.json()["items"][0]["start_time_ns"] == "1700000000000000000"
@@ -115,28 +115,11 @@ async def test_list_detail_and_static_browser_contract() -> None:
     assert "relative_path" not in detail.text
     assert page.status_code == 200
     assert "Tectrace" in page.text
-    assert 'data-view-panel="recordings"' in page.text
-    assert 'data-view-panel="processing"' in page.text
-    assert 'data-view-panel="analyzer"' in page.text
-    assert 'id="recording-rows"' in page.text
-    assert 'id="folder-tree"' in page.text
-    assert 'id="prepare-selected"' in page.text
-    assert 'id="current-job-host"' in page.text
-    assert 'id="processing-error-dialog"' in page.text
-    assert 'id="front-preview-pane"' in page.text
-    assert 'id="topdown-preview-pane"' in page.text
-    assert 'id="imu-series-pane"' in page.text
-    assert 'id="sensor-picker-menu"' in page.text
-    assert 'role="slider"' in page.text
-    assert 'id="global-time-slider"' in page.text
-    assert 'id="component-rows"' in page.text
-    assert 'id="catalog-notice"' not in page.text
-    assert 'id="front-summary"' not in page.text
-    assert 'id="topdown-summary"' not in page.text
-    assert "Skip to content" in page.text
-    assert "preview-front.png" not in page.text
-    assert "preview-top.png" not in page.text
-    assert "https://" not in page.text
+    assert 'id="app"' in page.text
+    assert '/assets/index-' in page.text
+    assert '/src/main.tsx' not in page.text
+    assert 'preview-front.png' not in page.text
+    assert 'https://' not in page.text
     assert processing_page.status_code == 200
     assert processing_page.text == page.text
     assert detail_page.status_code == 200
@@ -199,7 +182,6 @@ async def test_list_detail_and_static_browser_contract() -> None:
     assert "mockJobs" not in script.text
     assert icon.status_code == 200
     assert icon.headers["content-type"].startswith("image/svg+xml")
-    assert icon.headers["cache-control"] == "no-store"
     assert "__MACOSX" not in page.text + script.text + stylesheet.text
     assert listing.headers["x-content-type-options"] == "nosniff"
     assert "default-src 'self'" in listing.headers["content-security-policy"]

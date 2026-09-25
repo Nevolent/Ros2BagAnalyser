@@ -2,10 +2,10 @@
 
 ## Runtime
 
-One FastAPI application serves the existing dependency-free browser frontend.
-A separately runnable React/Vite frontend in `frontend/` connects to the same
-API through a local proxy; it is the visual reference for the replacement and
-is not yet served by FastAPI or packaged into VM releases. PostgreSQL
+One FastAPI application serves the packaged React browser frontend from
+`src/rosbag_analyser/web/react/`. The source app in `frontend/` also runs
+through a local Vite proxy during development. Production selects the real API
+workspace; the synthetic archive is available only in Vite development mode. PostgreSQL
 stores catalog and job metadata; one serial ROS-aware worker creates files in
 the derived-data root. The VM runtime is Ubuntu 22.04, Python 3.10, and ROS 2
 Humble, as recorded in [the release contract](../deploy/release-contract.json).
@@ -69,10 +69,11 @@ resolved independently: reuse ready/active work, enqueue missing work, or report
 unavailability. Repeated requests cannot duplicate an active identity. A failed
 attempt is retried using current inputs, not its obsolete identity.
 
-Front and IMU are required for the catalog's aggregate Ready state. Top-down is optional when
-its video or timestamp companion is absent; a present but invalid companion
-remains unavailable. Aggregate state follows processing → queued → failed →
-ready → not planned, while retaining each output's detailed state. Analyzer
+The catalog's aggregate state follows failed → processing → queued → ready →
+not planned. Any failed output makes the recording Failed; otherwise any ready
+output makes it Ready once active work is finished. Unavailable or absent
+sources do not prevent available outputs from being prepared. Each output keeps
+its detailed state. Analyzer
 can also review available output independently, including a camera-only
 recording timeline when IMU is unavailable.
 
@@ -108,7 +109,8 @@ bag-relative clock, corrects camera drift at 100 ms, and clears/hides consumers
 outside their measured coverage. Graph zoom changes the view, not the clock.
 IMU JSON is capped at 64 MiB and validated row by row; the browser parses the
 response stream and draws only a bounded set of points for the visible window,
-preserving spikes and null gaps. Camera panes show buffering until media can play.
+preserving spikes and visible null gaps. Camera panes show buffering until the
+first frame is decoded, then retain the last frame during seeks.
 
 Video validation streams packet timestamps through ffprobe instead of collecting
 the full packet list. Probe time limits scale with output size and remain bounded.
@@ -135,8 +137,8 @@ processing overview/history, and job controls. Existing `/api/recordings/...`
 routes still deliver identity-bound media and IMU; their older naming does not
 make them unused. Schemas and routes in `api/` are the detailed API reference.
 
-Default browser routes are `/`, `/processing`, and `/recordings/{id}`. The
-separate React app uses `#/recordings`, `#/processing`, and `#/analysis/{id}`;
+Default browser routes serve the React shell at `/`, `/processing`, and
+`/recordings/{id}`. React uses `#/recordings`, `#/processing`, and `#/analysis/{id}`;
 its integration is described in
 [frontend architecture](../frontend/docs/architecture.md). Backend values are rendered as text and validated IDs/URLs, never arbitrary HTML. Errors are
 sanitized; absolute source paths stay server-side. Polling, accessibility, and

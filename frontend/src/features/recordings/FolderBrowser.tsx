@@ -25,7 +25,7 @@ export function FolderBrowser({
 }) {
   const { index, contains } = useMemo(() => createFolderIndex(folders), [folders]);
   const [expanded, setExpanded] = useState(
-    new Set(['bunker', 'bunker-tests', 'bunker-2025', 'lunar', 'lunar-navigation', 'calibration']),
+    new Set(['synthetic-root', 'bunker', 'bunker-tests', 'bunker-2025', 'lunar', 'lunar-navigation', 'calibration']),
   );
   const [search, setSearch] = useState('');
   const [focused, setFocused] = useState('bunker');

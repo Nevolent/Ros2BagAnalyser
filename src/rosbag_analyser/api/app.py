@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import FastAPI, Path as PathParameter, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from rosbag_analyser.artifact_store import ArtifactStore
@@ -54,7 +55,8 @@ from .v1_routes import router as v1_router
 
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
-INDEX_HTML = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
+REACT_ROOT = WEB_ROOT / "react"
+INDEX_HTML = (REACT_ROOT / "index.html").read_text(encoding="utf-8")
 APP_JAVASCRIPT = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
 IMU_GRAPH_JAVASCRIPT = (WEB_ROOT / "imu_graph.js").read_text(encoding="utf-8")
 STYLESHEET = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
@@ -256,6 +258,9 @@ def create_app(
     application.include_router(topdown_preview_router)
     application.include_router(imu_series_router)
     application.include_router(v1_router)
+    application.mount(
+        "/assets", StaticFiles(directory=REACT_ROOT / "assets"), name="assets"
+    )
 
     @application.exception_handler(RequestValidationError)
     async def bounded_validation_error(

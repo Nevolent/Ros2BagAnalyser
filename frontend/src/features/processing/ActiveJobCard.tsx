@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import type { ActiveJob } from '../../data/types';
 import { Icon } from '../../components/Icon';
 import { formatDuration } from '../../lib/format';
@@ -12,13 +13,41 @@ export function ActiveJobCard({
   onToggle(): void;
   onCancel(): void;
 }) {
+  const frozen = active.paused || active.pendingPause || active.cancelled || active.idle;
+  const [clockSeconds, setClockSeconds] = useState(active.elapsed);
+  const clock = useRef({ id: active.id, seconds: active.elapsed, at: performance.now(), frozen });
+  useEffect(() => {
+    const now = performance.now();
+    const previous = clock.current;
+    if (previous.id !== active.id || previous.frozen !== frozen) {
+      const seconds =
+        frozen && previous.id === active.id && !previous.frozen
+          ? previous.seconds + (now - previous.at) / 1000
+          : active.elapsed;
+      clock.current = { id: active.id, seconds, at: now, frozen };
+      setClockSeconds(seconds);
+    } else if (!frozen) {
+      const seconds = Math.max(active.elapsed, previous.seconds + (now - previous.at) / 1000);
+      clock.current = { id: active.id, seconds, at: now, frozen };
+      setClockSeconds(seconds);
+    }
+  }, [active.id, active.elapsed, frozen]);
+  useEffect(() => {
+    if (!active.live) return;
+    const timer = window.setInterval(() => {
+      const anchor = clock.current;
+      if (!anchor.frozen) setClockSeconds(anchor.seconds + (performance.now() - anchor.at) / 1000);
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [active.live]);
+  const elapsed = active.live ? clockSeconds : active.elapsed;
   const percent =
     active.elapsed >= active.duration
       ? 100
       : Math.min(99, Math.round((active.elapsed / active.duration) * 100));
   return (
     <section
-      className={`processing-job${active.paused || active.cancelled ? ' is-paused' : ''}${active.cancelled ? ' is-cancelled' : ''}`}
+      className={`processing-job${active.paused || active.pendingPause || active.cancelled ? ' is-paused' : ''}${active.cancelled ? ' is-cancelled' : ''}`}
       aria-label="Active processing job"
     >
       <div className="processing-job-heading">
@@ -82,7 +111,7 @@ export function ActiveJobCard({
       </div>
       <div className="processing-timing" hidden={active.idle}>
         <span>
-          Elapsed <strong data-processing-elapsed="">{formatDuration(active.elapsed)}</strong>
+          Elapsed <strong data-processing-elapsed="">{formatDuration(elapsed)}</strong>
         </span>
         <span>
           Estimated{' '}

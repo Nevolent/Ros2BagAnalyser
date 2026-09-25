@@ -1,8 +1,8 @@
 import { ActiveJobCard } from './ActiveJobCard';
 import { Tabs } from '../../components/Tabs';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useWorkspace, useWorkspaceService } from '../../app/WorkspaceProvider';
-import type { Job } from '../../data/types';
+import type { Job, MoveDirection } from '../../data/types';
 import { formatDuration, formatJobDate } from '../../lib/format';
 import { Page } from '../../components/Page';
 import { Checkbox } from '../../components/Checkbox';
@@ -12,6 +12,7 @@ import { Icon } from '../../components/Icon';
 
 import { SortableHeader } from '../../components/SortableHeader';
 import { useTableSort, sizeInBytes } from '../../lib/useTableSort';
+import { canMoveJobs } from '../../lib/queue';
 
 type View = 'queue' | 'failures' | 'history';
 type Action = 'cancel' | 'retry';
@@ -77,6 +78,7 @@ export function ProcessingPage() {
   const tbody = useRef<HTMLTableSectionElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const queueTab = useRef<HTMLButtonElement>(null);
+  const previousQueuePositions = useRef<Map<string, number> | null>(null);
   const items = view === 'queue' ? queue : view === 'failures' ? failures : history;
   useEffect(() => {
     setSelection((current) => {
@@ -84,6 +86,22 @@ export function ProcessingPage() {
       return next.size === current.size ? current : next;
     });
   }, [items]);
+  useLayoutEffect(() => {
+    const previous = previousQueuePositions.current;
+    if (!previous || view !== 'queue') return;
+    previousQueuePositions.current = null;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    tbody.current?.querySelectorAll<HTMLTableRowElement>('tr[data-job-id]').forEach((row) => {
+      const before = previous.get(row.dataset.jobId ?? '');
+      if (before === undefined) return;
+      const offset = before - row.getBoundingClientRect().top;
+      if (Math.abs(offset) < 1) return;
+      row.animate([{ transform: `translateY(${offset}px)` }, { transform: 'translateY(0)' }], {
+        duration: 320,
+        easing: 'cubic-bezier(.22, 1, .36, 1)',
+      });
+    });
+  }, [queue, view]);
   const selectable = view !== 'history';
   const config = columns[view];
   const readyIn = useMemo(() => {
@@ -125,6 +143,30 @@ export function ProcessingPage() {
       setSelection(new Set());
       setNotice('Retry request completed.');
     } else setCancel({ active: false, ids });
+  }
+  async function move(direction: MoveDirection) {
+    if (busy || !canMoveJobs(queue, selection, direction)) return;
+    previousQueuePositions.current = new Map(
+      [...(tbody.current?.querySelectorAll<HTMLTableRowElement>('tr[data-job-id]') ?? [])].map(
+        (row) => [row.dataset.jobId!, row.getBoundingClientRect().top],
+      ),
+    );
+    const beforeOrder = queue.map((job) => job.id).join('\0');
+    resetSort();
+    const moved = await service.moveJobs(new Set(selection), direction);
+    if (moved === false) previousQueuePositions.current = null;
+    else {
+      const changed =
+        service
+          .getSnapshot()
+          .queue.map((job) => job.id)
+          .join('\0') !== beforeOrder;
+      setNotice(
+        changed
+          ? `${selection.size} ${selection.size === 1 ? 'job' : 'jobs'} moved ${direction}.`
+          : 'Queue order unchanged.',
+      );
+    }
   }
   function actionButton(job: Job, action: Action, label: string, disabled = false) {
     return (
@@ -179,25 +221,32 @@ export function ProcessingPage() {
               aria-label="Selected jobs"
               hidden={!selection.size}
             >
-              {(['cancel', 'retry'] as const).map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  data-bulk-action={action}
-                  hidden={view === 'failures' ? action !== 'retry' : action === 'retry'}
-                  disabled={busy}
-                  onClick={() => act(action, new Set(selection))}
-                >
-                  <span>
-                    {action === 'cancel'
-                      ? `Cancel ${selection.size} selected`
-                      : action === 'retry'
-                        ? `Retry ${selection.size} selected`
-                        : `Move ${action}`}
-                  </span>
-                  <Icon name={action} strokeWidth={1.75} />
-                </button>
-              ))}
+              {view === 'queue' &&
+                (['earlier', 'later'] as const).map((direction) => (
+                  <button
+                    key={direction}
+                    type="button"
+                    data-bulk-action={direction}
+                    disabled={busy || !canMoveJobs(queue, selection, direction)}
+                    onClick={() => void move(direction)}
+                  >
+                    <span>{direction === 'earlier' ? 'Move up' : 'Move down'}</span>
+                    <Icon name={direction} strokeWidth={1.75} />
+                  </button>
+                ))}
+              <button
+                type="button"
+                data-bulk-action={view === 'failures' ? 'retry' : 'cancel'}
+                disabled={busy}
+                onClick={() => act(view === 'failures' ? 'retry' : 'cancel', new Set(selection))}
+              >
+                <span>
+                  {view === 'failures'
+                    ? `Retry ${selection.size} selected`
+                    : `Cancel ${selection.size} selected`}
+                </span>
+                <Icon name={view === 'failures' ? 'retry' : 'cancel'} strokeWidth={1.75} />
+              </button>
             </div>
           </div>
           <p className="inline-error" role="alert" hidden={!error}>

@@ -124,6 +124,19 @@ test("visible trace bounds work and retains spikes and gaps within each pixel", 
   assert.deepEqual(ImuGraph.visibleTraceSegments(samples, 101, 102, 100), []);
 });
 
+test("dense subpixel gaps keep the trace bounded and retain spikes", () => {
+  const samples = Array.from({ length: 10_000 }, (_, index) => ({
+    timeSeconds: index / 1000,
+    value: index % 2 ? null : index === 5000 ? 99 : index === 7000 ? -88 : 1,
+  }));
+  const segments = ImuGraph.visibleTraceSegments(samples, 0, 10, 100);
+  assert.ok(segments.length <= 200);
+  const points = segments.flat();
+  assert.ok(points.some((point) => point.value === 99));
+  assert.ok(points.some((point) => point.value === -88));
+  assert.ok(ImuGraph.visibleTraceSegments(samples, 5, 5.01, 100).length > 2);
+});
+
 test("global cursor and graph pointer positions clamp and pixel-snap", () => {
   assert.equal(ImuGraph.cursorFraction(-1, 10), 0);
   assert.equal(ImuGraph.cursorFraction(5, 10), 0.5);

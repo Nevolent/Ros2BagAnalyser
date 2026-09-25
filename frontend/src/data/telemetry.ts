@@ -86,7 +86,7 @@ export async function loadTelemetry(
     throw error;
   }
   const channels = emptyChannels();
-  let cached: { id: string; samples: Sample[] } | null = null;
+  const samplesBySeries = new Map<string, Sample[]>();
   for (const definition of parsed.series) {
     if (!channelNames.includes(definition.component as Channel))
       throw new Error('Unsupported IMU channel.');
@@ -101,12 +101,14 @@ export async function loadTelemetry(
       values: [],
       available: true,
       get samples() {
-        if (cached?.id !== definition.id)
-          cached = {
-            id: definition.id,
-            samples: graph.selectSeries(parsed, definition.id).samples,
-          };
-        return cached.samples;
+        let samples = samplesBySeries.get(definition.id);
+        if (!samples) {
+          samples = graph.selectSeries(parsed, definition.id).samples;
+          samplesBySeries.set(definition.id, samples);
+          if (samplesBySeries.size > 3)
+            samplesBySeries.delete(samplesBySeries.keys().next().value!);
+        }
+        return samples;
       },
       ticks: Array.from({ length: 5 }, (_, i) => high - ((high - low) * i) / 4),
       unit: definition.units,

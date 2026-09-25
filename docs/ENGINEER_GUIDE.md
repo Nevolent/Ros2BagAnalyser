@@ -16,23 +16,25 @@ operator. You do not need ROS commands or direct NAS access.
 4. Open a recording in **Analyzer** to review its available outputs. Play, pause or seek on the shared
    timeline; select an IMU axis and zoom the graph to inspect a section.
 
-The catalog's Ready state requires front and IMU output. Top-down is optional when
-its source companions are absent. Preparing only part of the required output
-set leaves the recording partially prepared. Available cameras can still be
-reviewed with a recording timeline when IMU is unavailable.
+The catalog shows Ready when any available output is prepared and no output has
+failed or remains active. A failed output makes the recording Failed. Missing
+source companions do not prevent available outputs from being prepared.
+Available cameras can still be reviewed with a recording timeline when IMU is
+unavailable.
 
 ## States
 
 | State | Meaning |
 | --- | --- |
 | Readable / Damaged | Source health; inspect the diagnostic for the exact reason |
-| Not planned / partial output | Required preparation is incomplete |
+| Not planned | No output is prepared or active |
 | Queued / Processing | Work is waiting or active |
-| Ready | Required current output has been validated |
+| Ready | At least one current output has been validated |
 | Failed | An attempted output failed; inspect the message and retry if appropriate |
 | Worker offline | Saved work waits for the worker to return |
 
-Elapsed time is factual. Estimates are approximate and can be unavailable or
+In the React Processing view, elapsed time counts active processing time and
+freezes during pause. Estimates are approximate and can be unavailable or
 exceeded. Pause/cancel takes effect at a safe checkpoint. Worker restart
 interrupts running work; that attempt needs explicit retry. Browser refresh
 preserves the queue and completed output.

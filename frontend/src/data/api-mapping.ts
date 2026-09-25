@@ -53,9 +53,11 @@ export function recording(row: CatalogRecording): Recording {
         : row.duration_ns === '0'
           ? 'Review'
           : 'Readable',
-    analysis:
-      row.analysis_state === 'not_planned' && row.outputs.some((output) => output.state === 'ready')
-        ? 'Partially prepared'
+    analysis: row.outputs.some((output) => output.state === 'failed')
+      ? 'Failed'
+      : row.analysis_state === 'not_planned' &&
+          row.outputs.some((output) => output.state === 'ready')
+        ? 'Ready'
         : ((labels[row.analysis_state] as Recording['analysis']) ?? 'Not planned'),
   };
 }
@@ -154,19 +156,14 @@ export function activeJob(overview: Overview): ActiveJob {
     id: row.id,
     recordingId: row.recording_id,
     name: row.recording_name,
-    elapsed: (row.elapsed_ms ?? row.active_elapsed_ms ?? 0) / 1000,
+    elapsed: (row.active_elapsed_ms ?? row.elapsed_ms ?? 0) / 1000,
     duration: (row.estimate?.estimated_total_ms ?? 0) / 1000,
     paused: row.control_state === 'paused',
+    pendingPause: row.control_state === 'pause_requested',
     cancelled: false,
     live: true,
     estimateStatus: row.estimate?.status ?? 'unavailable',
     controls: row.allowed_controls,
-    status: !overview.worker_online
-      ? 'Worker is offline.'
-      : ({
-          pause_requested: 'Pause requested',
-          cancel_requested: 'Cancel requested',
-          paused: 'Paused',
-        }[row.control_state] ?? ''),
+    status: overview.worker_online ? '' : 'Worker is offline.',
   };
 }

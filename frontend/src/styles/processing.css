@@ -123,6 +123,12 @@
   animation-play-state: paused;
   opacity: 0;
 }
+.is-paused .processing-progress {
+  opacity: 0.4;
+}
+.processing-table-panel [data-processing-empty] {
+  color: var(--muted-foreground);
+}
 .is-paused .processing-progress > span,
 .processing-progress.is-resetting > span {
   transition: none;
@@ -177,8 +183,24 @@
   color: var(--foreground);
   cursor: pointer;
 }
+.processing-bulk-actions button span {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  transform: translateY(1px);
+}
+.processing-bulk-actions button svg {
+  transform: translateY(1px);
+}
 .processing-bulk-actions button:is(:hover, :focus-visible) {
   background: color-mix(in oklab, var(--foreground) 9%, transparent);
+}
+/* An opaque sticky header keeps scrolled row colors out of the rounded corners. */
+.processing-table-panel .bag-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--table-surface);
 }
 /* Processing puts the search-field surface on its column headings. */
 .processing-table-panel .bag-table thead tr:last-child th {

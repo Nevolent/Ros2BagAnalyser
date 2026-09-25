@@ -4,6 +4,11 @@ React owns the persistent shell, hash routing, controls and local presentation
 state. `main.tsx` injects `createApiWorkspace()`; only the explicit development
 URL `?demo=1` injects the imported visual fixtures. The Python frontend and VM
 release remain unchanged.
+The separate Vite development mode `archive` injects `synthetic-workspace.ts`.
+It generates the archive in memory and runs a one-second local queue clock
+across routes. Analysis keeps the visual camera and IMU fixtures but maps each
+selected recording's metadata, health, output state and diagnostics. The real
+API service is never used in this mode.
 
 ## Service boundary
 
@@ -41,12 +46,13 @@ streamed JSON at 64 MiB, validates rows/coverage, retains duplicate timestamps
 and per-axis nulls, and keeps large samples outside the subscribed workspace
 snapshot. Repeated detail polls reuse a matching validated bundle.
 
-`Timeline` owns the clock, playback, channels, zoom and selection locally. Live
-readout selects the last sample at or before the clock and clears outside
-measured coverage. Graph reduction preserves spikes and gaps. `camera-clock.ts`
-converts the same bag-relative clock to each video's coverage-relative time;
-measured coverage and buffering control visibility. Effects dispose listeners,
-observers, animation frames and media playback on navigation. Graph zoom changes
+`Timeline` owns the clock, playback, channels, zoom and selection locally. With validated IMU data, the live readout selects the last sample at or before
+the clock and clears outside measured coverage. Without it, the recording clock
+remains usable while numeric IMU and Unix labels are hidden. Graph reduction preserves spikes and visible gaps.
+`camera-clock.ts` converts the same bag-relative clock to each video's
+coverage-relative time. Measured coverage and initial buffering control
+visibility; decoded frames remain visible during later seeks. Effects dispose
+listeners, observers, animation frames and media playback on navigation. Graph zoom changes
 the visible window, not the playback clock. Demo interpolation remains confined
 to the explicit visual fixtures.
 

@@ -98,9 +98,28 @@
   font-size: 12px;
   line-height: 18px;
   scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 65%, transparent) transparent;
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
+}
+@supports selector(::-webkit-scrollbar) {
+  .recording-details-body {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+  .recording-details-body::-webkit-scrollbar {
+    width: 4px;
+  }
+  .recording-details-body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .recording-details-body::-webkit-scrollbar-thumb {
+    border-radius: 4px;
+    background: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
+  }
+  .recording-details-body::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+  }
 }
 .recording-details-body:focus {
   outline: none;
@@ -295,6 +314,8 @@
   color: var(--muted-foreground);
 }
 .timeline-channel-trigger [data-channel-label] {
+  position: relative;
+  top: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -501,7 +522,7 @@
 }
 .timeline-axis time {
   position: relative;
-  top: -5px;
+  top: -4px;
 }
 @media (max-width: 600px) {
   .analysis-workspace,

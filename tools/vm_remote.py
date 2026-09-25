@@ -47,9 +47,14 @@ def read_settings(path: Path = CONFIG) -> dict[str, str]:
 def command_text(command: list[str]) -> str:
     try:
         result = subprocess.run(command, capture_output=True, timeout=15)
-        return (result.stdout or result.stderr)[:MAX_OUTPUT].decode("utf-8", errors="replace")
-    except (OSError, subprocess.TimeoutExpired):
-        return "unavailable"
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError(f"{command[0]} unavailable: {error}") from error
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()[:2000]
+        raise ValueError(f"{command[0]} failed (exit {result.returncode}): {detail}")
+    if len(result.stdout) > MAX_OUTPUT:
+        raise ValueError(f"{command[0]} output exceeded the report limit.")
+    return result.stdout.decode("utf-8", errors="replace")
 
 
 def health(endpoint: str) -> dict:
@@ -62,9 +67,38 @@ def health(endpoint: str) -> dict:
             body = response.read(65_537)
             if len(body) > 65_536:
                 raise ValueError("Oversized health response")
-            return {"http_status": response.code, "body": json.loads(body)}
-    except (OSError, ValueError):
-        return {"available": False}
+            document = json.loads(body)
+            if not isinstance(document, dict) or not isinstance(document.get("status"), str):
+                raise ValueError("Invalid health response")
+            return {"http_status": response.code, "body": document}
+    except (OSError, ValueError) as error:
+        return {"available": False, "error": str(error)}
+
+
+def status_report(release: dict) -> dict:
+    errors = {}
+    if release.get("available") is False:
+        errors["release"] = release["error"]
+    services = {}
+    for name in SERVICES:
+        try:
+            services[name] = command_text(["systemctl", "show", name,
+                            "--property=LoadState,ActiveState,SubState,UnitFileState"]).strip()
+            properties = dict(line.split("=", 1) for line in services[name].splitlines() if "=" in line)
+            if not all(properties.get(key) for key in ("LoadState", "ActiveState", "SubState")):
+                raise ValueError("Incomplete systemctl response")
+        except ValueError as error:
+            services[name] = "unavailable"
+            errors[name] = str(error)
+    checks = {name: health(name) for name in ("live", "ready")}
+    for name, value in checks.items():
+        if value.get("available") is False:
+            errors["health/" + name] = value["error"]
+    result = dict(exit_code=1 if errors else 0, complete=not errors, services=services, health=checks)
+    if errors:
+        result.update(collection_errors=errors, error="Status report is incomplete: " +
+                      "; ".join(f"{name}: {error}" for name, error in errors.items()))
+    return result
 
 
 def sanitized_logs() -> str:
@@ -201,13 +235,14 @@ def main() -> None:
             raise ValueError("Invalid runtime limit.")
         try:
             release = json.loads((CURRENT / "release-manifest.json").read_text())
-            result["release"] = {key: release.get(key) for key in ("release_id", "source_revision", "application_version")}
-        except (OSError, ValueError):
-            result["release"] = {"available": False}
+            keys = ("release_id", "source_revision", "application_version")
+            if not isinstance(release, dict) or not all(isinstance(release.get(key), str) and release[key] for key in keys):
+                raise ValueError("Invalid release manifest")
+            result["release"] = {key: release[key] for key in keys}
+        except (OSError, ValueError) as error:
+            result["release"] = {"available": False, "error": str(error)}
         if request["action"] == "status":
-            result.update(exit_code=0, services={name: command_text(["systemctl", "show", name,
-                          "--property=ActiveState,SubState,UnitFileState"]).strip() for name in SERVICES},
-                          health={name: health(name) for name in ("live", "ready")})
+            result.update(status_report(result["release"]))
         elif request["action"] == "logs":
             result.update(exit_code=0, stdout=sanitized_logs())
         else:

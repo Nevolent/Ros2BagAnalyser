@@ -118,12 +118,7 @@ readonly remote_revision="$(
   || fail "HEAD is not the pushed origin/$deploy_branch revision; push it before deploying"
 
 echo "Deploying $local_revision from origin/$deploy_branch to $deploy_user@$deploy_host"
-exec "$ssh_program" \
-  -o BatchMode=yes \
-  -o ConnectTimeout=10 \
-  -o ConnectionAttempts=1 \
-  -o StrictHostKeyChecking=yes \
-  "$deploy_user@$deploy_host" \
-  sudo --non-interactive \
+exec python3 "$project_root/tools/vm_ssh.py" \
+  --ssh "$ssh_program" --host "$deploy_host" --user "$deploy_user" \
   bash -s -- "$deploy_branch" "$local_revision" \
   < <(git -C "$project_root" show "$local_revision:deploy/scripts/deploy-from-git")

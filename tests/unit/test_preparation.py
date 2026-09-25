@@ -127,7 +127,7 @@ def test_ready_artifact_precedes_active_and_failed_attempts() -> None:
     assert analysis.analysis_state == "ready"
 
 
-def test_aggregate_precedence_is_processing_queued_failed_ready_not_planned() -> None:
+def test_aggregate_precedence_is_failed_processing_queued_ready_not_planned() -> None:
     group = {
         "front_preview": CurrentOutputRecord(
             _target("front_preview"), active_job=_job("front_preview", "running")
@@ -141,18 +141,23 @@ def test_aggregate_precedence_is_processing_queued_failed_ready_not_planned() ->
     }
     service = _service()
 
+    failed = service._analysis_for_group(7, group, GENERATION)
+    group["imu_series"] = CurrentOutputRecord(_target("imu_series"))
     processing = service._analysis_for_group(7, group, GENERATION)
     group["front_preview"] = CurrentOutputRecord(_target("front_preview"))
     queued = service._analysis_for_group(7, group, GENERATION)
     group["topdown_preview"] = CurrentOutputRecord(_target("topdown_preview"))
-    failed = service._analysis_for_group(7, group, GENERATION)
-    group["imu_series"] = CurrentOutputRecord(_target("imu_series"))
     not_planned = service._analysis_for_group(7, group, GENERATION)
+    group["front_preview"] = CurrentOutputRecord(
+        _target("front_preview"), artifact=_artifact("front_preview")
+    )
+    ready = service._analysis_for_group(7, group, GENERATION)
 
+    assert failed.analysis_state == "failed"
     assert processing.analysis_state == "processing"
     assert queued.analysis_state == "queued"
-    assert failed.analysis_state == "failed"
     assert not_planned.analysis_state == "not_planned"
+    assert ready.analysis_state == "ready"
 
 
 def test_missing_topdown_companion_is_optional_for_aggregate_readiness() -> None:
@@ -184,7 +189,7 @@ def test_missing_topdown_companion_is_optional_for_aggregate_readiness() -> None
     assert analysis.outputs[1].state == "unavailable"
 
 
-def test_invalid_topdown_source_remains_required_for_aggregate_readiness() -> None:
+def test_ready_output_survives_other_unavailable_sources() -> None:
     group = {
         "front_preview": CurrentOutputRecord(
             _target("front_preview"), artifact=_artifact("front_preview")
@@ -199,7 +204,7 @@ def test_invalid_topdown_source_remains_required_for_aggregate_readiness() -> No
 
     analysis = _service()._analysis_for_group(7, group, GENERATION)
 
-    assert analysis.analysis_state == "not_planned"
+    assert analysis.analysis_state == "ready"
 
 
 def test_stale_planner_identity_requires_rescan_without_source_access() -> None:

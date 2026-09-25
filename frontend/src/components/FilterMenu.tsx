@@ -30,6 +30,7 @@ export function FilterMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         data-filter-trigger={name}
+        data-filter-value={value || undefined}
         onClick={() => setOpen(!open)}
       >
         {value || label}
@@ -79,6 +80,7 @@ export function FilterMenu({
               type="button"
               role="menuitemradio"
               aria-checked={value === item}
+              data-filter-option={item || undefined}
               key={item}
               onClick={() => {
                 onChange(item);

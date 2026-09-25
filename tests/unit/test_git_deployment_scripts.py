@@ -17,11 +17,13 @@ def test_git_deployment_launcher_is_local_clean_and_remote_revision_guarded() ->
     assert "uncommitted runtime change" in launcher
     assert "ls-files --others --exclude-standard" in launcher
     assert "ls-remote --exit-code --heads origin" in launcher
-    assert "BatchMode=yes" in launcher
-    assert "ConnectTimeout=10" in launcher
-    assert "ConnectionAttempts=1" in launcher
-    assert "StrictHostKeyChecking=yes" in launcher
-    assert "sudo --non-interactive" in launcher
+    assert '"$project_root/tools/vm_ssh.py"' in launcher
+    transport = (ROOT / "tools/vm_ssh.py").read_text()
+    assert "BatchMode=yes" in transport
+    assert "ConnectTimeout=10" in transport
+    assert "ConnectionAttempts=1" in transport
+    assert "StrictHostKeyChecking=yes" in transport
+    assert "['sudo', '--non-interactive']" in transport
     assert "deploy-from-git" in launcher
 
 

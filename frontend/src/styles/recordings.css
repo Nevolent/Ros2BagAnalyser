@@ -41,6 +41,11 @@
   width: 100%;
   background: var(--secondary);
 }
+.recordings-rescan [data-rescan-archive] span,
+.recordings-content .prepare-selected span {
+  position: relative;
+  top: 1px;
+}
 .recordings-rescan [data-scan-history] {
   display: grid;
   place-items: center;
@@ -92,7 +97,6 @@
   flex: none;
   margin: 0 8px 6px;
   overflow-y: auto;
-  scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 .recordings-toolbar .bag-filter {

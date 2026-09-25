@@ -31,7 +31,7 @@ export function Tabs<T extends string>({
             <span>{item.label}</span>
             {item.count !== undefined && (
               <span className="page-tab-count" aria-hidden="true">
-                {item.count}
+                <span>{item.count}</span>
               </span>
             )}
           </button>

@@ -70,6 +70,7 @@ export const Timeline = memo(function Timeline({
   const channelNames = (Object.keys(channels) as Channel[]).filter(
     (name) => channels[name].available ?? !!channels[name].values.length,
   );
+  const hasTelemetry = channelNames.length > 0;
   const formatUnix = (seconds: number) =>
     bundle.absoluteTime === false ? `${seconds.toFixed(3)} s` : (startUnix + seconds).toFixed(3);
   function update(next: Partial<TimelineState> | ((previous: TimelineState) => TimelineState)) {
@@ -201,7 +202,9 @@ export const Timeline = memo(function Timeline({
         const windowStart = clamp((start + end - span) / 2, 0, duration - span);
         update({ span, start: windowStart });
         setNotice(
-          `Zoomed to Unix time ${formatUnix(windowStart)} through ${formatUnix(windowStart + span)}.`,
+          hasTelemetry
+            ? `Zoomed to Unix time ${formatUnix(windowStart)} through ${formatUnix(windowStart + span)}.`
+            : `Zoomed to recording position ${windowStart.toFixed(1)} through ${(windowStart + span).toFixed(1)} seconds.`,
         );
         resume = false;
       }
@@ -416,6 +419,39 @@ export const Timeline = memo(function Timeline({
     [segments, path, size, state.start, state.span, signal],
   );
   const value = sample(state.time);
+  // Keep the numeric readout exact. Only the cursor dot averages nearby samples
+  // when the graph is zoomed out; the average disappears at maximum zoom.
+  const zoomFraction =
+    duration > 0 ? clamp((state.span / duration - 1 / 32) / (1 - 1 / 32), 0, 1) : 0;
+  const smoothingRadius = (state.span / Math.max(1, size.width)) * 12 * zoomFraction;
+  let cursorValue = value;
+  if (
+    !state.playing &&
+    value !== null &&
+    smoothingRadius > 0 &&
+    state.time > 0 &&
+    state.time < duration
+  ) {
+    let total = 0;
+    let count = 0;
+    for (let index = -7; index <= 7; index++) {
+      const nearby = sample(clamp(state.time + (index / 7) * smoothingRadius, 0, duration));
+      if (nearby !== null) {
+        total += nearby;
+        count++;
+      }
+    }
+    if (count) cursorValue = total / count;
+  }
+  const singleSamples = useMemo(() => {
+    const byPixel = new Map<number, NonNullable<typeof segments>[number][number]>();
+    for (const segment of segments ?? []) {
+      if (segment.length !== 1) continue;
+      const point = segment[0];
+      byPixel.set(Math.floor(x(point.timeSeconds)), point);
+    }
+    return [...byPixel.values()];
+  }, [segments, size.width, state.start, state.span]);
   const hasData = signal.available ?? !!signal.values.length;
   const selectionStart = selection ? Math.min(selection.start, selection.end) : 0;
   const selectionEnd = selection ? Math.max(selection.start, selection.end) : 0;
@@ -649,7 +685,11 @@ export const Timeline = memo(function Timeline({
           aria-valuemin={0}
           aria-valuemax={duration}
           aria-valuenow={Number(state.time.toFixed(3))}
-          aria-valuetext={`Unix time ${formatUnix(state.time)}, ends at ${formatUnix(duration)}, ${state.channel}: ${value === null ? '—' : value.toFixed(3)} ${signal.spokenUnit}`}
+          aria-valuetext={
+            hasTelemetry
+              ? `Unix time ${formatUnix(state.time)}, ends at ${formatUnix(duration)}, ${state.channel}: ${value === null ? '—' : value.toFixed(3)} ${signal.spokenUnit}`
+              : `Recording position ${state.time.toFixed(1)} of ${duration.toFixed(1)} seconds`
+          }
           aria-orientation="horizontal"
           onKeyDown={plotKeyDown}
           onPointerDown={(event) => {
@@ -710,8 +750,8 @@ export const Timeline = memo(function Timeline({
               </linearGradient>
               <linearGradient id="timeline-edge-fade">
                 <stop offset="0%" stopColor="white" stopOpacity="0" />
-                <stop offset="10%" stopColor="white" />
-                <stop offset="90%" stopColor="white" />
+                <stop offset="2%" stopColor="white" />
+                <stop offset="98%" stopColor="white" />
                 <stop offset="100%" stopColor="white" stopOpacity="0" />
               </linearGradient>
               <mask id="timeline-grid-mask">
@@ -726,8 +766,8 @@ export const Timeline = memo(function Timeline({
                 y2="0"
               >
                 <stop offset="0%" stopColor="white" stopOpacity="0" />
-                <stop offset="15%" stopColor="white" />
-                <stop offset="85%" stopColor="white" />
+                <stop offset="3%" stopColor="white" />
+                <stop offset="97%" stopColor="white" />
                 <stop offset="100%" stopColor="white" stopOpacity="0" />
               </linearGradient>
               <mask id="timeline-area-edge-mask">
@@ -753,18 +793,16 @@ export const Timeline = memo(function Timeline({
             <g mask="url(#timeline-area-edge-mask)">
               <path d={path ? area : ''} fill="url(#timeline-fill)" />
               <path className="timeline-line" d={path} />
-              {segments
-                ?.filter((segment) => segment.length === 1)
-                .map(([sample], index) => (
-                  <circle
-                    key={index}
-                    data-timeline-single-sample=""
-                    cx={x(sample.timeSeconds)}
-                    cy={y(sample.value!)}
-                    r="1.5"
-                    fill="var(--timeline-line)"
-                  />
-                ))}
+              {singleSamples.map((point, index) => (
+                <circle
+                  key={index}
+                  data-timeline-single-sample=""
+                  cx={x(point.timeSeconds)}
+                  cy={y(point.value!)}
+                  r="1.5"
+                  fill="var(--timeline-line)"
+                />
+              ))}
             </g>
             <g
               className="timeline-cursor"
@@ -778,7 +816,9 @@ export const Timeline = memo(function Timeline({
             >
               <line x1="0" x2="0" y1={top} y2={size.height - bottom} />
               <path d={`M-3,${top - 6}H3V${top - 3}L0,${top}L-3,${top - 3}Z`} />
-              {value !== null && <circle cx="0" cy={y(value)} r="3.5" />}
+              {!state.playing && cursorValue !== null && (
+                <circle cx="0" cy={y(cursorValue)} r="3.5" />
+              )}
             </g>
             {selection && (
               <g className="timeline-selection">
@@ -800,55 +840,63 @@ export const Timeline = memo(function Timeline({
                   y1={top}
                   y2={size.height - bottom}
                 />
-                <text
-                  x={clamp(x(selectionStart) + 5, 5, Math.max(5, size.width - 89))}
-                  y={top + 15}
-                  data-selection-start=""
-                >
-                  {formatUnix(selectionStart)}
-                </text>
-                <text
-                  x={clamp(x(selectionEnd) - 5, Math.min(size.width - 5, 89), size.width - 5)}
-                  y={size.height - 11}
-                  textAnchor="end"
-                  data-selection-end=""
-                >
-                  {formatUnix(selectionEnd)}
-                </text>
+                {hasTelemetry && (
+                  <>
+                    <text
+                      x={clamp(x(selectionStart) + 5, 5, Math.max(5, size.width - 89))}
+                      y={top + 15}
+                      data-selection-start=""
+                    >
+                      {formatUnix(selectionStart)}
+                    </text>
+                    <text
+                      x={clamp(x(selectionEnd) - 5, Math.min(size.width - 5, 89), size.width - 5)}
+                      y={size.height - 11}
+                      textAnchor="end"
+                      data-selection-end=""
+                    >
+                      {formatUnix(selectionEnd)}
+                    </text>
+                  </>
+                )}
               </g>
             )}
           </svg>
-          <div className="timeline-measurement">
-            <strong data-timeline-value="">{value === null ? '—' : value.toFixed(3)}</strong>
-            <span data-timeline-unit="">{hasData ? signal.unit : ''}</span>
+          {hasTelemetry && (
+            <div className="timeline-measurement">
+              <strong data-timeline-value="">{value === null ? '—' : value.toFixed(3)}</strong>
+              <span data-timeline-unit="">{hasData ? signal.unit : ''}</span>
+            </div>
+          )}
+        </div>
+        {hasTelemetry && (
+          <div className="timeline-axis" aria-label="Unix timestamps">
+            <time
+              data-timeline-time=""
+              dateTime={
+                bundle.absoluteTime === false
+                  ? undefined
+                  : new Date((startUnix + state.time) * 1000).toISOString()
+              }
+              title="Current Unix time"
+            >
+              {formatUnix(state.time)}
+            </time>
+            <time
+              data-timeline-end=""
+              dateTime={
+                bundle.absoluteTime === false
+                  ? undefined
+                  : new Date(
+                      (startUnix + Math.min(duration, state.start + state.span)) * 1000,
+                    ).toISOString()
+              }
+              title="Visible end Unix time"
+            >
+              {formatUnix(Math.min(duration, state.start + state.span))}
+            </time>
           </div>
-        </div>
-        <div className="timeline-axis" aria-label="Unix timestamps">
-          <time
-            data-timeline-time=""
-            dateTime={
-              bundle.absoluteTime === false
-                ? undefined
-                : new Date((startUnix + state.time) * 1000).toISOString()
-            }
-            title="Current Unix time"
-          >
-            {formatUnix(state.time)}
-          </time>
-          <time
-            data-timeline-end=""
-            dateTime={
-              bundle.absoluteTime === false
-                ? undefined
-                : new Date(
-                    (startUnix + Math.min(duration, state.start + state.span)) * 1000,
-                  ).toISOString()
-            }
-            title="Visible end Unix time"
-          >
-            {formatUnix(Math.min(duration, state.start + state.span))}
-          </time>
-        </div>
+        )}
         <span className="sr-only" data-timeline-notice="" role="status">
           {notice}
         </span>

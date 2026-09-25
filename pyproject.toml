@@ -41,6 +41,8 @@ rosbag_analyser = [
     "web/*.html",
     "web/*.js",
     "web/assets/*.svg",
+    "web/react/*.html",
+    "web/react/assets/*",
 ]
 
 [tool.pytest.ini_options]

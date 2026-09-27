@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
+import { useRememberedState } from '../app/WorkspaceProvider';
 
 interface PanelContext {
   collapsed: boolean;
@@ -40,9 +41,9 @@ export function Workspace({
   const splitter = useRef<HTMLDivElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
   const reopen = useRef<HTMLButtonElement>(null);
-  const [collapsed, updateCollapsed] = useState(false);
+  const [collapsed, updateCollapsed] = useRememberedState(`${name}.collapsed`, false);
   const [resizing, setResizing] = useState(false);
-  const [width, setWidth] = useState<number>();
+  const [width, setWidth] = useRememberedState<number | undefined>(`${name}.width`, undefined);
   const [maximum, setMaximum] = useState(side === 'right' ? 280 : 160);
   const focusPending = useRef(false);
   const minimum = side === 'right' ? 280 : 160;

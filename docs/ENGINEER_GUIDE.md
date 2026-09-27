@@ -11,8 +11,9 @@ operator. You do not need ROS commands or direct NAS access.
    top-down, IMU, or a combination. Compatible ready output and active work are
    reused.
 3. Follow work in **Processing**. One output runs at a time. Available controls
-   pause/resume or cancel current work, reorder/cancel queued work, and retry
-   failures.
+   cancel current work, reorder/cancel queued work, and retry failures. A recording
+   with failed outputs stays together in Failures, including its successful outputs.
+   Recording names in every processing table open Analysis.
 4. Open a recording in **Analyzer** to review its available outputs. Play, pause or seek on the shared
    timeline; select an IMU axis and zoom the graph to inspect a section.
 
@@ -33,14 +34,24 @@ unavailable.
 | Failed | An attempted output failed; inspect the message and retry if appropriate |
 | Worker offline | Saved work waits for the worker to return |
 
-In the React Processing view, elapsed time counts active processing time and
-freezes during pause. Estimates are approximate and can be unavailable or
-exceeded. Pause/cancel takes effect at a safe checkpoint. Worker restart
+Processing loads all queue, failure and history rows automatically. The active
+card appears only while a job is active. Its percentage compares elapsed time
+with the estimated runtime, caps at 99%, and changes to Estimate exceeded when
+the estimate runs out. It is a time estimate, not measured completion.
+Cancel takes effect at a safe checkpoint; the UI dismisses the job immediately
+and restores it with an error if the request fails. Worker restart
 interrupts running work; that attempt needs explicit retry. Browser refresh
 preserves the queue and completed output.
 
-Camera and IMU coverage can differ. Views hide or clear outside measured
-coverage. IMU axes are raw angular velocity (`rad/s`) and linear acceleration
+Folders start expanded. Folder choices, filters, sorting, selections, scrolling,
+panel settings and the last Analysis recording/channel/zoom/position survive
+switching pages during the browser session. Playback stops when leaving Analysis.
+Confirmation dialogs close immediately; background request failures appear in
+a dismissible message.
+
+Camera and IMU coverage can differ. Cameras and numeric IMU values hide or clear
+outside measured coverage. The graph holds the final finite value visually to
+the timeline end; this extension is not additional IMU data. IMU axes are raw angular velocity (`rad/s`) and linear acceleration
 (`m/s²`), not interpreted rover motion.
 
 ## Current limits and support

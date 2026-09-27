@@ -21,7 +21,7 @@ access, backup, or recovery configuration.
 
 1. Browse or search the saved **Recordings** catalog.
 2. Select recordings and choose **Prepare selected**, selecting the outputs needed.
-3. Follow work in **Processing**, with pause, resume, cancel, reorder, and retry.
+3. Follow work in **Processing**, with cancel, reorder, and retry.
 4. Open a prepared recording in **Analyzer** to review cameras and six raw IMU axes.
 
 Preparation reuses compatible output. Originals stay read-only; generated data

@@ -443,7 +443,7 @@ main[data-slot='sidebar-inset'] {
   width: 100%;
   padding: 44px 16px;
   text-align: center;
-  color: var(--foreground);
+  color: var(--muted-foreground);
   font-size: 13px;
 }
 .bag-empty span {

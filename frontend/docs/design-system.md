@@ -9,6 +9,7 @@ New pages should reuse the same structure as Recordings, Processing and Analysis
 | Standard secondary action                             | `Button`                                                  |
 | Compact page tabs                                     | `Tabs`                                                    |
 | Table panel, scrolling region and empty state         | `TablePanel`, `TableBody`, `EmptyState`, `SortableHeader` |
+| Compact scrolling inside a panel                      | `ScrollArea`                                              |
 | Search with matching geometry                         | `SearchField`                                             |
 | Keyboard-accessible single-choice filter              | `FilterMenu`                                              |
 | Selection with mixed state                            | `Checkbox`                                                |
@@ -46,3 +47,13 @@ Use accessible names for icon buttons, native buttons for actions, and links for
 Before changing shared styling, capture the approved UI, then inspect the visual comparison and run the affected browser tests. Check desktop and phone layouts in both themes. Avoid editing layout assertions merely to accept a regression.
 
 Sortable data columns use `SortableHeader` with `useTableSort`: ascending, descending, then original order. Sorting is presentation state and never mutates queue priority. Calendar timestamps use `formatDateTime` (`DD/MM/YYYY, HH:mm`, Europe/Tallinn); graph Unix timestamps and durations retain their domain formats.
+
+Single-line loading and empty states use `--muted-foreground`. Show initial loading
+only when there is no cached content; never layer it over populated rows. Close
+confirmation dialogs immediately, execute requests in the service, and surface
+failures in the dismissible shell error. Keep actions protected against duplicate
+submissions and restore optimistically dismissed data after request failure.
+
+Use `ScrollArea` for panel content and `TableBody` for tables. The shared thumb
+sits inside existing content padding without a reserved gutter. Preserve native
+keyboard scrolling, touch scrolling and horizontal overflow.

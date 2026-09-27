@@ -87,52 +87,6 @@
   scrollbar-color: var(--border) transparent;
   overscroll-behavior: contain;
 }
-/* Cover row lines only beneath the narrow scrollbar, leaving the header clear. */
-.data-table-body .bag-table-scroll.has-overlay-scrollbar {
-  scrollbar-width: none;
-}
-.data-table-body .bag-table-scroll.has-overlay-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-.table-scrollbar-track {
-  position: absolute;
-  z-index: 3;
-  top: 0;
-  bottom: 0;
-  right: 8px;
-  width: 4px;
-  background: var(--table-surface);
-  pointer-events: none;
-}
-.table-scrollbar-rail {
-  position: absolute;
-  left: 0;
-  right: 0;
-  touch-action: none;
-  cursor: pointer;
-  pointer-events: auto;
-}
-.table-scrollbar-track[data-visible='false'] {
-  visibility: hidden;
-}
-.table-scrollbar-thumb {
-  position: absolute;
-  left: 0;
-  right: 1px;
-  border-radius: 4px;
-  background: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
-}
-.table-scrollbar-track:hover .table-scrollbar-thumb {
-  background: var(--muted-foreground);
-}
-@media (forced-colors: active) {
-  .table-scrollbar-track {
-    background: Canvas;
-  }
-  .table-scrollbar-thumb {
-    background: CanvasText;
-  }
-}
 .data-table-panel .bag-table {
   min-width: 900px;
 }

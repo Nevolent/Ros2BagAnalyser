@@ -1,3 +1,4 @@
+import { useRememberedState } from '../../app/WorkspaceProvider';
 import { graph } from '../../data/telemetry';
 import { stopCamera, syncCamera } from './camera-clock';
 import { flushSync } from 'react-dom';
@@ -31,13 +32,15 @@ type Interaction = { kind: 'seek' | 'select'; start: number; end: number; resume
 export const Timeline = memo(function Timeline({
   bundle,
   workspaceRef,
+  recordingKey,
 }: {
+  recordingKey: string;
   bundle: AnalysisBundle;
   workspaceRef: RefObject<HTMLDivElement | null>;
 }) {
   const { duration, startUnix, channels } = bundle;
   const panel = useWorkspacePanel();
-  const [state, setState] = useState<TimelineState>({
+  const [state, setState] = useRememberedState<TimelineState>(`timeline.${recordingKey}`, {
     time: 0,
     playing: false,
     channel:
@@ -50,6 +53,19 @@ export const Timeline = memo(function Timeline({
     span: Math.max(duration, 0.001),
   });
   const current = useRef(state);
+  useEffect(() => () => setState({ ...current.current, playing: false }), [setState]);
+  const seekFrame = useRef(0);
+  const pendingSeek = useRef<number | null>(null);
+  function scheduleSeek(time: number) {
+    pendingSeek.current = time;
+    if (seekFrame.current) return;
+    seekFrame.current = requestAnimationFrame(() => {
+      seekFrame.current = 0;
+      if (pendingSeek.current !== null) seek(pendingSeek.current);
+      pendingSeek.current = null;
+    });
+  }
+  useEffect(() => () => cancelAnimationFrame(seekFrame.current), []);
   const lastDuration = useRef(duration);
   const [size, setSize] = useState({ width: 1, height: 100 });
   const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
@@ -191,6 +207,10 @@ export const Timeline = memo(function Timeline({
     );
   }
   function finishInteraction(cancelled = false) {
+    cancelAnimationFrame(seekFrame.current);
+    seekFrame.current = 0;
+    pendingSeek.current = null;
+    document.documentElement.classList.remove('is-timeline-dragging');
     const active = interaction.current;
     if (!active) return;
     let resume = active.resume;
@@ -248,7 +268,10 @@ export const Timeline = memo(function Timeline({
       },
       { signal },
     );
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      document.documentElement.classList.remove('is-timeline-dragging');
+    };
   }, [duration, startUnix]);
   useEffect(() => {
     if (menuOpen) options.current.get(state.channel)?.focus();
@@ -369,18 +392,22 @@ export const Timeline = memo(function Timeline({
     top +
     ((signal.ticks[0] - value) / (signal.ticks[0] - signal.ticks.at(-1)!)) *
       (size.height - top - bottom);
-  const segments = useMemo(
-    () =>
-      signal.samples
-        ? graph.visibleTraceSegments(
-            signal.samples,
-            state.start,
-            state.start + state.span,
-            size.width,
-          )
-        : null,
-    [signal, state.start, state.span, size.width],
-  );
+  const segments = useMemo(() => {
+    const samples = signal.samples;
+    if (!samples) return null;
+    const end = state.start + state.span;
+    const visible = graph.visibleTraceSegments(samples, state.start, end, size.width);
+    const last = samples.at(-1);
+    // Visual hold only: raw samples and the numeric readout retain measured coverage.
+    if (last?.value != null && last.timeSeconds < end && duration > last.timeSeconds) {
+      const tail = { ...last, timeSeconds: end };
+      const final = visible.at(-1);
+      if (final?.at(-1) === last) visible[visible.length - 1] = [...final, tail];
+      else if (state.start > last.timeSeconds)
+        visible.push([{ ...last, timeSeconds: state.start }, tail]);
+    }
+    return visible;
+  }, [signal, state.start, state.span, size.width, duration]);
   const path = useMemo(() => {
     if (segments)
       return segments
@@ -419,39 +446,18 @@ export const Timeline = memo(function Timeline({
     [segments, path, size, state.start, state.span, signal],
   );
   const value = sample(state.time);
-  // Keep the numeric readout exact. Only the cursor dot averages nearby samples
-  // when the graph is zoomed out; the average disappears at maximum zoom.
-  const zoomFraction =
-    duration > 0 ? clamp((state.span / duration - 1 / 32) / (1 - 1 / 32), 0, 1) : 0;
-  const smoothingRadius = (state.span / Math.max(1, size.width)) * 12 * zoomFraction;
-  let cursorValue = value;
-  if (
-    !state.playing &&
-    value !== null &&
-    smoothingRadius > 0 &&
-    state.time > 0 &&
-    state.time < duration
-  ) {
-    let total = 0;
-    let count = 0;
-    for (let index = -7; index <= 7; index++) {
-      const nearby = sample(clamp(state.time + (index / 7) * smoothingRadius, 0, duration));
-      if (nearby !== null) {
-        total += nearby;
-        count++;
-      }
-    }
-    if (count) cursorValue = total / count;
-  }
   const singleSamples = useMemo(() => {
-    const byPixel = new Map<number, NonNullable<typeof segments>[number][number]>();
+    const byPixel = new Map<number, { x: number; y: number }>();
     for (const segment of segments ?? []) {
       if (segment.length !== 1) continue;
       const point = segment[0];
-      byPixel.set(Math.floor(x(point.timeSeconds)), point);
+      byPixel.set(Math.floor(x(point.timeSeconds)), {
+        x: x(point.timeSeconds),
+        y: y(point.value!),
+      });
     }
     return [...byPixel.values()];
-  }, [segments, size.width, state.start, state.span]);
+  }, [segments, size, state.start, state.span, signal]);
   const hasData = signal.available ?? !!signal.values.length;
   const selectionStart = selection ? Math.min(selection.start, selection.end) : 0;
   const selectionEnd = selection ? Math.max(selection.start, selection.end) : 0;
@@ -694,6 +700,8 @@ export const Timeline = memo(function Timeline({
           onKeyDown={plotKeyDown}
           onPointerDown={(event) => {
             if (event.button !== 0 || !event.isPrimary || interaction.current) return;
+            event.preventDefault();
+            document.documentElement.classList.add('is-timeline-dragging');
             const time = pointerTime(event);
             interaction.current = {
               kind: event.shiftKey ? 'select' : 'seek',
@@ -714,11 +722,13 @@ export const Timeline = memo(function Timeline({
             setShift(event.shiftKey);
             if (!event.currentTarget.hasPointerCapture(event.pointerId) || !interaction.current)
               return;
+            event.preventDefault();
+            document.documentElement.classList.add('is-timeline-dragging');
             const time = pointerTime(event);
             interaction.current.end = time;
             if (interaction.current.kind === 'select')
               setSelection({ start: interaction.current.start, end: time });
-            else seek(time);
+            else scheduleSeek(time);
           }}
           onPointerUp={(event) => {
             if (interaction.current) {
@@ -790,20 +800,7 @@ export const Timeline = memo(function Timeline({
                 </text>
               ))}
             </g>
-            <g mask="url(#timeline-area-edge-mask)">
-              <path d={path ? area : ''} fill="url(#timeline-fill)" />
-              <path className="timeline-line" d={path} />
-              {singleSamples.map((point, index) => (
-                <circle
-                  key={index}
-                  data-timeline-single-sample=""
-                  cx={x(point.timeSeconds)}
-                  cy={y(point.value!)}
-                  r="1.5"
-                  fill="var(--timeline-line)"
-                />
-              ))}
-            </g>
+            <Trace path={path} area={area} singleSamples={singleSamples} />
             <g
               className="timeline-cursor"
               transform={`translate(${clamp(x(state.time), 0, size.width)},0)`}
@@ -816,9 +813,6 @@ export const Timeline = memo(function Timeline({
             >
               <line x1="0" x2="0" y1={top} y2={size.height - bottom} />
               <path d={`M-3,${top - 6}H3V${top - 3}L0,${top}L-3,${top - 3}Z`} />
-              {!state.playing && cursorValue !== null && (
-                <circle cx="0" cy={y(cursorValue)} r="3.5" />
-              )}
             </g>
             {selection && (
               <g className="timeline-selection">
@@ -863,7 +857,14 @@ export const Timeline = memo(function Timeline({
             )}
           </svg>
           {hasTelemetry && (
-            <div className="timeline-measurement">
+            <div
+              className="timeline-measurement"
+              title={
+                state.time > (signal.coverageEnd ?? Infinity)
+                  ? 'Outside IMU coverage. The line holds the final sample visually.'
+                  : undefined
+              }
+            >
               <strong data-timeline-value="">{value === null ? '—' : value.toFixed(3)}</strong>
               <span data-timeline-unit="">{hasData ? signal.unit : ''}</span>
             </div>
@@ -902,5 +903,33 @@ export const Timeline = memo(function Timeline({
         </span>
       </div>
     </section>
+  );
+});
+
+// Dense traces never reconcile thousands of points on each playback/scrub frame.
+const Trace = memo(function Trace({
+  path,
+  area,
+  singleSamples,
+}: {
+  path: string;
+  area: string;
+  singleSamples: { x: number; y: number }[];
+}) {
+  return (
+    <g mask="url(#timeline-area-edge-mask)">
+      <path d={path ? area : ''} fill="url(#timeline-fill)" />
+      <path className="timeline-line" d={path} />
+      {singleSamples.map((point, index) => (
+        <circle
+          key={index}
+          data-timeline-single-sample=""
+          cx={point.x}
+          cy={point.y}
+          r="1.5"
+          fill="var(--timeline-line)"
+        />
+      ))}
+    </g>
   );
 });

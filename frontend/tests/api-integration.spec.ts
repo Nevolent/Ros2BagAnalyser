@@ -40,13 +40,13 @@ test('live catalog filters, real folders, red review, selection and explicit sca
   await page.getByRole('button', { name: 'Filter by analysis' }).click();
   await page.getByRole('menuitemradio', { name: 'Ready', exact: true }).click();
   await expect(rows).toHaveCount(2);
-  await expect(rows).toContainText('recording-44');
+  await expect(rows.filter({ hasText: 'recording-44' })).toHaveCount(1);
   await page.getByRole('button', { name: 'Rescan Archive', exact: true }).click();
   await expect.poll(() => api.posts.length).toBe(1);
   expect(api.posts[0].path).toBe('/api/v1/catalog/rescan');
 });
 
-test('prepare waits for the server, keeps failures visible, and never fabricates a queued count', async ({
+test('prepare dismisses immediately, reports background failures and never fabricates a queued count', async ({
   page,
 }) => {
   const api = await apiFixture(page);
@@ -69,15 +69,16 @@ test('prepare waits for the server, keeps failures visible, and never fabricates
   await page.getByRole('button', { name: 'Prepare Selected' }).click();
   const dialog = page.getByRole('dialog', { name: 'Prepare recordings' });
   await dialog.getByRole('button', { name: 'Confirm' }).click();
-  await expect(dialog.getByRole('button', { name: 'Preparing…' })).toBeDisabled();
+  await expect(dialog).toBeHidden();
   release();
-  await expect(dialog.getByRole('alert')).toHaveText('Worker storage unavailable.');
+  await expect(page.getByRole('alert')).toHaveText('Worker storage unavailable.');
   expect(api.posts[0].body).toEqual({
     recording_ids: [42],
     output_kinds: ['front_preview', 'topdown_preview', 'imu_series'],
   });
   await expect(page.locator('.recordings-notice')).toHaveCount(0);
   api.override = null;
+  await page.getByRole('button', { name: 'Prepare Selected' }).click();
   await dialog.getByRole('button', { name: 'Confirm' }).click();
   await expect(dialog).not.toBeVisible();
   await expect(
@@ -93,14 +94,9 @@ test('processing uses stored time, unavailable estimates, durable controls and g
   await expect(page.locator('[data-processing-elapsed]')).toHaveText('0:10');
   await expect(page.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
   await expect(page.locator('[data-ready-in]')).toHaveText('Unavailable');
-  await page.getByRole('button', { name: 'Pause processing', exact: true }).click();
-  await expect(page.locator('[data-processing-status]')).toBeEmpty();
-  await expect(page.locator('.processing-job')).toHaveClass(/is-paused/);
-  await expect(page.getByRole('button', { name: 'Pause processing', exact: true })).toBeDisabled();
-  api.active!.control_state = 'paused';
-  api.active!.allowed_controls = ['resume', 'cancel'];
-  await expect(page.getByRole('button', { name: 'Resume processing', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Resume processing', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: /Pause processing|Resume processing/ }),
+  ).toHaveCount(0);
   await page.getByRole('checkbox', { name: 'Select recording-42', exact: true }).check();
   await expect(page.getByRole('button', { name: 'Move up' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel 1 selected' }).click();
@@ -141,11 +137,12 @@ test('queue move posts grouped job IDs and displays the server order', async ({ 
   });
 });
 
-test('live elapsed ticks between polls and freezes as soon as pause is requested', async ({
+test('estimated progress ticks between polls and stops at 99 when the estimate is exceeded', async ({
   page,
 }) => {
   await page.clock.install();
   const api = await apiFixture(page);
+  api.active!.estimate = { status: 'available', estimated_total_ms: 15000 };
   api.override = async (route, path) => {
     if (path !== '/api/v1/processing/overview') return false;
     await route.fulfill({
@@ -162,11 +159,10 @@ test('live elapsed ticks between polls and freezes as soon as pause is requested
   await expect(page.locator('[data-processing-elapsed]')).toHaveText('0:10');
   await page.clock.runFor(2100);
   await expect(page.locator('[data-processing-elapsed]')).toHaveText('0:12');
-  await page.getByRole('button', { name: 'Pause processing', exact: true }).click();
-  const elapsed = await page.locator('[data-processing-elapsed]').textContent();
-  await expect(page.locator('[data-processing-status]')).toBeEmpty();
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /^8[0-6]$/);
   await page.clock.runFor(4000);
-  await expect(page.locator('[data-processing-elapsed]')).toHaveText(elapsed!);
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '99');
+  await expect(page.locator('[data-processing-percent]')).toHaveText('Estimate exceeded');
 });
 
 test('failed-output retry posts backend job IDs and errors stay plain text', async ({ page }) => {
@@ -205,7 +201,7 @@ test('analysis opens actual recording with irregular IMU time, last duplicate, n
   await page.keyboard.press('End');
   await expect(page.locator('[data-timeline-value]')).toHaveText('—');
   expect((await page.locator('.timeline-line').getAttribute('d'))?.match(/M/g)?.length).toBe(2);
-  await expect(page.locator('[data-timeline-single-sample]')).toHaveCount(1);
+  await expect(page.locator('[data-timeline-single-sample]')).toHaveCount(0);
   await expect(page.locator('.recording-errors')).toContainText('camera could not be loaded.');
 });
 
@@ -228,7 +224,7 @@ test('queued, processing and unavailable states use simple text with errors at t
   await expect(page.getByText('This is currently queued.', { exact: true })).toBeVisible();
   await expect(page.locator('.timeline-state')).toHaveText('This output is unavailable.');
   await expect(page.getByRole('button', { name: /processing/i })).toHaveCount(0);
-  await expect(page.locator('.recording-details-body > :last-child')).toHaveClass(
+  await expect(page.locator('.recording-details-body > div > :last-child')).toHaveClass(
     'recording-errors',
   );
   await expect(page.locator('.recording-errors')).toContainText(diagnostic.message);
@@ -294,7 +290,9 @@ test('loading, offline catalog and missing recording never fall back to demo dat
   expect(api.posts).toEqual([]);
 });
 
-test('pagination is explicit and follows opaque API cursors', async ({ page }) => {
+test('pagination loads all pages automatically and follows opaque API cursors', async ({
+  page,
+}) => {
   const api = await apiFixture(page);
   api.override = async (route, path) => {
     const url = new URL(route.request().url());
@@ -319,8 +317,6 @@ test('pagination is explicit and follows opaque API cursors', async ({ page }) =
   };
   await page.goto('/#/processing');
   await page.getByRole('button', { name: 'History', exact: true }).click();
-  await expect(page.locator('.bag-table tbody tr')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Load more' }).click();
   await expect(page.locator('.bag-table tbody tr')).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Load more' })).toHaveCount(0);
 });
@@ -519,8 +515,8 @@ test('preparation accepts one available output and reports when none can be prep
   await page.getByRole('checkbox', { name: 'Select recording-42', exact: true }).check();
   await page.getByRole('button', { name: 'Prepare Selected' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Confirm' }).click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('No IMU topic.');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(page.getByRole('alert')).toContainText('No IMU topic.');
 });
 
 test('history combines completed outputs and queue uses cumulative server estimates', async ({

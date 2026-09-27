@@ -45,7 +45,7 @@ test('preparation includes selected bags hidden by filters and supports cancel o
   await page.getByRole('button', { name: 'Prepare Selected', exact: true }).click();
   await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Recordings', level: 1 })).toBeVisible();
-  await expect(page.getByRole('status')).toContainText('2 recordings queued.');
+  await expect(page.getByRole('status')).toContainText('Preparation request completed.');
   await expect(page.locator('.bag-checkbox:checked')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Prepare Selected', exact: true })).toBeHidden();
   await page.getByRole('link', { name: 'Processing', exact: true }).click();
@@ -82,8 +82,8 @@ test('scrolling keeps filters and headers visible without shifting table columns
   const nameHeader = page.getByRole('columnheader', { name: 'Name', exact: true });
   const before = await nameHeader.boundingBox();
   const viewport = page.locator('.recordings-table-body .bag-table-scroll');
-  const track = page.locator('.recordings-table-body .table-scrollbar-track');
-  const thumb = page.locator('.recordings-table-body .table-scrollbar-thumb');
+  const track = page.locator('.recordings-table-body .scrollbar-track');
+  const thumb = page.locator('.recordings-table-body .scrollbar-thumb');
   await expect(track).toHaveAttribute('data-visible', 'true');
   const headerBox = await nameHeader.boundingBox();
   const trackBefore = await track.boundingBox();

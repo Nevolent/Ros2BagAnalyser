@@ -7,7 +7,7 @@ test('timeline plays, pauses and scrubs', async ({ page }) => {
   const value = page.locator('[data-timeline-value]');
   const originalValue = await value.textContent();
   const originalCursor = await page.locator('.timeline-cursor').getAttribute('transform');
-  await expect(page.locator('.timeline-cursor circle')).toHaveCount(1);
+  await expect(page.locator('.timeline-cursor circle')).toHaveCount(0);
   await page.getByRole('button', { name: 'Play timeline', exact: true }).click();
   await expect(page.locator('.timeline-cursor circle')).toHaveCount(0);
   await page.clock.runFor(2100);
@@ -15,7 +15,7 @@ test('timeline plays, pauses and scrubs', async ({ page }) => {
   expect(await value.textContent()).not.toBe(originalValue);
   expect(await page.locator('.timeline-cursor').getAttribute('transform')).not.toBe(originalCursor);
   await page.getByRole('button', { name: 'Pause timeline', exact: true }).click();
-  await expect(page.locator('.timeline-cursor circle')).toHaveCount(1);
+  await expect(page.locator('.timeline-cursor circle')).toHaveCount(0);
   const paused = await slider.getAttribute('aria-valuenow');
   await page.clock.runFor(1000);
   await expect(slider).toHaveAttribute('aria-valuenow', paused!);
@@ -99,7 +99,8 @@ test('playback stops at the end, can restart, and is disposed when leaving Analy
     await page.evaluate(() => (window as any).previousTimeline.getAttribute('aria-valuenow')),
   ).toBe(oldTime);
   await page.getByRole('link', { name: 'Analysis', exact: true }).click();
-  await expect(slider).toHaveAttribute('aria-valuenow', '0');
+  await expect(slider).toHaveAttribute('aria-valuenow', oldTime!);
+  await expect(page.getByRole('button', { name: 'Play timeline', exact: true })).toBeVisible();
 });
 
 test('sidebar labels appear to the right on hover and keyboard focus', async ({ page }) => {
@@ -162,7 +163,7 @@ test('sidebar tooltip stays visible while crossing between Recordings and the lo
   await expect(tooltip).toHaveAttribute('data-reuse-check', 'original');
 });
 
-test('recording details retain asset metadata and scroll with a reserved gutter', async ({
+test('recording details retain asset metadata and scroll inside the panel without a reserved gutter', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1024, height: 500 });
@@ -178,7 +179,7 @@ test('recording details retain asset metadata and scroll with a reserved gutter'
   await expect(body).toContainText('metadata.yaml');
   await expect(body.getByRole('heading', { name: 'Analysis outputs' })).toHaveCount(0);
   await expect(body.getByRole('heading', { name: 'Source components' })).toHaveCount(0);
-  await expect(body).toHaveCSS('scrollbar-gutter', 'stable');
+  await expect(body).toHaveCSS('scrollbar-gutter', 'auto');
   const before = await body.boundingBox();
   await page.addStyleTag({ content: '.recording-details-body { overflow-y:scroll; }' });
   expect(await body.boundingBox()).toEqual(before);

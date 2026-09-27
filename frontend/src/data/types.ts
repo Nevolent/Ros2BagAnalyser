@@ -57,7 +57,6 @@ export interface WorkspaceSnapshot {
   lastScan?: string | null;
   analysisLoading?: boolean;
   analysisError?: string;
-  more?: Partial<Record<'queued' | 'failed' | 'history', boolean>>;
   recordings: Recording[];
   queue: Job[];
   failures: Job[];

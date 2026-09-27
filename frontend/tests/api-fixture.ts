@@ -123,10 +123,11 @@ export async function apiFixture(page: Page) {
     catalog,
     recording,
     queue: [job(10), job(11, 'imu_series')],
-    failures: [{ ...job(12), state: 'failed', diagnostic }],
+    failures: [{ ...job(12), recording_id: 48, state: 'failed', diagnostic }],
     history: [
       {
         ...job(13),
+        recording_id: 47,
         state: 'succeeded',
         finished_at: '2026-09-24T10:01:00Z',
         runtime_ms: 65000,

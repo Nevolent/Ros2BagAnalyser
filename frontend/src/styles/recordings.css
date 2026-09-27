@@ -65,7 +65,7 @@
 .recordings-rescan [data-rescan-archive]:disabled {
   opacity: 1;
   color: var(--muted-foreground);
-  cursor: wait;
+  cursor: default;
 }
 .recordings-content .prepare-selected {
   width: var(--recordings-action-width);
@@ -75,9 +75,6 @@
   background: var(--action-emphasis-hover) !important;
 }
 
-.recordings-workspace .folder-list {
-  scrollbar-gutter: stable;
-}
 .recordings-workspace .folder-name {
   flex: 1;
 }

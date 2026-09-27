@@ -60,9 +60,31 @@
   color: var(--muted-foreground);
   font-size: 12px;
 }
-.load-more {
-  align-self: center;
-  margin: 8px;
-  color: var(--muted-foreground);
-  font-size: 12px;
+/* Request errors remain visible even if the initiating page has been left. */
+.workspace-error {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 100;
+  display: flex;
+  gap: 16px;
+  max-width: min(560px, calc(100vw - 64px));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--popover);
+  box-shadow: 0 4px 20px #0003;
+}
+.workspace-error button {
+  align-self: start;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.workspace-error button svg {
+  width: 16px;
+  height: 16px;
 }

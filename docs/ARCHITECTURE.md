@@ -85,7 +85,12 @@ interrupted; it does not resume the process automatically.
 
 Elapsed and active time come from stored timestamps. Estimates freeze a median
 runtime-per-input-byte prediction from at least two compatible successful jobs.
-They can be unavailable or exceeded. The UI does not invent percentage progress.
+They can be unavailable or exceeded. The UI shows elapsed / estimated time as
+an explicitly estimated percentage, capped at 99%; it says Estimate exceeded
+once elapsed time reaches the estimate. This is not measured work completion.
+The Processing UI offers cancellation, with immediate dismissal and restoration
+on request failure. Backend pause/resume controls remain compatible with existing
+jobs and API clients, but are not exposed in the UI.
 
 ## Artifacts and time
 
@@ -109,7 +114,11 @@ bag-relative clock, corrects camera drift at 100 ms, and clears/hides consumers
 outside their measured coverage. Graph zoom changes the view, not the clock.
 IMU JSON is capped at 64 MiB and validated row by row; the browser parses the
 response stream and draws only a bounded set of points for the visible window,
-preserving spikes and visible null gaps. Camera panes show buffering until the
+preserving spikes and visible null gaps. The React graph visually holds a finite
+final IMU sample through the remaining recording/camera timeline; numeric
+readouts still clear outside measured coverage, and internal gaps remain gaps.
+Dense SVG traces are memoized independently of the cursor, and pointer seeks
+are coalesced to animation frames. Camera panes show buffering until the
 first frame is decoded, then retain the last frame during seeks.
 
 Video validation streams packet timestamps through ffprobe instead of collecting

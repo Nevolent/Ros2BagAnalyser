@@ -1,7 +1,8 @@
 # Frontend architecture
 
-React owns the persistent shell, hash routing, controls and local presentation
-state. `main.tsx` injects `createApiWorkspace()`; only the explicit development
+React owns the persistent shell, hash routing, controls and session presentation
+state. `WorkspaceProvider` retains small UI settings across route unmounts;
+media, timers and observers are still disposed when leaving a page. `main.tsx` injects `createApiWorkspace()`; only the explicit development
 URL `?demo=1` injects the imported visual fixtures. The Python frontend and VM
 release remain unchanged.
 The separate Vite development mode `archive` injects `synthetic-workspace.ts`.
@@ -17,16 +18,21 @@ API service is never used in this mode.
 never recover IDs or state from table text. `api-workspace.ts` owns catalog and
 processing polling, subscriptions and asynchronous commands. Route cleanup
 aborts reads and stops timers. Mutation results invalidate older reads; failed
-requests preserve the last good data and show an error. Mutations are never
+requests restore optimistically dismissed jobs and show a dismissible shell error.
+Initial loading is separate from background refresh of cached rows. Mutations are never
 replayed automatically. Source scanning is always explicit.
 
 Catalog reads use `/api/v1/catalog`. Processing uses overview plus cursor-based
-queued, failed and history pages. Outputs are grouped by recording; actions
-expand selected rows back to backend job IDs. History contains the latest
-successful jobs delivered by the API. Cumulative estimates come from overview,
-with unavailable displayed for outputs outside its estimate window. Live timing
-comes from stored backend milliseconds. The design's stage and reorder controls
-are intentionally absent.
+queued, failed and history pages. Every cursor is followed automatically, with
+cycle detection, deduplication and abort/version guards; a failed page preserves
+the last complete snapshot. Successful siblings stay with actionable failures,
+and retry expands only the failed job IDs. History sums latest successful
+outputs for recordings without failures. Recording names link to Analysis.
+Cumulative queue estimates come from overview. The active card shows elapsed /
+estimated runtime, capped at 99%, and Estimate exceeded at the estimate boundary.
+Cancellation immediately hides affected work and restores it on failure; the
+backend still acknowledges controls at safe checkpoints. Pause/resume remains
+an API capability, with no UI control.
 
 The Vite server and preview proxy `/api` to `ROS_BAG_API_TARGET` (default
 `http://127.0.0.1:8000`). Browser requests stay on the same origin. This also
@@ -46,9 +52,13 @@ streamed JSON at 64 MiB, validates rows/coverage, retains duplicate timestamps
 and per-axis nulls, and keeps large samples outside the subscribed workspace
 snapshot. Repeated detail polls reuse a matching validated bundle.
 
-`Timeline` owns the clock, playback, channels, zoom and selection locally. With validated IMU data, the live readout selects the last sample at or before
+`Timeline` retains clock position, channel and zoom per recording during the
+session; playback and transient selection stop on unmount. With validated IMU data, the live readout selects the last sample at or before
 the clock and clears outside measured coverage. Without it, the recording clock
-remains usable while numeric IMU and Unix labels are hidden. Graph reduction preserves spikes and visible gaps.
+remains usable while numeric IMU and Unix labels are hidden. Graph reduction preserves spikes and visible gaps. A finite final sample is
+visually held to the recording/camera end without changing samples or readout
+coverage. A memoized `Trace` isolates dense SVG elements from clock updates,
+and pointer movement schedules at most one seek update per animation frame.
 `camera-clock.ts` converts the same bag-relative clock to each video's
 coverage-relative time. Measured coverage and initial buffering control
 visibility; decoded frames remain visible during later seeks. Effects dispose
@@ -60,10 +70,12 @@ to the explicit visual fixtures.
 
 Use the existing components and semantic tokens described in
 [the design system](design-system.md). The imported layout is the reference.
-`live-states.css` adds only centered text, red errors, focus treatment for
-recording links and compact pagination. Recordings and Processing keep selection
-and sorting locally. Failed commands do not produce optimistic success notices.
-Recording diagnostics appear after the source assets, separated by a divider.
+`live-states.css` owns muted loading/empty states, red errors and link focus.
+`ScrollArea` shares compact overlay scrollbars across tables, folders and details,
+with native horizontal overflow and keyboard scrolling. Presentation settings
+survive page switches; modal dialogs close before asynchronous commands finish.
+Optional absence appears in asset rows; actual diagnostics remain after source
+assets, separated by a divider.
 
 The live command-search menu lists the three implemented application pages.
 The explicit visual demo retains its imported placeholder entries for comparison.

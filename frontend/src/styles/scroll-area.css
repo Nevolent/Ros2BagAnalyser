@@ -1,0 +1,69 @@
+.scroll-area {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.scroll-area > .scroll-viewport {
+  height: 100%;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 65%, transparent) transparent;
+  scrollbar-gutter: auto;
+  overscroll-behavior: contain;
+}
+.scroll-viewport:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+.data-table-body .scrollbar-track {
+  right: 8px;
+}
+/* Cover row lines only beneath the narrow scrollbar, leaving the header clear. */
+.scroll-area > .scroll-viewport.has-overlay-scrollbar {
+  scrollbar-width: none;
+}
+.scroll-area > .scroll-viewport.has-overlay-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-track {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 4px;
+  right: 4px;
+  width: 4px;
+  background: var(--table-surface, var(--secondary));
+  pointer-events: none;
+}
+.scrollbar-rail {
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.scrollbar-track[data-visible='false'] {
+  visibility: hidden;
+}
+.scrollbar-thumb {
+  position: absolute;
+  left: 3px;
+  right: 4px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
+}
+.scrollbar-track:hover .scrollbar-thumb {
+  background: var(--muted-foreground);
+}
+@media (forced-colors: active) {
+  .scrollbar-track {
+    background: Canvas;
+  }
+  .scrollbar-thumb {
+    background: CanvasText;
+  }
+}

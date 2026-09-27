@@ -1,3 +1,4 @@
+import { ScrollArea } from '../../components/ScrollArea';
 import type { AnalysisRecording, RecordingAsset } from '../../data/types';
 import { formatDateTime } from '../../lib/format';
 import { StatusBadge } from '../../components/StatusBadge';
@@ -32,7 +33,9 @@ function Assets({ items }: { items: RecordingAsset[] }) {
               tone={
                 asset.status === 'Ready' || asset.status === 'Readable'
                   ? 'success'
-                  : ['Queued', 'Processing', 'Not planned'].includes(asset.status)
+                  : ['Queued', 'Processing', 'Not planned', 'Unavailable', 'Missing'].includes(
+                        asset.status,
+                      )
                     ? 'muted'
                     : 'error'
               }
@@ -51,37 +54,34 @@ function Assets({ items }: { items: RecordingAsset[] }) {
 }
 export function RecordingDetails({ recording }: { recording: AnalysisRecording }) {
   return (
-    <div
-      className="recording-details-body"
-      tabIndex={0}
-      role="region"
-      aria-label="Recording information and assets"
-    >
-      <section className="recording-overview" aria-label="Recording information">
-        <dl className="recording-info">
-          {recording.info.map((field) => (
-            <div key={field.label}>
-              <dt>{field.label}</dt>
-              <dd>
-                <Value field={field} />
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </section>
-      <section className="recording-assets-group" aria-label="Analysis outputs">
-        <Assets items={recording.outputs} />
-      </section>
-      <section className="recording-assets-group" aria-label="Source components">
-        <Assets items={recording.sources} />
-      </section>
-      {!!recording.errors?.length && (
-        <section className="recording-errors" aria-label="Recording errors">
-          {recording.errors.map((error) => (
-            <p key={error}>{error}</p>
-          ))}
+    <ScrollArea viewportClassName="recording-details-body" label="Recording information and assets">
+      <div>
+        <section className="recording-overview" aria-label="Recording information">
+          <dl className="recording-info">
+            {recording.info.map((field) => (
+              <div key={field.label}>
+                <dt>{field.label}</dt>
+                <dd>
+                  <Value field={field} />
+                </dd>
+              </div>
+            ))}
+          </dl>
         </section>
-      )}
-    </div>
+        <section className="recording-assets-group" aria-label="Analysis outputs">
+          <Assets items={recording.outputs} />
+        </section>
+        <section className="recording-assets-group" aria-label="Source components">
+          <Assets items={recording.sources} />
+        </section>
+        {!!recording.errors?.length && (
+          <section className="recording-errors" aria-label="Recording errors">
+            {recording.errors.map((error) => (
+              <p key={error}>{error}</p>
+            ))}
+          </section>
+        )}
+      </div>
+    </ScrollArea>
   );
 }

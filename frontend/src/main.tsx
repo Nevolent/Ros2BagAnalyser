@@ -8,6 +8,7 @@ import './styles/table.css';
 import './styles/recordings.css';
 import './styles/processing.css';
 import './styles/analysis.css';
+import './styles/scroll-area.css';
 import { App } from './app/App';
 import { WorkspaceProvider } from './app/WorkspaceProvider';
 import { normalizeLegacyRoute } from './app/useRoute';

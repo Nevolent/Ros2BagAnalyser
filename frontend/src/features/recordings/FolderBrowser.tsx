@@ -1,15 +1,10 @@
-import {
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent,
-} from 'react';
+import { useLayoutEffect, useMemo, useRef, type CSSProperties, type KeyboardEvent } from 'react';
+import { useRememberedState } from '../../app/WorkspaceProvider';
 import type { Folder, Recording } from '../../data/types';
 import { createFolderIndex } from '../../lib/folder-index';
 import { SearchField } from '../../components/SearchField';
 import { SidePanel } from '../../components/Workspace';
+import { ScrollArea } from '../../components/ScrollArea';
 import { Icon } from '../../components/Icon';
 
 export function FolderBrowser({
@@ -24,11 +19,10 @@ export function FolderBrowser({
   onSelect(id: string): void;
 }) {
   const { index, contains } = useMemo(() => createFolderIndex(folders), [folders]);
-  const [expanded, setExpanded] = useState(
-    new Set(['synthetic-root', 'bunker', 'bunker-tests', 'bunker-2025', 'lunar', 'lunar-navigation', 'calibration']),
-  );
-  const [search, setSearch] = useState('');
-  const [focused, setFocused] = useState('bunker');
+  // New folders start open. Remember only explicit collapses, including across refreshes.
+  const [collapsed, setCollapsed] = useRememberedState('folders.collapsed', new Set<string>());
+  const [search, setSearch] = useRememberedState('folders.search', '');
+  const [focused, setFocused] = useRememberedState('folders.focused', '');
   const rows = useRef(new Map<string, HTMLDivElement>());
   const input = useRef<HTMLInputElement>(null);
   const pendingFocus = useRef<string | null>(null);
@@ -56,7 +50,7 @@ export function FolderBrowser({
     for (const folder of items) {
       if (query && !included.has(folder.id)) continue;
       visible.push(folder.id);
-      if (folder.children && (query || expanded.has(folder.id))) collect(folder.children);
+      if (folder.children && (query || !collapsed.has(folder.id))) collect(folder.children);
     }
   }
   collect(folders);
@@ -75,7 +69,7 @@ export function FolderBrowser({
   });
   function toggle(id: string) {
     if (!query)
-      setExpanded((current) => {
+      setCollapsed((current) => {
         const next = new Set(current);
         next.has(id) ? next.delete(id) : next.add(id);
         return next;
@@ -83,10 +77,10 @@ export function FolderBrowser({
   }
   function clearSearch() {
     setSearch('');
-    setExpanded((current) => {
+    setCollapsed((current) => {
       const next = new Set(current);
       for (let parent = index.get(selected)?.parent; parent; parent = index.get(parent)?.parent)
-        next.add(parent);
+        next.delete(parent);
       return next;
     });
   }
@@ -112,12 +106,12 @@ export function FolderBrowser({
         break;
       case 'ArrowRight':
         if (entry.folder.children) {
-          if (!query && !expanded.has(id)) toggle(id);
+          if (!query && collapsed.has(id)) toggle(id);
           else next = visible[current + 1];
         }
         break;
       case 'ArrowLeft':
-        if (entry.folder.children && expanded.has(id) && !query) toggle(id);
+        if (entry.folder.children && !collapsed.has(id) && !query) toggle(id);
         else next = entry.parent;
         break;
       case 'Enter':
@@ -145,7 +139,7 @@ export function FolderBrowser({
   function branch(items: Folder[]) {
     return items.map((folder, position) => {
       const entry = index.get(folder.id)!,
-        open = !!query || expanded.has(folder.id),
+        open = !!query || !collapsed.has(folder.id),
         count = counts.get(folder.id) ?? 0;
       return (
         <div
@@ -272,14 +266,14 @@ export function FolderBrowser({
         </button>
       </div>
       <nav className="folder-browser" aria-label="Browse folders">
-        <div className="folder-list">
+        <ScrollArea label="Folder list" viewportClassName="folder-list">
           <div role="tree" aria-label="Archive folders" data-folder-tree="" onKeyDown={onKeyDown}>
             {branch(folders)}
           </div>
           <p className="folder-empty" data-folder-empty="" hidden={!query || matched.size > 0}>
             No folders found.
           </p>
-        </div>
+        </ScrollArea>
       </nav>
     </SidePanel>
   );

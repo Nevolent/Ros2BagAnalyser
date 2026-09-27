@@ -33,7 +33,7 @@ unavailable API displays an error and never switches to simulated data.
 For a larger interactive UI playground, run `npm run dev -- --mode archive`
 and open `http://127.0.0.1:5173/`. This separate development mode creates
 over 500 in-memory recordings across nested folders, plus 100 failures, 180
-history rows and a queue. Preparation, retry, pause and cancellation update the
+history rows and a queue. Preparation, retry and cancellation update the
 local state. Each queued recording takes about 1–2 minutes; newly prepared or
 retried recordings move to the front of the waiting queue. The camera images and
 IMU graph are shared visual fixtures while recording details and output states
@@ -55,23 +55,31 @@ The preview server is for local evaluation.
 - Recordings uses saved catalog data and the real folder tree. Recording names
   open `#/analysis/{id}`. Filters include Processing, Ready, Failed, and
   Review (red for readable recordings with zero-duration metadata).
-- Rescan, preparation, pause/resume, cancellation and retry use the existing API.
+- Rescan, preparation, cancellation and retry use the existing API.
   Preparation requests the three outputs where available. Missing outputs are
   skipped when another output can be prepared; scheduling failures remain visible. No stage display is exposed. Selected queue rows can be moved up or down
   through the existing reorder API. Cancelling the active recording also cancels its remaining outputs.
-- Processing groups outputs by recording. History sums the returned latest
-  successful output sizes and runtimes. Pages start with 100 backend output jobs;
-  Load more follows the API cursor. Counts describe the loaded rows, so groups
-  can gain outputs when more data loads. Queue estimates come from the server;
-  unavailable estimates and pending controls are shown truthfully. The live
-  elapsed display ticks between polls and freezes for pause requests and pauses;
-  the progress track does not claim a percentage the backend cannot measure.
+- Processing automatically follows every API cursor before publishing a complete
+  set of queue, failure and history groups. A failed recording keeps its successful
+  siblings in Failures; retry still submits only failed job IDs. Recording names
+  link to Analysis. The active card is absent when idle or cancelled. Its estimated
+  percentage is elapsed / estimated runtime, capped at 99%; reaching the estimate
+  displays Estimate exceeded. No processing pause control is shown.
+- Confirmations close before network work completes. Cancellations and retries
+  dismiss affected rows immediately; failed requests restore data and show a
+  dismissible error across pages. Cached tables refresh without loading overlays.
+- Presentation choices persist across routes for the current browser session:
+  folders, filters, selection, sorting, scrolling, panels and Analysis channel,
+  zoom and time. New folders start open. Playback stops on leaving Analysis.
 - Analysis uses identity-bound video and validated six-axis IMU data, one
-  recording-relative clock, measured camera coverage, explicit signal gaps,
-  last-sample lookup and bounded graph drawing. Camera-only review keeps the
-  recording clock while hiding IMU values and Unix labels without validated IMU
-  data. Loading/queued/processing states are plain text. Diagnostics and media errors
-  are collected at the bottom of Recording details in the shared red.
+  recording-relative clock, measured camera coverage and exact last-sample lookup.
+  The finite final graph value extends visually through the timeline end; readouts
+  remain empty outside measured coverage and internal null gaps remain visible.
+  Pointer seeks are coalesced and the dense trace is memoized outside clock updates.
+  Optional missing sources use muted asset states, without duplicate error codes.
+  Actual processing, validation and media errors remain visible in Recording details.
+- Tables, folders and details use `ScrollArea` for a compact scrollbar inside the
+  content. Keyboard scrolling stays native; horizontal overflow keeps native bars.
 
 ## Checks
 

@@ -97,29 +97,6 @@
   color: var(--foreground);
   font-size: 12px;
   line-height: 18px;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 65%, transparent) transparent;
-  scrollbar-gutter: stable;
-  overscroll-behavior: contain;
-}
-@supports selector(::-webkit-scrollbar) {
-  .recording-details-body {
-    scrollbar-width: auto;
-    scrollbar-color: auto;
-  }
-  .recording-details-body::-webkit-scrollbar {
-    width: 4px;
-  }
-  .recording-details-body::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .recording-details-body::-webkit-scrollbar-thumb {
-    border-radius: 4px;
-    background: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
-  }
-  .recording-details-body::-webkit-scrollbar-thumb:hover {
-    background: var(--muted-foreground);
-  }
 }
 .recording-details-body:focus {
   outline: none;
@@ -441,10 +418,12 @@
   cursor: ew-resize;
   touch-action: none;
   user-select: none;
+  -webkit-user-select: none;
   border-radius: var(--radius-xs);
 }
 .timeline-plot:focus-visible {
-  outline: none;
+  outline: 1px solid var(--ring);
+  outline-offset: 2px;
 }
 .timeline-plot svg {
   display: block;
@@ -477,11 +456,6 @@
   stroke: var(--foreground);
   stroke-width: 1;
   opacity: 0.65;
-}
-.timeline-cursor circle {
-  fill: var(--foreground);
-  stroke: var(--secondary);
-  stroke-width: 2;
 }
 .timeline-cursor path {
   fill: var(--foreground);
@@ -641,4 +615,10 @@
     grid-template-columns: 1fr;
     gap: var(--space-2);
   }
+}
+
+.is-timeline-dragging,
+.is-timeline-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }

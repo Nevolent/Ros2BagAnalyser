@@ -26,6 +26,8 @@ contains superseded reference material, not active instructions.
 - Preserve the timing and persistence behavior documented in
   `docs/ARCHITECTURE.md` unless the requested change intentionally revises it.
   Update the corresponding tests and documentation together.
+- Use muted secondary text for single-line loading and empty states. Never overlay
+  a loading message on already visible data.
 - Render backend text safely. Keep accessible controls, keyboard focus,
   reduced-motion behavior, and truthful loading, failure, and progress states.
 - Keep recordings, generated artifacts, credentials, private configuration,

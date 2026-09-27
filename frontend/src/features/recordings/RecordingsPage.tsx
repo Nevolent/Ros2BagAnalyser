@@ -1,6 +1,6 @@
 import { StatusBadge } from '../../components/StatusBadge';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useWorkspace, useWorkspaceService } from '../../app/WorkspaceProvider';
+import { useRememberedState, useWorkspace, useWorkspaceService } from '../../app/WorkspaceProvider';
 import { createFolderIndex } from '../../lib/folder-index';
 import { Page } from '../../components/Page';
 import { Button } from '../../components/Button';
@@ -44,14 +44,14 @@ function Status({ status }: { status: RecordingStatus | Recording['health'] }) {
 export function RecordingsPage() {
   const { recordings, loading, error, busy } = useWorkspace();
   const service = useWorkspaceService();
-  const { sorted, sort, toggle } = useTableSort(recordings, recordingSort);
+  const { sorted, sort, toggle } = useTableSort(recordings, recordingSort, 'recordings');
   const folders = service.folders;
   const folderIndex = useMemo(() => createFolderIndex(folders), [folders]);
-  const [folder, setFolder] = useState('');
-  const [search, setSearch] = useState('');
-  const [health, setHealth] = useState('');
-  const [analysis, setAnalysis] = useState('');
-  const [selection, setSelection] = useState(new Set<string>());
+  const [folder, setFolder] = useRememberedState('recordings.folder', '');
+  const [search, setSearch] = useRememberedState('recordings.search', '');
+  const [health, setHealth] = useRememberedState('recordings.health', '');
+  const [analysis, setAnalysis] = useRememberedState('recordings.analysis', '');
+  const [selection, setSelection] = useRememberedState('recordings.selection', new Set<string>());
   useEffect(() => {
     setSelection((current) => {
       const next = new Set([...current].filter((id) => recordings.some((row) => row.id === id)));
@@ -59,7 +59,10 @@ export function RecordingsPage() {
     });
   }, [recordings]);
   const [prepare, setPrepare] = useState(false);
-  const [goToProcessing, setGoToProcessing] = useState(false);
+  const [goToProcessing, setGoToProcessing] = useRememberedState(
+    'recordings.goToProcessing',
+    false,
+  );
   const [notice, setNotice] = useState('');
   const dismissNotice = useCallback(() => setNotice(''), []);
   const visible = useMemo(() => {
@@ -152,16 +155,13 @@ export function RecordingsPage() {
               onChange={setAnalysis}
             />
           </div>
-          <p className="inline-error" role="alert" hidden={!error}>
-            {error}
-          </p>
           <TableBody
             className="recordings-table-body"
             label="ROS bags"
             cardContent
             scrollbarHeaderGap={1}
             empty={
-              <EmptyState data-bag-empty="" hidden={!loading && (visible.size > 0 || !!error)}>
+              <EmptyState data-bag-empty="" hidden={visible.size > 0 || !!error}>
                 <p>
                   {loading
                     ? 'Loading recordings…'
@@ -290,23 +290,21 @@ export function RecordingsPage() {
         labelledBy="prepare-title"
         describedBy="prepare-description"
         initialFocus="[data-prepare-cancel]"
-        onSubmit={async () => {
-          if ((await service.prepare(selection)) === false) return;
-          setSelection(new Set());
+        onSubmit={() => {
+          const ids = new Set(selection);
           setPrepare(false);
+          setSelection(new Set());
+          void Promise.resolve(service.prepare(ids)).then((success) => {
+            if (success === false) setSelection(ids);
+            else if (!goToProcessing) setNotice('Preparation request completed.');
+          });
           if (goToProcessing) location.hash = '/processing';
-          else {
-            setNotice(
-              service.observe
-                ? 'Preparation request completed.'
-                : `${selected.length} ${selected.length === 1 ? 'recording' : 'recordings'} queued.`,
-            );
+          else
             queueMicrotask(() =>
               document
                 .querySelector<HTMLButtonElement>('[data-rescan-archive]')
                 ?.focus({ preventScroll: true }),
             );
-          }
         }}
       >
         <header>
@@ -333,9 +331,6 @@ export function RecordingsPage() {
           />
           Go to Processing
         </label>
-        <p className="inline-error" role="alert" hidden={!error}>
-          {error}
-        </p>
         <footer>
           <button
             type="button"
@@ -346,7 +341,7 @@ export function RecordingsPage() {
             Cancel
           </button>
           <button type="submit" className="prepare-confirm" disabled={busy}>
-            {busy ? 'Preparing…' : 'Confirm'}
+            Confirm
           </button>
         </footer>
       </Dialog>

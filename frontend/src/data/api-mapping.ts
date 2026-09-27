@@ -160,10 +160,47 @@ export function activeJob(overview: Overview): ActiveJob {
     duration: (row.estimate?.estimated_total_ms ?? 0) / 1000,
     paused: row.control_state === 'paused',
     pendingPause: row.control_state === 'pause_requested',
-    cancelled: false,
+    cancelled: row.control_state === 'cancel_requested',
     live: true,
     estimateStatus: row.estimate?.status ?? 'unavailable',
     controls: row.allowed_controls,
     status: overview.worker_online ? '' : 'Worker is offline.',
+  };
+}
+
+/** A recording with an actionable failure keeps all its outputs in Failures. */
+export function processingGroups(
+  queue: ApiJob[],
+  failures: ApiJob[],
+  history: ApiJob[],
+  current: ApiJob | null,
+  totals = new Map<number, number>(),
+) {
+  const failedRecordings = new Map<number, number[]>();
+  for (const row of failures) {
+    const ids = failedRecordings.get(row.recording_id) ?? [];
+    ids.push(row.id);
+    failedRecordings.set(row.recording_id, ids);
+  }
+  const outputs = new Map<string, ApiJob>();
+  // Prefer current work/failures over an older successful attempt of the same output.
+  for (const row of [...history, ...queue, ...(current ? [current] : []), ...failures]) {
+    if (failedRecordings.has(row.recording_id)) outputs.set(`${row.recording_id}:${row.kind}`, row);
+  }
+  const grouped = jobs([...outputs.values()], true);
+  const byRecording = new Map(grouped.map((job) => [job.recordingId, job]));
+  return {
+    failures: [...failedRecordings].map(([id, jobIds]) => {
+      const group = byRecording.get(String(id))!;
+      return {
+        ...group,
+        outputs: Math.max(group.outputs, totals.get(id) ?? 0),
+        jobIds,
+      };
+    }),
+    history: jobs(
+      history.filter((row) => !failedRecordings.has(row.recording_id)),
+      true,
+    ),
   };
 }

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { useRememberedState } from '../app/WorkspaceProvider';
 
 export type SortState<Key extends string> = {
   key: Key;
@@ -11,8 +12,9 @@ const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' })
 export function useTableSort<Item, Key extends string>(
   items: Item[],
   accessors: SortAccessors<Item, Key>,
+  key: string,
 ) {
-  const [sort, setSort] = useState<SortState<Key>>(null);
+  const [sort, setSort] = useRememberedState<SortState<Key>>(`${key}.sort`, null);
   const sorted = useMemo(() => {
     if (!sort) return items;
     const value = accessors[sort.key];

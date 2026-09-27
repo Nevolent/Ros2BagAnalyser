@@ -64,7 +64,7 @@ test('folder search finds nested folders without an All files entry', async ({ p
   await search.fill('not-a-folder');
   await expect(page.getByText('No folders found.')).toBeVisible();
   await search.press('Escape');
-  await expect(page.getByRole('treeitem')).toHaveCount(22);
+  await expect(page.getByRole('treeitem')).toHaveCount(30);
 });
 
 test('tree keyboard navigation and disclosure preserve selection', async ({ page }) => {
@@ -83,6 +83,8 @@ test('tree keyboard navigation and disclosure preserve selection', async ({ page
   await page.keyboard.press('ArrowLeft');
   await expect(folder(page, 'bunker')).toBeFocused();
   await page.keyboard.press('End');
+  await expect(folder(page, 'shared-incoming')).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
   await expect(folder(page, 'shared')).toBeFocused();
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowDown');

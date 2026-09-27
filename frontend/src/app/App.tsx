@@ -1,14 +1,16 @@
 import { useEffect, useLayoutEffect, useState, type CSSProperties } from 'react';
-import { useWorkspaceService } from './WorkspaceProvider';
+import { useWorkspace, useWorkspaceService } from './WorkspaceProvider';
 import { Sidebar } from './Sidebar';
 import { SearchDialog } from './SearchDialog';
 import { useRoute } from './useRoute';
 import { RecordingsPage } from '../features/recordings/RecordingsPage';
 import { ProcessingPage } from '../features/processing/ProcessingPage';
 import { AnalysisPage } from '../features/analysis/AnalysisPage';
+import { Icon } from '../components/Icon';
 export function App() {
   const route = useRoute();
   const service = useWorkspaceService();
+  const { error } = useWorkspace();
   useEffect(() => service.observe?.(route), [route, service]);
   const [search, setSearch] = useState(false);
   useEffect(() => {
@@ -37,6 +39,18 @@ export function App() {
           className="cn-sidebar-inset flex w-full flex-1 flex-col relative bg-(--surface) shadow-xs md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-0"
           data-slot="sidebar-inset"
         >
+          {error && (
+            <div className="workspace-error inline-error" role="alert">
+              <span>{error}</span>
+              <button
+                type="button"
+                aria-label="Dismiss error"
+                onClick={() => service.clearError?.()}
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          )}
           {route === 'recordings' ? (
             <RecordingsPage />
           ) : route === 'processing' ? (

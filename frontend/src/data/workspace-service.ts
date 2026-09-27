@@ -7,7 +7,7 @@ export interface WorkspaceService {
   observe?(view: string): () => void;
   loadAnalysis?(id: string): () => void;
   rescan?(): Promise<boolean>;
-  loadMore?(view: 'queued' | 'failed' | 'history'): Promise<void>;
+  clearError?(): void;
   getSnapshot(): WorkspaceSnapshot;
   subscribe(listener: () => void): () => void;
   prepare(recordingIds: ReadonlySet<string>): void | Promise<boolean>;

@@ -9,42 +9,30 @@ const names = [
   'sensor_sync_validation_2025-12-26_08-30-00.bag',
 ];
 
-test('progress ticks, pauses elapsed time, loops, and asks before cancellation', async ({
+test('estimated progress ticks and active cancellation dismisses the card immediately', async ({
   page,
 }) => {
   await page.clock.install();
   await page.goto('/?demo=1#/processing');
   const progress = page.getByRole('progressbar');
-  await expect(progress).toHaveAttribute('aria-valuenow', '22');
+  await expect(progress).toHaveAttribute('aria-valuenow', '21');
   await page.clock.runFor(4000);
   await expect(page.locator('[data-processing-elapsed]')).toHaveText('0:52');
-  await expect(progress).toHaveAttribute('aria-valuenow', '24');
-  await page.getByRole('button', { name: 'Pause processing', exact: true }).click();
-  await expect(page.locator('[data-processing-status]')).toBeEmpty();
-  await page.clock.runFor(10_000);
-  await expect(page.locator('[data-processing-elapsed]')).toHaveText('0:52');
-  await expect(progress).toHaveAttribute('aria-valuenow', '24');
-  await page.getByRole('button', { name: 'Resume processing', exact: true }).click();
-  await page.clock.runFor(169_000);
-  await expect(progress).toHaveAttribute('aria-valuenow', '100');
-  await page.clock.runFor(1000);
-  await expect(progress).toHaveAttribute('aria-valuenow', '0');
+  await expect(progress).toHaveAttribute('aria-valuenow', '23');
+  await expect(
+    page.getByRole('button', { name: /Pause processing|Resume processing/ }),
+  ).toHaveCount(0);
   await page.getByRole('button', { name: 'Cancel processing', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Cancel processing?' });
-  await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: 'Cancel processing', exact: true })).toBeFocused();
-  await page.clock.runFor(1000);
-  await expect(page.locator('[data-processing-elapsed]')).toHaveText('0:01');
   await page.getByRole('button', { name: 'Cancel processing', exact: true }).click();
   await dialog.getByRole('button', { name: 'Cancel job', exact: true }).click();
-  await page.clock.runFor(4000);
-  await expect(page.locator('[data-processing-elapsed]')).toHaveText('0:01');
-  await expect(page.locator('[data-processing-status]')).toHaveText('Cancelled');
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('.processing-job')).toHaveCount(0);
   await page.getByRole('link', { name: 'Recordings', exact: true }).click();
-  await expect(page.locator('.processing-confirm-dialog')).toHaveCount(0);
   await page.getByRole('link', { name: 'Processing', exact: true }).click();
-  await expect(page.locator('[data-processing-status]')).toHaveText('Cancelled');
+  await expect(page.locator('.processing-job')).toHaveCount(0);
 });
 
 test('queue supports moves and confirmed bulk cancellation', async ({ page }) => {
@@ -190,17 +178,13 @@ for (const width of [390, 768, 1440]) {
     await expect(page.getByRole('button', { name: 'Queue', exact: true })).toBeInViewport();
     await expect(page.locator('.bag-table tbody tr').last()).toBeInViewport();
     if (width === 1440) {
-      const track = page.locator('.table-scrollbar-track');
+      const track = page.locator('.scrollbar-track');
       await expect(track).toHaveAttribute('data-visible', 'true');
-      const thumb = (await page.locator('.table-scrollbar-thumb').boundingBox())!;
+      const thumb = (await page.locator('.scrollbar-thumb').boundingBox())!;
       const trackBox = (await track.boundingBox())!;
       await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2);
       await page.mouse.down();
-      await page.mouse.move(
-        thumb.x + thumb.width / 2,
-        trackBox.y + thumb.height / 2,
-        { steps: 6 },
-      );
+      await page.mouse.move(thumb.x + thumb.width / 2, trackBox.y + thumb.height / 2, { steps: 6 });
       await page.mouse.up();
       await expect.poll(async () => viewport.evaluate((el) => el.scrollTop)).toBeLessThan(500);
       await viewport.hover();

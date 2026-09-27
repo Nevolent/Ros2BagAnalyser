@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Page } from '../../components/Page';
 import { SidePanel, Workspace } from '../../components/Workspace';
-import { useWorkspace, useWorkspaceService } from '../../app/WorkspaceProvider';
+import { useRememberedState, useWorkspace, useWorkspaceService } from '../../app/WorkspaceProvider';
 import { useRecordingId } from '../../app/useRoute';
 import type { AnalysisRecording } from '../../data/types';
 import { RecordingDetails } from './RecordingDetails';
@@ -47,7 +47,11 @@ export function AnalysisPage() {
   const service = useWorkspaceService();
   const { analysisLoading, analysisError } = useWorkspace();
   const routeId = useRecordingId();
-  const id = routeId || service.analysis?.id || '';
+  const [lastId, setLastId] = useRememberedState('analysis.lastId', '');
+  const id = routeId || lastId || service.analysis?.id || '';
+  useEffect(() => {
+    if (routeId) setLastId(routeId);
+  }, [routeId, setLastId]);
   const [mediaErrors, setMediaErrors] = useState<string[]>([]);
   const onError = useCallback(
     (message: string) =>
@@ -100,6 +104,7 @@ export function AnalysisPage() {
           </SidePanel>
           <Timeline
             key={recording.id ?? recording.name}
+            recordingKey={recording.id ?? recording.name}
             bundle={recording.bundle}
             workspaceRef={root}
           />

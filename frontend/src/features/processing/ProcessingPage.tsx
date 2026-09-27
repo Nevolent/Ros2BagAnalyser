@@ -1,7 +1,7 @@
 import { ActiveJobCard } from './ActiveJobCard';
 import { Tabs } from '../../components/Tabs';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useWorkspace, useWorkspaceService } from '../../app/WorkspaceProvider';
+import { useRememberedState, useWorkspace, useWorkspaceService } from '../../app/WorkspaceProvider';
 import type { Job, MoveDirection } from '../../data/types';
 import { formatDuration, formatJobDate } from '../../lib/format';
 import { Page } from '../../components/Page';
@@ -69,9 +69,9 @@ function formatReadyIn(seconds: number) {
 }
 export function ProcessingPage() {
   const service = useWorkspaceService();
-  const { queue, failures, history, active, loading, error, busy, more } = useWorkspace();
-  const [view, setView] = useState<View>('queue');
-  const [selection, setSelection] = useState(new Set<string>());
+  const { queue, failures, history, active, loading, error, busy } = useWorkspace();
+  const [view, setView] = useRememberedState<View>('processing.view', 'queue');
+  const [selection, setSelection] = useRememberedState('processing.selection', new Set<string>());
   const [notice, setNotice] = useState('');
   const [cancel, setCancel] = useState<{ active: boolean; ids: Set<string> } | null>(null);
   const [failure, setFailure] = useState<Job | null>(null);
@@ -123,7 +123,7 @@ export function ProcessingPage() {
     }),
     [readyIn],
   );
-  const { sorted, sort, toggle, reset: resetSort } = useTableSort(items, accessors);
+  const { sorted, sort, toggle, reset: resetSort } = useTableSort(items, accessors, 'processing');
   useEffect(() => {
     if (service.observe) return;
     const timer = setInterval(service.tickPreview, 1000);
@@ -188,7 +188,6 @@ export function ProcessingPage() {
       <div className="dashboard-workspace processing-workspace">
         <ActiveJobCard
           active={active}
-          onToggle={() => void service.toggleProcessing()}
           busy={busy}
           onCancel={() => setCancel({ active: true, ids: new Set() })}
         />
@@ -249,18 +248,13 @@ export function ProcessingPage() {
               </button>
             </div>
           </div>
-          <p className="inline-error" role="alert" hidden={!error}>
-            {error}
-          </p>
           <TableBody
+            key={view}
             id="processing-table-body"
             label={config.region}
             scrollRef={scroll}
             empty={
-              <EmptyState
-                data-processing-empty=""
-                hidden={!loading && (items.length > 0 || !!error)}
-              >
+              <EmptyState data-processing-empty="" hidden={items.length > 0 || !!error}>
                 {loading
                   ? 'Loading processing…'
                   : view === 'queue'
@@ -340,9 +334,13 @@ export function ProcessingPage() {
                       </td>
                     )}
                     <th scope="row">
-                      <span className="bag-name" title={job.name}>
+                      <a
+                        className="bag-name recording-link"
+                        title={job.name}
+                        href={`#/analysis/${job.recordingId ?? job.id}`}
+                      >
                         {job.name}
-                      </span>
+                      </a>
                     </th>
                     {view === 'queue' ? (
                       <>
@@ -411,20 +409,6 @@ export function ProcessingPage() {
               </tbody>
             </table>
           </TableBody>
-          {more?.[view === 'queue' ? 'queued' : view === 'failures' ? 'failed' : 'history'] && (
-            <button
-              className="load-more"
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                void service.loadMore?.(
-                  view === 'queue' ? 'queued' : view === 'failures' ? 'failed' : 'history',
-                )
-              }
-            >
-              Load more
-            </button>
-          )}
           <span className="sr-only" data-processing-notice="" role="status">
             {notice}
           </span>
@@ -461,20 +445,15 @@ export function ProcessingPage() {
           describedBy="cancel-job-description"
           className="processing-confirm-dialog"
           initialFocus="[data-keep-job]"
-          onSubmit={async () => {
+          onSubmit={() => {
             if (!cancel) return;
-            if (cancel.active) {
-              if ((await service.cancelProcessing()) === false) return;
-              queueMicrotask(() => queueTab.current?.focus({ preventScroll: true }));
-            } else {
-              if ((await service.cancelJobs(cancel.ids)) === false) return;
-              setSelection((current) => new Set([...current].filter((id) => !cancel.ids.has(id))));
-              setNotice(
-                `${cancel.ids.size} ${cancel.ids.size === 1 ? 'job cancelled' : 'jobs cancelled'}.`,
-              );
-              queueMicrotask(() => scroll.current?.focus({ preventScroll: true }));
-            }
+            const request = cancel;
             setCancel(null);
+            setSelection((current) => new Set([...current].filter((id) => !request.ids.has(id))));
+            void (request.active ? service.cancelProcessing() : service.cancelJobs(request.ids));
+            queueMicrotask(() =>
+              (request.active ? queueTab.current : scroll.current)?.focus({ preventScroll: true }),
+            );
           }}
         >
           <header>
@@ -488,9 +467,6 @@ export function ProcessingPage() {
             {cancelCount === 1
               ? 'Are you sure you want to cancel this job?'
               : `Are you sure you want to cancel these ${cancelCount} jobs?`}
-          </p>
-          <p className="inline-error" role="alert" hidden={!error}>
-            {error}
           </p>
           <footer>
             <button type="button" disabled={busy} data-keep-job="" onClick={() => setCancel(null)}>

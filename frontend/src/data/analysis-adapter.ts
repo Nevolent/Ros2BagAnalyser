@@ -36,10 +36,28 @@ export async function analysisRecording(
   const row = recording(detail);
   const errors = [
     detail.diagnostic,
-    ...detail.outputs.map((o) => o.diagnostic),
-    ...detail.components.map((c) => c.diagnostic),
+    ...detail.outputs
+      .filter(
+        (o) =>
+          !(
+            o.state === 'unavailable' &&
+            [
+              'front_topic_unavailable',
+              'imu_topic_unavailable',
+              'topdown_video_unavailable',
+              'topdown_timestamps_unavailable',
+            ].includes(o.diagnostic?.code ?? '')
+          ),
+      )
+      .map((o) => o.diagnostic),
+    ...detail.components
+      .filter(
+        (c) =>
+          !(c.condition === 'missing' && ['topdown_video', 'topdown_timestamps'].includes(c.role)),
+      )
+      .map((c) => c.diagnostic),
   ]
-    .filter((d) => d !== null)
+    .filter((d) => d != null)
     .map((d) => `${d.code}: ${d.message}`);
   if (row.health === 'Review')
     errors.push(

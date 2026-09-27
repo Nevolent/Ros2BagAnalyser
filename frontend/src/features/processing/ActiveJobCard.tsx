@@ -4,13 +4,11 @@ import { Icon } from '../../components/Icon';
 import { formatDuration } from '../../lib/format';
 export function ActiveJobCard({
   active,
-  onToggle,
   onCancel,
   busy,
 }: {
   active: ActiveJob;
   busy?: boolean;
-  onToggle(): void;
   onCancel(): void;
 }) {
   const frozen = active.paused || active.pendingPause || active.cancelled || active.idle;
@@ -41,10 +39,13 @@ export function ActiveJobCard({
     return () => window.clearInterval(timer);
   }, [active.live]);
   const elapsed = active.live ? clockSeconds : active.elapsed;
-  const percent =
-    active.elapsed >= active.duration
-      ? 100
-      : Math.min(99, Math.round((active.elapsed / active.duration) * 100));
+  const estimated = active.duration > 0 && active.estimateStatus !== 'unavailable';
+  const exceeded =
+    estimated && (elapsed >= active.duration || active.estimateStatus === 'exceeded');
+  const percent = estimated
+    ? Math.min(99, Math.max(0, Math.floor((elapsed / active.duration) * 100)))
+    : 0;
+  if (active.idle || active.cancelled) return null;
   return (
     <section
       className={`processing-job${active.paused || active.pendingPause || active.cancelled ? ' is-paused' : ''}${active.cancelled ? ' is-cancelled' : ''}`}
@@ -58,24 +59,6 @@ export function ActiveJobCard({
           </p>
         </div>
         <div className="processing-actions">
-          <button
-            type="button"
-            data-processing-pause=""
-            aria-label={active.paused ? 'Resume processing' : 'Pause processing'}
-            title={active.paused ? 'Resume processing' : 'Pause processing'}
-            hidden={active.cancelled || active.idle}
-            disabled={
-              busy ||
-              (active.live && !active.controls?.includes(active.paused ? 'resume' : 'pause'))
-            }
-            onClick={onToggle}
-          >
-            <Icon
-              name={active.paused ? 'play' : 'pause'}
-              strokeWidth={1.75}
-              strokeLinejoin={undefined}
-            />
-          </button>
           <button
             type="button"
             data-processing-cancel=""
@@ -94,20 +77,19 @@ export function ActiveJobCard({
       <div
         className={`processing-progress${active.elapsed === 0 ? ' is-resetting' : ''}`}
         role="progressbar"
-        aria-label={
-          active.live ? 'Processing; completion progress unavailable' : 'Luna testing progress'
-        }
-        hidden={active.idle}
+        aria-label="Estimated processing progress"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={active.live ? undefined : percent}
+        aria-valuenow={estimated ? percent : undefined}
         aria-valuetext={
-          active.live
-            ? active.status || 'Processing'
-            : `${percent}%${active.cancelled ? ', cancelled' : active.paused ? ', paused' : ''}`
+          exceeded
+            ? 'Estimate exceeded'
+            : estimated
+              ? `${percent}% of estimated time`
+              : 'Estimate unavailable'
         }
       >
-        <span style={{ width: active.live ? '0%' : `${percent}%` }} />
+        <span style={{ width: `${percent}%` }} />
       </div>
       <div className="processing-timing" hidden={active.idle}>
         <span>
@@ -122,11 +104,7 @@ export function ActiveJobCard({
           </strong>
         </span>
         <span data-processing-percent="">
-          {active.live
-            ? active.estimateStatus === 'exceeded'
-              ? 'Estimate exceeded'
-              : ''
-            : `${percent}%`}
+          {exceeded ? 'Estimate exceeded' : estimated ? `${percent}%` : 'Estimate unavailable'}
         </span>
       </div>
     </section>

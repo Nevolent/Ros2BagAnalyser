@@ -173,6 +173,7 @@ test('graph geometry updates before paint throughout panel dragging and collapse
   await page.evaluate(() => {
     const plot = document.querySelector<HTMLElement>('[data-timeline-plot]')!;
     const svg = plot.querySelector<SVGSVGElement>('[data-timeline-svg]')!;
+    const trace = plot.querySelector<SVGSVGElement>('[data-timeline-trace-svg]')!;
     const snapshots: {
       widthError: number;
       heightError: number;
@@ -197,8 +198,14 @@ test('graph geometry updates before paint throughout panel dragging and collapse
         const cursor = svg.querySelector<SVGGElement>('.timeline-cursor')!;
         const cursorX = cursor.transform.baseVal.consolidate()!.matrix.e;
         snapshots.push({
-          widthError: Math.abs(viewBox.width - box.width),
-          heightError: Math.abs(viewBox.height - box.height),
+          widthError: Math.max(
+            Math.abs(viewBox.width - box.width),
+            Math.abs(trace.viewBox.baseVal.width - box.width),
+          ),
+          heightError: Math.max(
+            Math.abs(viewBox.height - box.height),
+            Math.abs(trace.viewBox.baseVal.height - box.height),
+          ),
           cursorError: Math.abs(cursorX - box.width / 754.56),
           cameraError: Math.abs(cameras.height - expectedCameraHeight),
         });

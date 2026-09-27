@@ -119,8 +119,9 @@ response stream and draws only a bounded set of points for the visible window,
 preserving spikes and visible null gaps. The React graph visually holds a finite
 final IMU sample through the remaining recording/camera timeline; numeric
 readouts still clear outside measured coverage, and internal gaps remain gaps.
-Dense SVG traces are memoized independently of the cursor, and pointer seeks
-are coalesced to animation frames. Camera panes show buffering until the
+Dense SVG traces are memoized and kept in a separate composited SVG from the
+cursor, so clock updates do not repeatedly rasterize the masked graph. Pointer
+seeks are coalesced to animation frames. Camera panes show buffering until the
 first frame is decoded, then retain the last frame during seeks.
 
 Video validation streams packet timestamps through ffprobe instead of collecting

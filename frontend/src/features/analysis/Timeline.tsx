@@ -748,7 +748,8 @@ export const Timeline = memo(function Timeline({
             </p>
           )}
           <svg
-            data-timeline-svg=""
+            className="timeline-static"
+            data-timeline-trace-svg=""
             preserveAspectRatio="none"
             aria-hidden="true"
             viewBox={`0 0 ${size.width} ${size.height}`}
@@ -801,6 +802,13 @@ export const Timeline = memo(function Timeline({
               ))}
             </g>
             <Trace path={path} area={area} singleSamples={singleSamples} />
+          </svg>
+          <svg
+            data-timeline-svg=""
+            preserveAspectRatio="none"
+            aria-hidden="true"
+            viewBox={`0 0 ${size.width} ${size.height}`}
+          >
             <g
               className="timeline-cursor"
               transform={`translate(${clamp(x(state.time), 0, size.width)},0)`}
@@ -906,7 +914,8 @@ export const Timeline = memo(function Timeline({
   );
 });
 
-// Dense traces never reconcile thousands of points on each playback/scrub frame.
+// Memoization avoids rebuilding geometry; the separate composited SVG also keeps
+// cursor/readout changes from rasterizing the dense masked trace on every frame.
 const Trace = memo(function Trace({
   path,
   area,

@@ -60,8 +60,10 @@ session; playback and transient selection stop on unmount. With validated IMU da
 the clock and clears outside measured coverage. Without it, the recording clock
 remains usable while numeric IMU and Unix labels are hidden. Graph reduction preserves spikes and visible gaps. A finite final sample is
 visually held to the recording/camera end without changing samples or readout
-coverage. A memoized `Trace` isolates dense SVG elements from clock updates,
-and pointer movement schedules at most one seek update per animation frame.
+coverage. A memoized `Trace` avoids rebuilding dense SVG geometry. Its static
+SVG has a separate composited layer from the cursor and selection overlay, so
+clock/readout updates also avoid rasterizing the masked trace again. Pointer
+movement schedules at most one seek update per animation frame.
 `camera-clock.ts` converts the same bag-relative clock to each video's
 coverage-relative time. Measured coverage and initial buffering control
 visibility; decoded frames remain visible during later seeks. Effects dispose

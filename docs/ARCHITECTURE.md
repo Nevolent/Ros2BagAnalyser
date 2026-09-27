@@ -4,8 +4,10 @@
 
 One FastAPI application serves the packaged React browser frontend from
 `src/rosbag_analyser/web/react/`. The source app in `frontend/` also runs
-through a local Vite proxy during development. Production selects the real API
-workspace; the synthetic archive is available only in Vite development mode. PostgreSQL
+through a local Vite proxy during development. The same build selects the real API
+workspace by default, or the in-memory archive with explicit `?synthetic=1`.
+Synthetic mode never calls the backend; its local launcher serves only the
+packaged frontend on loopback without starting the API or worker. PostgreSQL
 stores catalog and job metadata; one serial ROS-aware worker creates files in
 the derived-data root. The VM runtime is Ubuntu 22.04, Python 3.10, and ROS 2
 Humble, as recorded in [the release contract](../deploy/release-contract.json).

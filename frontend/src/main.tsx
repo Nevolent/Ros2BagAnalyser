@@ -19,18 +19,8 @@ import './styles/live-states.css';
 
 normalizeLegacyRoute();
 const params = new URLSearchParams(location.search);
-const archiveMode =
-  import.meta.env.DEV &&
-  (import.meta.env.MODE === 'archive' ||
-    params.get('workspace') === 'archive' ||
-    params.get('synthetic') === '1');
-if (archiveMode && params.has('synthetic')) {
-  const url = new URL(location.href);
-  url.searchParams.delete('synthetic');
-  url.searchParams.set('workspace', 'archive');
-  history.replaceState(null, '', url);
-}
-const service = archiveMode
+const syntheticMode = params.get('synthetic') === '1' || params.get('workspace') === 'archive';
+const service = syntheticMode
   ? createSyntheticWorkspace()
   : import.meta.env.DEV && params.get('demo') === '1'
     ? createDemoWorkspace()

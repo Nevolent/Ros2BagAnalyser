@@ -1,5 +1,34 @@
 import { test, expect } from '@playwright/test';
 import { createSyntheticWorkspace } from '../src/data/synthetic-workspace';
+import { apiFixture } from './api-fixture';
+
+test('explicit synthetic mode uses the shared app without backend requests', async ({ page }) => {
+  const requests: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.startsWith('/api/')) requests.push(request.url());
+  });
+  await page.goto('/?synthetic=1');
+  await expect.poll(() => page.locator('.bag-table tbody tr').count()).toBeGreaterThan(500);
+  const service = createSyntheticWorkspace();
+  const recording = service.getSnapshot().recordings.find((row) => row.analysis === 'Ready')!;
+  await page.getByRole('link', { name: recording.name, exact: true }).click();
+  await expect(page.locator('.analysis-recording-name')).toHaveText(recording.name);
+  await expect(page.getByRole('slider')).toBeVisible();
+  await page.getByRole('link', { name: 'Processing', exact: true }).click();
+  await expect(page.locator('.bag-table tbody tr')).toHaveCount(14);
+  await page.getByRole('button', { name: 'Failures', exact: true }).click();
+  await expect(page.locator('.bag-table tbody tr')).toHaveCount(100);
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await expect(page.locator('.bag-table tbody tr')).toHaveCount(180);
+  expect(requests).toEqual([]);
+});
+
+test('a disabled synthetic flag still uses real backend data', async ({ page }) => {
+  await apiFixture(page);
+  await page.goto('/?synthetic=0');
+  await expect(page.locator('.bag-table tbody tr')).toHaveCount(3);
+  await expect(page.getByRole('link', { name: 'recording-42', exact: true })).toBeVisible();
+});
 
 test('synthetic archive fills every view and gives each recording its own details', () => {
   const service = createSyntheticWorkspace(() => Date.parse('2026-09-24T12:00:00Z'));

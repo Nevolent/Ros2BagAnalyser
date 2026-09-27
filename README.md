@@ -30,21 +30,19 @@ states, controls, and current limitations.
 
 ## Work on the frontend
 
-Preview the served application with synthetic data, without ROS or PostgreSQL:
+Both data modes use the same application on `main`:
 
 ```bash
-python3 tools/serve_frontend_mock.py
-# Open http://127.0.0.1:4173/?mock=all-ready
+./dev open real        # Local API and worker, real recordings
+./dev open synthetic   # Same packaged UI, in-memory archive, no ROS/PostgreSQL
+./dev install          # Create Real data and Synthetic data desktop shortcuts
 ```
 
 The React UI in `frontend/` is now the default served application and uses the
-real `/api` backend in production. The synthetic archive remains available only
-through Vite development mode for local UI work. See [frontend setup](frontend/README.md).
-
-```bash
-./dev start
-# Open http://127.0.0.1:8000
-```
+real `/api` backend by default. `?synthetic=1` explicitly selects synthetic data
+in both the packaged UI and Vite; reloading resets that simulation. The desktop
+shortcuts open the local app and leave existing VM SSH launchers untouched.
+See [frontend setup](frontend/README.md).
 
 The production bundle is committed under `src/rosbag_analyser/web/react/` so
 Python releases serve the same tested React build without Node on the VM.

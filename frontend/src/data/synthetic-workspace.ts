@@ -144,7 +144,7 @@ function details(row: Recording, failure?: Job): AnalysisRecording {
   };
 }
 
-/** Development-only in-memory archive and timed worker. No source or derived files are written. */
+/** Explicit in-memory archive and timed worker. No source or derived files are written. */
 export function createSyntheticWorkspace(now = Date.now): WorkspaceService {
   const data = archive();
   const rows = data.recordings;

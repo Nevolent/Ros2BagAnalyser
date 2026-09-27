@@ -2,14 +2,17 @@
 
 React owns the persistent shell, hash routing, controls and session presentation
 state. `WorkspaceProvider` retains small UI settings across route unmounts;
-media, timers and observers are still disposed when leaving a page. `main.tsx` injects `createApiWorkspace()`; only the explicit development
-URL `?demo=1` injects the imported visual fixtures. The Python frontend and VM
-release remain unchanged.
-The separate Vite development mode `archive` injects `synthetic-workspace.ts`.
+media, timers and observers are still disposed when leaving a page. `main.tsx`
+injects `createApiWorkspace()` by default. `?synthetic=1` selects
+`synthetic-workspace.ts` in the same packaged build and Vite server; the older
+`?workspace=archive` URL remains compatible. The explicit development URL
+`?demo=1` selects the original visual fixtures for design comparisons.
 It generates the archive in memory and runs a one-second local queue clock
 across routes. Analysis keeps the visual camera and IMU fixtures but maps each
 selected recording's metadata, health, output state and diagnostics. The real
-API service is never used in this mode.
+API service is never used in this mode. The local synthetic launcher serves the
+packaged assets on loopback and does not start backend services. Both data modes
+share `main`; there is no separate Vite archive build mode.
 
 ## Service boundary
 

@@ -30,8 +30,12 @@ For the original visual fixtures, open `http://127.0.0.1:5173/?demo=1`.
 Demo mode is explicit and available only in the development server. An
 unavailable API displays an error and never switches to simulated data.
 
-For a larger interactive UI playground, run `npm run dev -- --mode archive`
-and open `http://127.0.0.1:5173/`. This separate development mode creates
+For synthetic data, open `http://127.0.0.1:5173/?synthetic=1` with the same
+Vite server. The packaged production build accepts the same query parameter;
+from the repository root, `./dev open synthetic` serves it without backend
+infrastructure and `./dev open real` starts the local API/worker. `./dev install`
+creates a desktop shortcut for each mode, leaving VM SSH launchers untouched.
+There is no separate playground branch or Vite build mode. Synthetic data creates
 over 500 in-memory recordings across nested folders, plus 100 failures, 180
 history rows and a queue. Preparation, retry and cancellation update the
 local state. Each queued recording takes about 1–2 minutes; newly prepared or

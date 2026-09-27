@@ -88,6 +88,7 @@ def test_windows_shortcut_runs_the_one_command_open_flow() -> None:
         PROJECT_ROOT / "support/windows/Install-RosbagAnalyserShortcut.ps1"
     ).read_text()
 
-    assert "ROS 2 Bag Analyser.lnk" in installer
+    assert 'Name = "Real data"; Argument = "real"' in installer
+    assert 'Name = "Synthetic data"; Argument = "synthetic"' in installer
     assert "Ubuntu-22.04" in installer
     assert "--exec ./dev open" in installer

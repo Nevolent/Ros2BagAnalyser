@@ -1,13 +1,12 @@
 # Development
 
-The default served UI remains `src/rosbag_analyser/web/`. The replacement in
-`frontend/` uses React, TypeScript and Vite and preserves the imported design.
-Run `npm ci && npm run dev` from that folder with the backend running: the new
-UI uses port 5173 and proxies `/api` to port 8000, where the old UI remains
-available. Override `ROS_BAG_API_TARGET` for a different backend. Use Node
+The packaged UI in `src/rosbag_analyser/web/react/` is built from `frontend/`
+using React, TypeScript and Vite. Run `npm ci && npm run dev` from that folder:
+Vite uses port 5173 and proxies `/api` to port 8000. Override
+`ROS_BAG_API_TARGET` for a different backend. Use Node
 22.12+ or 24. See [frontend development](../frontend/README.md) for its explicit
-visual demo, build, browser tests and visual comparison commands. Building it
-does not replace the default UI or change VM deployment.
+visual demo, build, browser tests and visual comparison commands. Copy a tested
+build into the packaged directory before committing frontend changes.
 
 ## Python setup
 
@@ -27,16 +26,17 @@ FFmpeg/ffprobe.
 ## Frontend without infrastructure
 
 ```bash
-python3 tools/serve_frontend_mock.py
-# http://127.0.0.1:4173/?mock=all-ready
+./dev open synthetic
+# http://127.0.0.1:4173/?synthetic=1
+./dev stop synthetic
 ```
 
-This serves the production frontend with a development-only API adapter.
-Scenarios: `all-ready`, `topdown-unavailable`, `front-missing`, `imu-missing`,
-`zero-duration`, `queued`, `processing`, `successful-processing`,
-`partial-failure`, and `long-recording`. Data, jobs and video are synthetic;
-this preview does not verify ROS processing or real camera timing. The real
-API never injects the adapter.
+This serves the same packaged frontend with over 500 in-memory recordings,
+failures, history, a timed queue, and shared camera/IMU visual fixtures. No local
+backend configuration, ROS, PostgreSQL, or Node is needed. Reloading resets the
+simulation; it does not verify ROS processing or real camera timing. The real
+app and Vite also accept `?synthetic=1`; omitting it selects the real API and
+never falls back to simulated data. Both modes are maintained on `main`.
 
 ## Full local application
 
@@ -45,6 +45,8 @@ The existing WSL/Windows launcher remains supported:
 ```bash
 ./dev check
 ./dev start
+./dev open real
+./dev install # two local Windows shortcuts; existing VM launchers are untouched
 ./dev status
 ./dev logs
 ./dev rescan   # explicit source scan; startup does not scan
@@ -66,7 +68,8 @@ environment settings. `config.py` validates roots, database URL, topics, tools
 and bounds. Migrate the development database explicitly before starting.
 
 `scripts/rosbag-analyser-service` is used by `./dev`;
-`scripts/install-local-dev` installs the optional Windows shortcut. Both remain
+`scripts/install-local-dev` installs the Real data and Synthetic data Windows
+shortcuts without starting either mode. Both remain
 active. VM release instructions are in [Operations](OPERATIONS.md).
 
 ## Verification

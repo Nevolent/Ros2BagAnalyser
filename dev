@@ -12,23 +12,28 @@ readonly api_pid_file="$state_root/api.pid"
 readonly worker_pid_file="$state_root/worker.pid"
 readonly api_log_file="$state_root/api.log"
 readonly worker_log_file="$state_root/worker.log"
+readonly synthetic_pid_file="$state_root/synthetic.pid"
+readonly synthetic_log_file="$state_root/synthetic.log"
+readonly synthetic_script="$project_root/tools/serve_frontend_synthetic.py"
+readonly synthetic_port="${ROS_BAG_ANALYSER_SYNTHETIC_PORT:-4173}"
+readonly synthetic_url="http://127.0.0.1:$synthetic_port"
 readonly lifecycle_lock="$state_root/lifecycle.lock"
 readonly health_url="${ROS_BAG_ANALYSER_DEV_URL:-http://127.0.0.1:8000}"
 
 usage() {
   cat <<'EOF'
-Usage: ./dev COMMAND
+Usage: ./dev COMMAND [real|synthetic]
 
 Commands:
-  start     Validate, migrate, and start the API and serial worker
-  open      Start the application and open it in the Windows browser
-  status    Show API, worker, and HTTP health
+  start     Start the real API/worker (default), or the synthetic preview
+  open      Start the selected mode and open it in the Windows browser
+  status    Show API, worker, synthetic preview, and HTTP health
   logs      Follow API and worker logs
-  restart   Migrate and restart the API and worker
-  stop      Stop the worker and API
+  restart   Restart the selected mode
+  stop      Stop the selected mode
   migrate   Apply pending database migrations
   rescan    Explicitly scan the configured archive read-only
-  install   Install or repair the Windows desktop shortcut
+  install   Install or repair the two Windows desktop shortcuts
   check     Validate the local configuration without starting anything
   help      Show this help
 EOF
@@ -123,6 +128,9 @@ process_is_running() {
   local argument
   local expected_path="$project_root/.venv/bin/$expected_command"
   local command_matches=false
+  if [[ "$expected_command" == /* ]]; then
+    expected_path="$expected_command"
+  fi
 
   [[ -r "$pid_file" ]] || return 1
   read -r pid < "$pid_file" || return 1
@@ -160,8 +168,13 @@ start_process() {
   rm -f -- "$pid_file"
   touch "$log_file"
   chmod 0600 "$log_file"
-  nohup setsid "$project_root/scripts/rosbag-analyser-service" "$mode" \
-    9>&- >>"$log_file" 2>&1 </dev/null &
+  if [[ "$mode" == synthetic ]]; then
+    nohup setsid python3 "$synthetic_script" --port "$synthetic_port" \
+      9>&- >>"$log_file" 2>&1 </dev/null &
+  else
+    nohup setsid "$project_root/scripts/rosbag-analyser-service" "$mode" \
+      9>&- >>"$log_file" 2>&1 </dev/null &
+  fi
   pid=$!
   printf '%s\n' "$pid" > "$pid_file"
   chmod 0600 "$pid_file"
@@ -222,7 +235,9 @@ frontend_assets_changed() {
     "$project_root/src/rosbag_analyser/web/app.js" \
     "$project_root/src/rosbag_analyser/web/imu_graph.js" \
     "$project_root/src/rosbag_analyser/web/styles.css" \
-    "$project_root/src/rosbag_analyser/web/assets/tech-trace-icon.svg"
+    "$project_root/src/rosbag_analyser/web/assets/tech-trace-icon.svg" \
+    "$project_root/src/rosbag_analyser/web/react/index.html" \
+    "$project_root/src/rosbag_analyser/web/react/assets/"*
   do
     if [[ "$asset" -nt "$api_pid_file" ]]; then
       return 0
@@ -276,10 +291,40 @@ start_application() {
 }
 
 open_browser() {
+  local url="${1:-$health_url}"
   local windows_command="/mnt/c/Windows/System32/cmd.exe"
   [[ -x "$windows_command" ]] || fail "Windows command launcher is unavailable"
-  "$windows_command" /c start "" "$health_url" >/dev/null 2>&1
-  echo "Opened $health_url"
+  "$windows_command" /c start "" "$url" >/dev/null 2>&1
+  echo "Opened $url"
+}
+
+synthetic_is_healthy() {
+  process_is_running "$synthetic_pid_file" "$synthetic_script" \
+    && [[ "$(curl --fail --silent --max-time 2 "$synthetic_url/__synthetic_preview__")" == rosbag-analyser-synthetic ]]
+}
+
+start_synthetic() {
+  local attempt
+  require_command python3
+  require_command curl
+  require_command nohup
+  require_command setsid
+  [[ "$synthetic_port" =~ ^[0-9]+$ ]] \
+    && (( synthetic_port > 0 && synthetic_port < 65536 )) \
+    || fail "synthetic port must be between 1 and 65535"
+  [[ -r "$project_root/src/rosbag_analyser/web/react/index.html" ]] \
+    || fail "the packaged React frontend is missing"
+  start_process synthetic "$synthetic_pid_file" "$synthetic_log_file" "$synthetic_script"
+  for attempt in $(seq 1 40); do
+    if synthetic_is_healthy; then
+      echo "Synthetic workspace is ready at $synthetic_url/?synthetic=1"
+      return
+    fi
+    process_is_running "$synthetic_pid_file" "$synthetic_script" || break
+    sleep 0.25
+  done
+  tail --lines=30 "$synthetic_log_file" >&2 || true
+  fail "the synthetic preview did not become healthy at $synthetic_url"
 }
 
 show_status() {
@@ -297,6 +342,11 @@ show_status() {
     echo "HTTP API                             healthy ($health_url)"
   else
     echo "HTTP API                             unavailable ($health_url)"
+  fi
+  if synthetic_is_healthy; then
+    echo "Synthetic preview                    healthy ($synthetic_url/?synthetic=1)"
+  else
+    echo "Synthetic preview                    stopped"
   fi
 }
 
@@ -327,15 +377,23 @@ rescan_archive() {
 }
 
 command_name="${1:-help}"
+data_mode="${2:-real}"
+[[ "$data_mode" == real || "$data_mode" == synthetic ]] \
+  || fail "unknown data mode: $data_mode (use real or synthetic)"
 case "$command_name" in
   start)
     acquire_lifecycle_lock
-    start_application
+    if [[ "$data_mode" == synthetic ]]; then start_synthetic; else start_application; fi
     ;;
   open)
     acquire_lifecycle_lock
-    start_application
-    open_browser
+    if [[ "$data_mode" == synthetic ]]; then
+      start_synthetic
+      open_browser "$synthetic_url/?synthetic=1"
+    else
+      start_application
+      open_browser
+    fi
     ;;
   status)
     show_status
@@ -348,11 +406,21 @@ case "$command_name" in
     ;;
   restart)
     acquire_lifecycle_lock
-    restart_application
+    if [[ "$data_mode" == synthetic ]]; then
+      stop_process "synthetic preview" "$synthetic_pid_file" "$synthetic_script"
+      start_synthetic
+    else
+      restart_application
+    fi
     ;;
   stop)
     acquire_lifecycle_lock
-    stop_application
+    if [[ "$data_mode" == synthetic ]]; then
+      stop_process "synthetic preview" "$synthetic_pid_file" "$synthetic_script"
+      echo "Synthetic preview stopped."
+    else
+      stop_application
+    fi
     ;;
   migrate)
     acquire_lifecycle_lock

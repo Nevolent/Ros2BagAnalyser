@@ -5,7 +5,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $desktop = [Environment]::GetFolderPath("Desktop")
-$wslPath = Join-Path $env:WINDIR "System32\wsl.exe"
+$powershellPath = Join-Path ([Environment]::SystemDirectory) "WindowsPowerShell\v1.0\powershell.exe"
+$launcherPath = Join-Path $PSScriptRoot "Open-RosbagAnalyser.ps1"
 
 $shell = New-Object -ComObject WScript.Shell
 $modes = @(
@@ -16,12 +17,12 @@ $modes = @(
 foreach ($mode in $modes) {
     $shortcutPath = Join-Path $desktop "ROS 2 Bag Analyser - $($mode.Name).lnk"
     $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = $wslPath
-    $shortcut.Arguments = "-d `"$Distro`" --cd `"$ProjectRoot`" --exec ./dev open $($mode.Argument)"
+    $shortcut.TargetPath = $powershellPath
+    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`" -Distro `"$Distro`" -ProjectRoot `"$ProjectRoot`" -Mode $($mode.Argument)"
     $shortcut.WorkingDirectory = $env:USERPROFILE
     $shortcut.Description = $mode.Description
-    $shortcut.IconLocation = "$wslPath,0"
-    $shortcut.WindowStyle = 7
+    $shortcut.IconLocation = "$powershellPath,0"
+    $shortcut.WindowStyle = 1
     $shortcut.Save()
     Write-Output "Installed shortcut: $shortcutPath"
 }

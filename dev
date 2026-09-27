@@ -292,10 +292,12 @@ start_application() {
 
 open_browser() {
   local url="${1:-$health_url}"
-  local windows_command="/mnt/c/Windows/System32/cmd.exe"
-  [[ -x "$windows_command" ]] || fail "Windows command launcher is unavailable"
-  "$windows_command" /c start "" "$url" >/dev/null 2>&1
-  echo "Opened $url"
+  local powershell="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+  [[ -x "$powershell" ]] || fail "Windows PowerShell is unavailable"
+  require_command wslpath
+  "$powershell" -NoProfile -ExecutionPolicy Bypass \
+    -File "$(wslpath -w "$project_root/support/windows/Open-RosbagAnalyser.ps1")" \
+    -Url "$url"
 }
 
 synthetic_is_healthy() {

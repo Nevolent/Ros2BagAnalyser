@@ -91,4 +91,6 @@ def test_windows_shortcut_runs_the_one_command_open_flow() -> None:
     assert 'Name = "Real data"; Argument = "real"' in installer
     assert 'Name = "Synthetic data"; Argument = "synthetic"' in installer
     assert "Ubuntu-22.04" in installer
-    assert "--exec ./dev open" in installer
+    assert "Open-RosbagAnalyser.ps1" in installer
+    launcher = (PROJECT_ROOT / "support/windows/Open-RosbagAnalyser.ps1").read_text()
+    assert '--exec "$ProjectRoot/dev" open $Mode' in launcher

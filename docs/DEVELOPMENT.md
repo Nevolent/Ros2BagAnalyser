@@ -72,6 +72,9 @@ and bounds. Migrate the development database explicitly before starting.
 shortcuts without starting either mode. Both remain
 active. VM release instructions are in [Operations](OPERATIONS.md).
 
+The desktop launcher opens Chrome explicitly. A console shows local startup
+output and stays open on failure; `./dev install` repairs the shortcut targets.
+
 ## Verification
 
 From the repository root:

@@ -33,6 +33,7 @@ from rosbag_analyser.processing_view import (
     ProcessingJobView,
     ProcessingOverview,
     ProcessingPage,
+    RecordingProgress,
     RetryResult,
 )
 from rosbag_analyser.v1_catalog import (
@@ -238,6 +239,9 @@ class FakeProcessingService:
             current=_job(),
             queue=(_job("queued"),),
             recommended_poll_interval_ms=1000,
+            recording_progress=RecordingProgress(
+                7, 7, "run", 44, 12000, 30000, "available", False,
+            ),
         )
 
     def jobs(self, view, *, limit, cursor, search) -> ProcessingPage:
@@ -444,6 +448,9 @@ async def test_processing_views_retry_and_cursor_errors() -> None:
     assert overview.status_code == 200
     assert overview.json()["current_stage"] == 1
     assert overview.json()["current_stage_count"] == 1
+    assert overview.json()["recording_progress"]["elapsed_ms"] == 12000
+    assert overview.json()["recording_progress"]["estimated_total_ms"] == 30000
+    assert overview.json()["recording_progress"]["run_id"] == 7
     assert overview.json()["current"]["elapsed_ms"] == 2000
     assert overview.json()["current"]["estimate"]["remaining_ms"] == 3000
     assert page.status_code == 200

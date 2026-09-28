@@ -257,6 +257,17 @@ class ProcessingJobResponse(BaseModel):
     ]
 
 
+class RecordingProgressResponse(BaseModel):
+    run_id: int
+    recording_id: int
+    recording_name: str
+    active_job_id: int
+    elapsed_ms: int
+    estimated_total_ms: int | None
+    estimate_status: str
+    waiting: bool
+
+
 class ProcessingOverviewResponse(BaseModel):
     server_time: datetime
     worker_online: bool
@@ -270,6 +281,7 @@ class ProcessingOverviewResponse(BaseModel):
     recommended_poll_interval_ms: int
     current_stage: int
     current_stage_count: int
+    recording_progress: RecordingProgressResponse | None = None
 
 
 class ProcessingJobsResponse(BaseModel):
@@ -444,6 +456,10 @@ def processing_overview_response(
         recommended_poll_interval_ms=view.recommended_poll_interval_ms,
         current_stage=view.current_stage,
         current_stage_count=view.current_stage_count,
+        recording_progress=(
+            None if view.recording_progress is None
+            else RecordingProgressResponse(**vars(view.recording_progress))
+        ),
     )
 
 

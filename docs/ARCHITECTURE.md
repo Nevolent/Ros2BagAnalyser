@@ -72,9 +72,9 @@ unavailability. Repeated requests cannot duplicate an active identity. A failed
 attempt is retried using current inputs, not its obsolete identity.
 
 The catalog's aggregate state follows failed → processing → queued → ready →
-not planned. Any failed output makes the recording Failed; otherwise any ready
-output makes it Ready once active work is finished. Unavailable or absent
-sources do not prevent available outputs from being prepared. Each output keeps
+not planned. Any failed output or unavailable front-camera input makes the recording Failed.
+Ready requires a validated front preview and no active or failed output. Missing
+top-down or IMU sources are optional; available outputs can still be prepared. Each output keeps
 its detailed state. Analyzer
 can also review available output independently, including a camera-only
 recording timeline when IMU is unavailable.
@@ -87,7 +87,11 @@ interrupted; it does not resume the process automatically.
 
 Elapsed and active time come from stored timestamps. Estimates freeze a median
 runtime-per-input-byte prediction from at least two compatible successful jobs.
-They can be unavailable or exceeded. The UI shows elapsed / estimated time as
+They can be unavailable or exceeded. The overview also groups the current preparation run using persisted job timestamps,
+including completed siblings and queued outputs. Older reused successes are excluded.
+The recording card sums active elapsed time and frozen estimates across this group,
+keeps its identity between output jobs, and stays visible during worker handoffs.
+If any member lacks an estimate, the total is unavailable. The UI shows elapsed / estimated time as
 an explicitly estimated percentage, capped at 99%; it says Estimate exceeded
 once elapsed time reaches the estimate. This is not measured work completion.
 The Processing UI offers cancellation, with immediate dismissal and restoration
@@ -120,9 +124,11 @@ preserving spikes and visible null gaps. The React graph visually holds a finite
 final IMU sample through the remaining recording/camera timeline; numeric
 readouts still clear outside measured coverage, and internal gaps remain gaps.
 Dense SVG traces are memoized and kept in a separate composited SVG from the
-cursor, so clock updates do not repeatedly rasterize the masked graph. Pointer
+HTML cursor, so clock updates do not repeatedly rasterize the masked graph. Pointer
 seeks are coalesced to animation frames. Camera panes show buffering until the
-first frame is decoded, then retain the last frame during seeks.
+first frame is decoded, then retain the last frame during seeks. Failed media loads
+retry three times at bounded delays before offering an explicit camera retry;
+recovery clears the diagnostic without reloading the page.
 
 Video validation streams packet timestamps through ffprobe instead of collecting
 the full packet list. Probe time limits scale with output size and remain bounded.

@@ -195,8 +195,8 @@ test('graph geometry updates before paint throughout panel dragging and collapse
           ((cameras.width - 8) * 9) / 28,
           workspace.height - 228,
         );
-        const cursor = svg.querySelector<SVGGElement>('.timeline-cursor')!;
-        const cursorX = cursor.transform.baseVal.consolidate()!.matrix.e;
+        const cursor = plot.querySelector<HTMLElement>('.timeline-cursor')!;
+        const cursorX = cursor.getBoundingClientRect().left - box.left;
         snapshots.push({
           widthError: Math.max(
             Math.abs(viewBox.width - box.width),
@@ -206,7 +206,7 @@ test('graph geometry updates before paint throughout panel dragging and collapse
             Math.abs(viewBox.height - box.height),
             Math.abs(trace.viewBox.baseVal.height - box.height),
           ),
-          cursorError: Math.abs(cursorX - box.width / 754.56),
+          cursorError: Math.abs(cursorX - Math.round(box.width / 754.56)),
           cameraError: Math.abs(cameras.height - expectedCameraHeight),
         });
       });

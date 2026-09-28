@@ -163,6 +163,9 @@
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
+.page-tabs .page-tab-count > span {
+  transform: translateY(1px);
+}
 .page-tabs button[aria-pressed='true'] .page-tab-count {
   background: #fff;
   color: #060606;

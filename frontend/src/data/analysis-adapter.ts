@@ -42,7 +42,6 @@ export async function analysisRecording(
           !(
             o.state === 'unavailable' &&
             [
-              'front_topic_unavailable',
               'imu_topic_unavailable',
               'topdown_video_unavailable',
               'topdown_timestamps_unavailable',

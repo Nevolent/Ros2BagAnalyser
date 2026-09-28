@@ -177,7 +177,9 @@ test('all processing pages load and failed recordings retain successful siblings
   await expect(page.locator('.analysis-recording-name')).toHaveText('recording-42');
 });
 
-test('optional sources show missing or unavailable without redundant errors', async ({ page }) => {
+test('missing front input is diagnosed while optional absence has no redundant errors', async ({
+  page,
+}) => {
   const api = await apiFixture(page);
   api.recording.outputs = [
     {
@@ -211,7 +213,9 @@ test('optional sources show missing or unavailable without redundant errors', as
   await expect(
     page.locator('.recording-assets .status-muted').filter({ hasText: 'Missing' }),
   ).toHaveCount(2);
-  await expect(page.locator('.recording-errors')).toHaveCount(0);
+  await expect(page.locator('.recording-errors')).toContainText('front_topic_unavailable');
+  await expect(page.locator('.recording-errors')).not.toContainText('topdown_video_unavailable');
+  await expect(page.locator('.recording-errors')).not.toContainText('imu_topic_unavailable');
   api.recording.outputs[2] = { kind: 'imu_series', state: 'failed', diagnostic };
   await expect(page.locator('.recording-errors')).toContainText(diagnostic.message);
 });

@@ -53,12 +53,19 @@ export function recording(row: CatalogRecording): Recording {
         : row.duration_ns === '0'
           ? 'Review'
           : 'Readable',
-    analysis: row.outputs.some((output) => output.state === 'failed')
-      ? 'Failed'
-      : row.analysis_state === 'not_planned' &&
-          row.outputs.some((output) => output.state === 'ready')
-        ? 'Ready'
-        : ((labels[row.analysis_state] as Recording['analysis']) ?? 'Not planned'),
+    analysis:
+      row.outputs.some((output) => output.state === 'failed') ||
+      row.outputs.some(
+        (output) => output.kind === 'front_preview' && output.state === 'unavailable',
+      )
+        ? 'Failed'
+        : ['processing', 'queued', 'failed'].includes(row.analysis_state)
+          ? (labels[row.analysis_state] as Recording['analysis'])
+          : row.outputs.some(
+                (output) => output.kind === 'front_preview' && output.state === 'ready',
+              )
+            ? 'Ready'
+            : 'Not planned',
   };
 }
 export function folders(rows: Catalog['folders']): Folder[] {
@@ -140,7 +147,8 @@ export function jobs(rows: ApiJob[], group: boolean): Job[] {
   return [...result.values()];
 }
 export function activeJob(overview: Overview): ActiveJob {
-  const row = overview.current;
+  const progress = overview.recording_progress;
+  const row = overview.current ?? overview.queue.find((job) => job.id === progress?.active_job_id);
   if (!row)
     return {
       name: 'No active job',
@@ -154,15 +162,19 @@ export function activeJob(overview: Overview): ActiveJob {
     };
   return {
     id: row.id,
+    runId: progress?.run_id ?? row.id,
+    waiting: progress?.waiting ?? false,
     recordingId: row.recording_id,
     name: row.recording_name,
-    elapsed: (row.active_elapsed_ms ?? row.elapsed_ms ?? 0) / 1000,
-    duration: (row.estimate?.estimated_total_ms ?? 0) / 1000,
+    elapsed: (progress?.elapsed_ms ?? row.active_elapsed_ms ?? row.elapsed_ms ?? 0) / 1000,
+    duration:
+      (progress ? (progress.estimated_total_ms ?? 0) : (row.estimate?.estimated_total_ms ?? 0)) /
+      1000,
     paused: row.control_state === 'paused',
     pendingPause: row.control_state === 'pause_requested',
     cancelled: row.control_state === 'cancel_requested',
     live: true,
-    estimateStatus: row.estimate?.status ?? 'unavailable',
+    estimateStatus: progress?.estimate_status ?? row.estimate?.status ?? 'unavailable',
     controls: row.allowed_controls,
     status: overview.worker_online ? '' : 'Worker is offline.',
   };

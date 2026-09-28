@@ -809,19 +809,6 @@ export const Timeline = memo(function Timeline({
             aria-hidden="true"
             viewBox={`0 0 ${size.width} ${size.height}`}
           >
-            <g
-              className="timeline-cursor"
-              transform={`translate(${clamp(x(state.time), 0, size.width)},0)`}
-              style={{
-                display:
-                  state.time < state.start || state.time > state.start + state.span
-                    ? 'none'
-                    : undefined,
-              }}
-            >
-              <line x1="0" x2="0" y1={top} y2={size.height - bottom} />
-              <path d={`M-3,${top - 6}H3V${top - 3}L0,${top}L-3,${top - 3}Z`} />
-            </g>
             {selection && (
               <g className="timeline-selection">
                 <rect
@@ -864,6 +851,19 @@ export const Timeline = memo(function Timeline({
               </g>
             )}
           </svg>
+          <div
+            className="timeline-cursor"
+            aria-hidden="true"
+            style={{
+              left: `${Math.round(clamp(x(state.time), 0, size.width))}px`,
+              top,
+              bottom,
+              display:
+                state.time < state.start || state.time > state.start + state.span
+                  ? 'none'
+                  : undefined,
+            }}
+          />
           {hasTelemetry && (
             <div
               className="timeline-measurement"

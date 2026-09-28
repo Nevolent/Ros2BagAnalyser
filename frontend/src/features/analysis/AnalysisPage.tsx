@@ -6,20 +6,70 @@ import { useRecordingId } from '../../app/useRoute';
 import type { AnalysisRecording } from '../../data/types';
 import { RecordingDetails } from './RecordingDetails';
 import { Timeline } from './Timeline';
+import { stopCamera } from './camera-clock';
 function Camera({
   camera,
   onError,
 }: {
   camera: AnalysisRecording['cameras'][number];
-  onError(message: string): void;
+  onError(id: string, message: string): void;
 }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const retry = useRef<() => void>(() => {});
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const element = video.current;
+    if (!element) return;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const clearFailure = () => {
+      setFailed(false);
+      element.dataset.failed = 'false';
+      onError(camera.id, '');
+    };
+    const reload = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      clearFailure();
+      stopCamera(element);
+      element.load();
+    };
+    const recover = () => {
+      if (timer !== undefined) return;
+      if (attempts < 3) {
+        // A freshly published file or interrupted range request may need another read.
+        timer = setTimeout(reload, [500, 1500, 3000][attempts++]);
+      } else {
+        element.dataset.failed = 'true';
+        setFailed(true);
+        onError(camera.id, `${camera.label} camera could not be loaded. Retry the camera.`);
+      }
+    };
+    const ready = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      clearFailure();
+    };
+    retry.current = () => {
+      attempts = 0;
+      reload();
+    };
+    element.addEventListener('error', recover);
+    element.addEventListener('loadeddata', ready);
+    if (element.error) recover();
+    return () => {
+      clearTimeout(timer);
+      element.removeEventListener('error', recover);
+      element.removeEventListener('loadeddata', ready);
+    };
+  }, [camera.id, camera.label, camera.src, onError]);
   return (
     <section className={`analysis-camera analysis-camera-${camera.id}`} aria-label={camera.region}>
       {camera.media ? (
         <>
           {camera.src && (
             <video
-              key={camera.src}
+              ref={video}
               src={camera.src}
               muted
               playsInline
@@ -27,12 +77,20 @@ function Camera({
               data-coverage-start={camera.start}
               data-coverage-end={camera.end}
               aria-label={camera.alt}
-              onError={() => onError(`${camera.label} camera could not be loaded.`)}
             />
           )}
           <p className="camera-state" data-camera-state="" role="status">
-            {camera.src ? 'Loading camera…' : camera.message}
+            {failed
+              ? 'Camera could not be loaded.'
+              : camera.src
+                ? 'Loading camera…'
+                : camera.message}
           </p>
+          {failed && (
+            <button className="camera-retry" type="button" onClick={() => retry.current()}>
+              Retry {camera.label.toLowerCase()} camera
+            </button>
+          )}
         </>
       ) : (
         <img src={camera.src} alt={camera.alt} />
@@ -52,18 +110,18 @@ export function AnalysisPage() {
   useEffect(() => {
     if (routeId) setLastId(routeId);
   }, [routeId, setLastId]);
-  const [mediaErrors, setMediaErrors] = useState<string[]>([]);
+  const [mediaErrors, setMediaErrors] = useState<Record<string, string>>({});
   const onError = useCallback(
-    (message: string) =>
-      setMediaErrors((errors) => (errors.includes(message) ? errors : [...errors, message])),
+    (id: string, message: string) =>
+      setMediaErrors((errors) => (errors[id] === message ? errors : { ...errors, [id]: message })),
     [],
   );
   useEffect(() => {
-    setMediaErrors([]);
+    setMediaErrors({});
     if (id) return service.loadAnalysis?.(id);
   }, [service, id]);
   const recording = service.analysis;
-  useEffect(() => setMediaErrors([]), [recording?.bundle.mediaVersion]);
+  useEffect(() => setMediaErrors({}), [recording?.bundle.mediaVersion]);
   const root = useRef<HTMLDivElement>(null);
   const hasRecording = recording && (!service.loadAnalysis || recording.id === id);
   return (
@@ -96,7 +154,7 @@ export function AnalysisPage() {
                 ...recording,
                 errors: [
                   ...(recording.errors ?? []),
-                  ...mediaErrors,
+                  ...Object.values(mediaErrors).filter(Boolean),
                   ...(analysisError ? [analysisError] : []),
                 ],
               }}

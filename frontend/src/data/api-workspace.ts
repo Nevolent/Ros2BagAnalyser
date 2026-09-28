@@ -94,17 +94,17 @@ export function createApiWorkspace(): WorkspaceService {
         const estimates = new Map(
           (overview.queue ?? []).map((job) => [job.id, job.queue_estimate]),
         );
+        const active = activeJob(overview);
         const queued = queue.rows
-          .filter((job) => job.recording_id !== overview.current?.recording_id)
+          .filter((job) => job.recording_id !== active.recordingId)
           .map((job) => ({ ...job, queue_estimate: estimates.get(job.id) ?? job.queue_estimate }));
         const grouped = processingGroups(
           queue.rows,
           failed.rows,
-          history.rows,
+          history.rows.filter((row) => !working.has(row.recording_id)),
           overview.current,
           totals,
         );
-        const active = activeJob(overview);
         for (const id of cancelling) {
           if (overview.current?.id !== id && !queue.rows.some((row) => row.id === id))
             cancelling.delete(id);
@@ -148,9 +148,17 @@ export function createApiWorkspace(): WorkspaceService {
     try {
       const payload = typeof body === 'function' ? await body() : body;
       const result = await request<{
-        items?: { outcome: string; diagnostic?: { code?: string; message: string } | null }[];
+        items?: {
+          kind?: string;
+          outcome: string;
+          diagnostic?: { code?: string; message: string } | null;
+        }[];
         recordings?: {
-          outputs: { outcome: string; diagnostic?: { code?: string; message: string } | null }[];
+          outputs: {
+            kind?: string;
+            outcome: string;
+            diagnostic?: { code?: string; message: string } | null;
+          }[];
         }[];
         outcome?: string;
       }>(path, undefined, payload);
@@ -164,7 +172,12 @@ export function createApiWorkspace(): WorkspaceService {
       );
       const rejected = items.filter(
         (item) =>
-          !(preparing && prepared && item.outcome === 'unavailable') &&
+          !(
+            preparing &&
+            prepared &&
+            item.outcome === 'unavailable' &&
+            item.kind !== 'front_preview'
+          ) &&
           !['topdown_video_unavailable', 'topdown_timestamps_unavailable'].includes(
             item.diagnostic?.code ?? '',
           ) &&

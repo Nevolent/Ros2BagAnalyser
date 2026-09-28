@@ -31,8 +31,10 @@ cycle detection, deduplication and abort/version guards; a failed page preserves
 the last complete snapshot. Successful siblings stay with actionable failures,
 and retry expands only the failed job IDs. History sums latest successful
 outputs for recordings without failures. Recording names link to Analysis.
-Cumulative queue estimates come from overview. The active card shows elapsed /
-estimated runtime, capped at 99%, and Estimate exceeded at the estimate boundary.
+Cumulative queue estimates come from overview. The active card uses the overview’s recording progress: a stable run identity,
+combined active elapsed time and combined frozen estimates across camera/IMU jobs.
+It remains visible through worker handoffs. Progress is capped at 99% and shows
+Estimate exceeded at the estimate boundary.
 Cancellation immediately hides affected work and restores it on failure; the
 backend still acknowledges controls at safe checkpoints. Pause/resume remains
 an API capability, with no UI control.
@@ -61,12 +63,14 @@ the clock and clears outside measured coverage. Without it, the recording clock
 remains usable while numeric IMU and Unix labels are hidden. Graph reduction preserves spikes and visible gaps. A finite final sample is
 visually held to the recording/camera end without changing samples or readout
 coverage. A memoized `Trace` avoids rebuilding dense SVG geometry. Its static
-SVG has a separate composited layer from the cursor and selection overlay, so
+SVG has a separate composited layer from the solid HTML cursor and selection overlay, so
 clock/readout updates also avoid rasterizing the masked trace again. Pointer
 movement schedules at most one seek update per animation frame.
 `camera-clock.ts` converts the same bag-relative clock to each video's
 coverage-relative time. Measured coverage and initial buffering control
-visibility; decoded frames remain visible during later seeks. Effects dispose
+visibility; decoded frames remain visible during later seeks. Camera load failures trigger
+three bounded retries before a manual Retry control and diagnostic appear.
+Recovery clears that camera’s error; timers are disposed on navigation. Effects dispose
 listeners, observers, animation frames and media playback on navigation. Graph zoom changes
 the visible window, not the playback clock. Demo interpolation remains confined
 to the explicit visual fixtures.
@@ -77,7 +81,8 @@ Use the existing components and semantic tokens described in
 [the design system](design-system.md). The imported layout is the reference.
 `live-states.css` owns muted loading/empty states, red errors and link focus.
 `ScrollArea` shares compact overlay scrollbars across tables, folders and details,
-with native horizontal overflow and keyboard scrolling. Presentation settings
+with native horizontal overflow and keyboard scrolling. Folder and details panels
+reserve a separate scrollbar lane so text and counts cannot touch the thumb. Presentation settings
 survive page switches; modal dialogs close before asynchronous commands finish.
 Optional absence appears in asset rows; actual diagnostics remain after source
 assets, separated by a divider.

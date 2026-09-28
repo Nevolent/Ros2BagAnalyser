@@ -237,3 +237,47 @@ def test_bulk_retry_isolates_one_request_failure() -> None:
     assert results[1].diagnostic is not None
     assert results[1].diagnostic.code == "processing_retry_request_failed"
     assert "private" not in results[1].diagnostic.message
+
+
+def test_recording_progress_spans_outputs_and_the_worker_handoff() -> None:
+    from rosbag_analyser.processing_view import _recording_progress
+
+    now = datetime.now(timezone.utc)
+    first = _running(total_ms=10_000, started_ago_ms=5_000)
+    first = replace(first, job=replace(first.job, started_at=now - timedelta(seconds=5)))
+    second = replace(first, job=replace(
+        first.job, id=8, kind="topdown_preview", state="queued",
+        started_at=None, estimated_total_ms=20_000,
+    ))
+    third = replace(second, job=replace(
+        second.job, id=9, kind="imu_series", estimated_total_ms=5_000,
+    ))
+    progress = _recording_progress((first, second, third), now, worker_online=True)
+    assert progress is not None
+    assert progress.run_id == 7
+    assert progress.elapsed_ms == 5_000
+    assert progress.estimated_total_ms == 35_000
+
+    completed = replace(first, job=replace(
+        first.job, state="succeeded", finished_at=now, accumulated_paused_ms=1_000,
+    ))
+    handoff = _recording_progress((completed, second, third), now, worker_online=True)
+    assert handoff is not None and handoff.waiting
+    assert handoff.run_id == progress.run_id
+    assert handoff.elapsed_ms == 4_000
+    assert handoff.estimated_total_ms == progress.estimated_total_ms
+
+    running = replace(second, job=replace(second.job, state="running", started_at=now))
+    resumed = _recording_progress(
+        (completed, running, third), now + timedelta(seconds=2), worker_online=True,
+    )
+    assert resumed is not None and not resumed.waiting
+    assert resumed.run_id == progress.run_id
+    assert resumed.active_job_id == 8
+    assert resumed.elapsed_ms == 6_000
+    assert resumed.estimated_total_ms == 35_000
+    unknown = replace(third, job=replace(third.job, estimated_total_ms=None))
+    unestimated = _recording_progress((completed, running, unknown), now, worker_online=True)
+    assert unestimated is not None and unestimated.estimate_status == "unavailable"
+    assert _recording_progress((second, third), now, worker_online=True) is None
+    assert _recording_progress((completed,), now, worker_online=True) is None

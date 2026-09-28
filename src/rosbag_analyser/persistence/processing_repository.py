@@ -225,6 +225,7 @@ class ProcessingOverviewData:
     queue: tuple[ProcessingJobViewRecord, ...]
     current_stage: int = 1
     current_stage_count: int = 1
+    recording_jobs: tuple[ProcessingJobViewRecord, ...] = ()
 
 
 class ProcessingRepository:
@@ -1060,6 +1061,27 @@ class ProcessingRepository:
                 (queue_limit,),
             ).fetchall()
             stages = []
+            recording_rows = []
+            anchor = running_row or (queue_rows[0] if queue_rows else None)
+            if anchor is not None:
+                # A preparation request shares a transaction timestamp. Include
+                # siblings completed since the remaining work was queued, also
+                # covering separately scheduled retries without older successes.
+                recording_rows = connection.execute(
+                    """
+                    SELECT DISTINCT ON (job.kind) job.*, recording.display_name
+                    FROM jobs AS job
+                    JOIN recordings AS recording ON recording.id = job.recording_id
+                    JOIN preparation_targets AS target
+                      ON target.recording_id = job.recording_id
+                     AND target.kind = job.kind
+                     AND target.cache_identity = job.cache_identity
+                    WHERE job.recording_id = %s
+                      AND (job.queued_at >= %s OR job.finished_at >= %s)
+                    ORDER BY job.kind, job.queued_at DESC, job.id DESC
+                    """,
+                    (anchor["recording_id"], anchor["queued_at"], anchor["queued_at"]),
+                ).fetchall()
             if running_row is not None:
                 stages = connection.execute(
                     """
@@ -1080,6 +1102,7 @@ class ProcessingRepository:
             queue=tuple(_job_view_from_row(row) for row in queue_rows),
             current_stage=1 + sum(row["state"] in {"succeeded", "failed", "canceled"} for row in stages),
             current_stage_count=max(1, len(stages)),
+            recording_jobs=tuple(_job_view_from_row(row) for row in recording_rows),
         )
 
     def list_processing_jobs(

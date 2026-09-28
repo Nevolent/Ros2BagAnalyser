@@ -6,14 +6,14 @@ test('timeline plays, pauses and scrubs', async ({ page }) => {
   const slider = page.getByRole('slider', { name: 'Recording timeline' });
   const value = page.locator('[data-timeline-value]');
   const originalValue = await value.textContent();
-  const originalCursor = await page.locator('.timeline-cursor').getAttribute('transform');
+  const originalCursor = await page.locator('.timeline-cursor').getAttribute('style');
   await expect(page.locator('.timeline-cursor circle')).toHaveCount(0);
   await page.getByRole('button', { name: 'Play timeline', exact: true }).click();
   await expect(page.locator('.timeline-cursor circle')).toHaveCount(0);
   await page.clock.runFor(2100);
   expect(Number(await slider.getAttribute('aria-valuenow'))).toBeGreaterThan(2);
   expect(await value.textContent()).not.toBe(originalValue);
-  expect(await page.locator('.timeline-cursor').getAttribute('transform')).not.toBe(originalCursor);
+  expect(await page.locator('.timeline-cursor').getAttribute('style')).not.toBe(originalCursor);
   await page.getByRole('button', { name: 'Pause timeline', exact: true }).click();
   await expect(page.locator('.timeline-cursor circle')).toHaveCount(0);
   const paused = await slider.getAttribute('aria-valuenow');
@@ -163,7 +163,7 @@ test('sidebar tooltip stays visible while crossing between Recordings and the lo
   await expect(tooltip).toHaveAttribute('data-reuse-check', 'original');
 });
 
-test('recording details retain asset metadata and scroll inside the panel without a reserved gutter', async ({
+test('recording details retain asset metadata and scroll with a separate scrollbar lane', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1024, height: 500 });
@@ -180,6 +180,8 @@ test('recording details retain asset metadata and scroll inside the panel withou
   await expect(body.getByRole('heading', { name: 'Analysis outputs' })).toHaveCount(0);
   await expect(body.getByRole('heading', { name: 'Source components' })).toHaveCount(0);
   await expect(body).toHaveCSS('scrollbar-gutter', 'auto');
+  const lane = await body.evaluate((el) => el.parentElement!.clientWidth - el.clientWidth);
+  expect(lane).toBeGreaterThanOrEqual(12);
   const before = await body.boundingBox();
   await page.addStyleTag({ content: '.recording-details-body { overflow-y:scroll; }' });
   expect(await body.boundingBox()).toEqual(before);

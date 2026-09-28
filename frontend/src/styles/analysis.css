@@ -456,17 +456,28 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.timeline-cursor line {
-  stroke: var(--foreground);
-  stroke-width: 1;
-  opacity: 0.65;
+.timeline-cursor {
+  position: absolute;
+  z-index: 1;
+  width: 1px;
+  pointer-events: none;
+  /* A solid HTML layer avoids moving zero-width SVG strokes in WebKit. */
+  transform: translateZ(0);
+  background: color-mix(in srgb, var(--foreground) 65%, transparent);
 }
-.timeline-cursor path {
-  fill: var(--foreground);
+.timeline-cursor::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: -3px;
+  width: 7px;
+  height: 6px;
+  background: var(--foreground);
+  clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 100%, 0 50%);
 }
 .timeline-measurement {
   position: absolute;
-  top: 4px;
+  top: -4px;
   right: 0;
   display: flex;
   align-items: baseline;
@@ -625,4 +636,20 @@
 .is-timeline-dragging * {
   user-select: none !important;
   -webkit-user-select: none !important;
+}
+
+.camera-retry {
+  position: absolute;
+  top: calc(50% + 20px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  border-radius: var(--radius-control);
+  background: var(--secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.camera-retry:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }

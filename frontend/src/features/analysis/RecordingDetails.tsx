@@ -54,7 +54,11 @@ function Assets({ items }: { items: RecordingAsset[] }) {
 }
 export function RecordingDetails({ recording }: { recording: AnalysisRecording }) {
   return (
-    <ScrollArea viewportClassName="recording-details-body" label="Recording information and assets">
+    <ScrollArea
+      gutter
+      viewportClassName="recording-details-body"
+      label="Recording information and assets"
+    >
       <div>
         <section className="recording-overview" aria-label="Recording information">
           <dl className="recording-info">

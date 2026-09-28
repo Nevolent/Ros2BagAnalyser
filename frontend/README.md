@@ -60,14 +60,15 @@ The preview server is for local evaluation.
   open `#/analysis/{id}`. Filters include Processing, Ready, Failed, and
   Review (red for readable recordings with zero-duration metadata).
 - Rescan, preparation, cancellation and retry use the existing API.
-  Preparation requests the three outputs where available. Missing outputs are
-  skipped when another output can be prepared; scheduling failures remain visible. No stage display is exposed. Selected queue rows can be moved up or down
+  Preparation requests the three outputs where available. Missing optional outputs are
+  skipped when another output can be prepared; missing front input is reported and
+  makes the recording Failed. Ready requires a validated front preview; scheduling failures remain visible. No stage display is exposed. Selected queue rows can be moved up or down
   through the existing reorder API. Cancelling the active recording also cancels its remaining outputs.
 - Processing automatically follows every API cursor before publishing a complete
   set of queue, failure and history groups. A failed recording keeps its successful
   siblings in Failures; retry still submits only failed job IDs. Recording names
-  link to Analysis. The active card is absent when idle or cancelled. Its estimated
-  percentage is elapsed / estimated runtime, capped at 99%; reaching the estimate
+  link to Analysis. The active card is absent when idle or cancelled. It covers all outputs in the current recording run without resetting at job
+  handoffs. Its estimated percentage is combined active elapsed / estimated runtime, capped at 99%; reaching the estimate
   displays Estimate exceeded. No processing pause control is shown.
 - Confirmations close before network work completes. Cancellations and retries
   dismiss affected rows immediately; failed requests restore data and show a
@@ -80,10 +81,11 @@ The preview server is for local evaluation.
   The finite final graph value extends visually through the timeline end; readouts
   remain empty outside measured coverage and internal null gaps remain visible.
   Pointer seeks are coalesced and the dense trace is memoized outside clock updates.
+  Failed camera loads retry automatically before offering a camera Retry control.
   Optional missing sources use muted asset states, without duplicate error codes.
   Actual processing, validation and media errors remain visible in Recording details.
 - Tables, folders and details use `ScrollArea` for a compact scrollbar inside the
-  content. Keyboard scrolling stays native; horizontal overflow keeps native bars.
+  content; folders and details reserve a separate scrollbar lane. Keyboard scrolling stays native; horizontal overflow keeps native bars.
 
 ## Checks
 

@@ -195,7 +195,7 @@ class PreparationService:
             result = PrepareRecordingResult(
                 result.recording_id,
                 result.outcome,
-                _aggregate_state(tuple(current_states[kind] for kind in PROCESSING_KINDS)),
+                _aggregate_state(current_states),
                 result.outputs,
             )
             has_active_work = has_active_work or any(
@@ -287,7 +287,7 @@ class PreparationService:
             outputs.append(OutputFact(kind, "not_requested"))
         return RecordingAnalysis(
             recording_id,
-            _aggregate_state(tuple(output.state for output in outputs)),
+            _aggregate_state({output.kind: output.state for output in outputs}),
             tuple(outputs),
         )
 
@@ -358,7 +358,7 @@ class PreparationService:
             )
             for item in schedule.outputs
         )
-        analysis_state = _aggregate_state(tuple(item.state for item in outputs))
+        analysis_state = _aggregate_state({item.kind: item.state for item in outputs})
         if outputs and all(item.outcome == "unavailable" for item in outputs):
             outcome = "unavailable"
         elif outputs and all(item.outcome == "request_failed" for item in outputs):
@@ -383,14 +383,16 @@ def _target_diagnostic(current: CurrentOutputRecord) -> SafeDiagnostic:
     )
 
 
-def _aggregate_state(states: tuple[str, ...]) -> str:
-    if "failed" in states:
+def _aggregate_state(outputs: Mapping[str, str]) -> str:
+    front = outputs.get(FRONT_PREVIEW_KIND)
+    states = tuple(outputs.values())
+    if front in {"unavailable", "failed"} or "failed" in states:
         return "failed"
     if "processing" in states:
         return "processing"
     if "queued" in states:
         return "queued"
-    if "ready" in states:
+    if front == "ready":
         return "ready"
     return "not_planned"
 

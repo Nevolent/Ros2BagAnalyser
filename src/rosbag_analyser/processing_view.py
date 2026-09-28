@@ -73,6 +73,18 @@ class ProcessingJobView:
 
 
 @dataclass(frozen=True)
+class RecordingProgress:
+    run_id: int
+    recording_id: int
+    recording_name: str
+    active_job_id: int
+    elapsed_ms: int
+    estimated_total_ms: int | None
+    estimate_status: str
+    waiting: bool
+
+
+@dataclass(frozen=True)
 class ProcessingOverview:
     server_time: datetime
     worker_online: bool
@@ -86,6 +98,7 @@ class ProcessingOverview:
     recommended_poll_interval_ms: int
     current_stage: int = 1
     current_stage_count: int = 1
+    recording_progress: RecordingProgress | None = None
 
 
 @dataclass(frozen=True)
@@ -165,6 +178,9 @@ class ProcessingViewService:
             recommended_poll_interval_ms=RECOMMENDED_POLL_INTERVAL_MS,
             current_stage=data.current_stage,
             current_stage_count=data.current_stage_count,
+            recording_progress=_recording_progress(
+                data.recording_jobs, data.server_time, worker_online=worker_online
+            ),
         )
 
     def jobs(
@@ -375,6 +391,44 @@ def _job_view(
         execution_phase=job.execution_phase,
         control_revision=job.control_revision,
         allowed_controls=_allowed_controls(job),
+    )
+
+
+def _recording_progress(
+    records: tuple[ProcessingJobViewRecord, ...],
+    server_time: datetime,
+    *,
+    worker_online: bool,
+) -> RecordingProgress | None:
+    active = [item for item in records if item.job.state in {"running", "queued"}]
+    if not active or not any(item.job.started_at is not None for item in records):
+        return None
+    current = next((item for item in active if item.job.state == "running"), active[0])
+    elapsed = 0
+    for item in records:
+        view = _job_view(item, server_time, worker_online=worker_online)
+        elapsed += (
+            view.active_elapsed_ms
+            if view.active_elapsed_ms is not None
+            else max(0, (view.runtime_ms or 0) - view.paused_ms)
+        )
+    known = all(item.job.estimated_total_ms is not None for item in records)
+    total = sum(item.job.estimated_total_ms or 0 for item in records) if known else None
+    available = known and worker_online and all(
+        item.job.control_state == "none" for item in active
+    )
+    return RecordingProgress(
+        run_id=min(item.job.id for item in records),
+        recording_id=current.job.recording_id,
+        recording_name=current.recording_name,
+        active_job_id=current.job.id,
+        elapsed_ms=elapsed,
+        estimated_total_ms=total,
+        estimate_status=(
+            ("exceeded" if elapsed >= (total or 0) else "available")
+            if available else "unavailable"
+        ),
+        waiting=current.job.state != "running",
     )
 
 

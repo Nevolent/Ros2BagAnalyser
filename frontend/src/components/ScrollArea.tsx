@@ -11,6 +11,7 @@ export function ScrollArea({
   viewportClassName = '',
   contentSlot,
   scrollbarHeaderGap = 0,
+  gutter = false,
 }: {
   children: ReactNode;
   overlay?: ReactNode;
@@ -21,6 +22,7 @@ export function ScrollArea({
   viewportClassName?: string;
   contentSlot?: string;
   scrollbarHeaderGap?: number;
+  gutter?: boolean;
 }) {
   const [position, setPosition] = useRememberedState(`scroll.${label}`, { top: 0, left: 0 });
   const restore = useRef(true);
@@ -61,7 +63,8 @@ export function ScrollArea({
         )
       : 0;
     const top = overlay
-      ? (element.scrollTop / (element.scrollHeight - element.clientHeight)) *
+      ? (Math.max(0, Math.min(element.scrollTop, element.scrollHeight - element.clientHeight)) /
+          (element.scrollHeight - element.clientHeight)) *
         Math.max(0, trackHeight - height)
       : 0;
     setScrollbar((previous) =>
@@ -112,7 +115,7 @@ export function ScrollArea({
       (element.scrollHeight - element.clientHeight);
   };
   return (
-    <div className={`scroll-area ${className}`} id={id}>
+    <div className={`scroll-area${gutter ? ' scroll-area-gutter' : ''} ${className}`} id={id}>
       <div
         ref={setViewport}
         className={`scroll-viewport ${viewportClassName}${scrollbar.overlay ? ' has-overlay-scrollbar' : ''}`}

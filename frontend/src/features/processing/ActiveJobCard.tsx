@@ -11,25 +11,27 @@ export function ActiveJobCard({
   busy?: boolean;
   onCancel(): void;
 }) {
-  const frozen = active.paused || active.pendingPause || active.cancelled || active.idle;
+  const runId = active.runId ?? active.id;
+  const frozen =
+    active.paused || active.pendingPause || active.cancelled || active.idle || active.waiting;
   const [clockSeconds, setClockSeconds] = useState(active.elapsed);
-  const clock = useRef({ id: active.id, seconds: active.elapsed, at: performance.now(), frozen });
+  const clock = useRef({ id: runId, seconds: active.elapsed, at: performance.now(), frozen });
   useEffect(() => {
     const now = performance.now();
     const previous = clock.current;
-    if (previous.id !== active.id || previous.frozen !== frozen) {
+    if (previous.id !== runId || previous.frozen !== frozen) {
       const seconds =
-        frozen && previous.id === active.id && !previous.frozen
-          ? previous.seconds + (now - previous.at) / 1000
+        frozen && previous.id === runId && !previous.frozen
+          ? Math.max(active.elapsed, previous.seconds + (now - previous.at) / 1000)
           : active.elapsed;
-      clock.current = { id: active.id, seconds, at: now, frozen };
+      clock.current = { id: runId, seconds, at: now, frozen };
       setClockSeconds(seconds);
     } else if (!frozen) {
       const seconds = Math.max(active.elapsed, previous.seconds + (now - previous.at) / 1000);
-      clock.current = { id: active.id, seconds, at: now, frozen };
+      clock.current = { id: runId, seconds, at: now, frozen };
       setClockSeconds(seconds);
     }
-  }, [active.id, active.elapsed, frozen]);
+  }, [runId, active.elapsed, frozen]);
   useEffect(() => {
     if (!active.live) return;
     const timer = window.setInterval(() => {

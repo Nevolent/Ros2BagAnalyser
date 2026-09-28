@@ -134,7 +134,7 @@ main[data-slot='sidebar-inset'] {
 .dashboard-workspace {
   --workspace-heading-height: var(--panel-header-height);
   --workspace-card-inset: var(--panel-inset);
-  --folder-width: 256px;
+  --folder-width: 282px;
   display: grid;
   grid-template-columns: minmax(160px, var(--folder-width)) 8px minmax(0, 1fr);
   gap: 0;
@@ -777,7 +777,7 @@ main[data-slot='sidebar-inset'] {
 }
 @media (max-width: 1100px) {
   .dashboard-workspace {
-    --folder-width: 240px;
+    --folder-width: 264px;
   }
 }
 @media (max-width: 600px) {

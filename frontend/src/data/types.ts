@@ -35,6 +35,8 @@ export interface Job {
   failures?: OutputFailure[];
 }
 export interface ActiveJob {
+  runId?: number;
+  waiting?: boolean;
   id?: number;
   recordingId?: number;
   live?: boolean;

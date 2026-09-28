@@ -202,7 +202,9 @@ test('analysis opens actual recording with irregular IMU time, last duplicate, n
   await expect(page.locator('[data-timeline-value]')).toHaveText('—');
   expect((await page.locator('.timeline-line').getAttribute('d'))?.match(/M/g)?.length).toBe(2);
   await expect(page.locator('[data-timeline-single-sample]')).toHaveCount(0);
-  await expect(page.locator('.recording-errors')).toContainText('camera could not be loaded.');
+  await expect(page.locator('.recording-errors')).toContainText('camera could not be loaded.', {
+    timeout: 10000,
+  });
 });
 
 test('queued, processing and unavailable states use simple text with errors at the bottom', async ({
@@ -466,7 +468,7 @@ test('optional missing top-down does not reject preparation and active cancellat
   expect(api.posts[0].body).toEqual({ job_ids: [9, 14, 15] });
 });
 
-test('preparation accepts one available output and reports when none can be prepared', async ({
+test('preparation reports missing front input even when optional work is queued', async ({
   page,
 }) => {
   const api = await apiFixture(page);
@@ -507,9 +509,7 @@ test('preparation accepts one available output and reports when none can be prep
   await page.getByRole('button', { name: 'Prepare Selected' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Confirm' }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
-  await expect(
-    page.getByRole('status').filter({ hasText: 'Preparation request completed.' }),
-  ).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('No front camera.');
 
   available = false;
   await page.getByRole('checkbox', { name: 'Select recording-42', exact: true }).check();

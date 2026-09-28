@@ -71,6 +71,16 @@ export interface ApiJob {
   allowed_controls: string[];
 }
 export interface Overview {
+  recording_progress?: {
+    run_id: number;
+    recording_id: number;
+    recording_name: string;
+    active_job_id: number;
+    elapsed_ms: number;
+    estimated_total_ms: number | null;
+    estimate_status: 'available' | 'unavailable' | 'exceeded';
+    waiting: boolean;
+  } | null;
   current: ApiJob | null;
   queue: ApiJob[];
   worker_online: boolean;

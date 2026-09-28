@@ -107,7 +107,7 @@ def test_per_output_precedence_starts_with_unavailable() -> None:
         "unavailable",
         "unavailable",
     ]
-    assert analysis.analysis_state == "not_planned"
+    assert analysis.analysis_state == "failed"
 
 
 def test_ready_artifact_precedes_active_and_failed_attempts() -> None:
@@ -336,7 +336,8 @@ def test_selective_preparation_forwards_only_chosen_kinds() -> None:
 
     assert repository.selected == ("imu_series",)
     assert [item.kind for item in result.recordings[0].outputs] == ["imu_series"]
-    assert result.recordings[0].analysis_state == "queued"
+    # Selective work is still queued, but cannot make a recording without front input ready.
+    assert result.recordings[0].analysis_state == "failed"
 
 
 def test_one_scheduling_failure_keeps_sibling_output_results() -> None:
@@ -421,3 +422,31 @@ def test_selective_not_found_response_contains_only_requested_kinds() -> None:
 
     assert result.recordings[0].outcome == "not_found"
     assert [item.kind for item in result.recordings[0].outputs] == ["imu_series"]
+
+
+def test_front_camera_is_required_even_when_optional_outputs_are_ready() -> None:
+    from dataclasses import replace
+
+    for code in ("front_topic_unavailable", "front_topic_empty"):
+        group = {
+            kind: CurrentOutputRecord(_target(kind), artifact=_artifact(kind))
+            for kind in PROCESSING_KINDS
+        }
+        group["front_preview"] = CurrentOutputRecord(replace(
+            _target("front_preview", state="unavailable"),
+            diagnostic_code=code,
+            diagnostic_message="The configured front camera topic is empty.",
+        ))
+        analysis = _service()._analysis_for_group(7, group, GENERATION)
+        assert analysis.analysis_state == "failed"
+        assert analysis.outputs[0].diagnostic.code == code
+        assert analysis.outputs[1].state == "ready"
+        assert analysis.outputs[2].state == "ready"
+
+
+def test_unprepared_front_camera_does_not_become_ready_from_imu_alone() -> None:
+    group = {kind: CurrentOutputRecord(_target(kind)) for kind in PROCESSING_KINDS}
+    group["imu_series"] = CurrentOutputRecord(
+        _target("imu_series"), artifact=_artifact("imu_series"),
+    )
+    assert _service()._analysis_for_group(7, group, GENERATION).analysis_state == "not_planned"

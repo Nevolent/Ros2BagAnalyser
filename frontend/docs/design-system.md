@@ -55,5 +55,5 @@ failures in the dismissible shell error. Keep actions protected against duplicat
 submissions and restore optimistically dismissed data after request failure.
 
 Use `ScrollArea` for panel content and `TableBody` for tables. The shared thumb
-sits inside existing content padding without a reserved gutter. Preserve native
+sits inside table padding. Text panels use `gutter` to reserve a separate lane. Preserve native
 keyboard scrolling, touch scrolling and horizontal overflow.

@@ -67,3 +67,12 @@
     background: CanvasText;
   }
 }
+
+/* Reserve a separate lane in text-heavy panels, including macOS overlay bars. */
+.scroll-area-gutter > .scroll-viewport {
+  width: calc(100% - 12px);
+}
+.scroll-area-gutter > .scrollbar-track {
+  right: 5px;
+  background: transparent;
+}

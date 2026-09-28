@@ -2528,3 +2528,47 @@ async def test_v1_nested_synthetic_operational_acceptance(
     ).get_catalog()
     assert restarted_catalog.scan.successful_generation == 1
     assert len(restarted_catalog.recordings) == 4
+
+
+@pytest.mark.postgres
+def test_recording_progress_keeps_completed_siblings_across_output_handoffs(
+    postgres_url: str,
+) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    _make_targets_available(postgres_url, recording_id)
+    repository = ProcessingRepository(postgres_url)
+    schedule = repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
+    ids = [item.job.id for item in schedule.outputs]
+    with open_connection(postgres_url) as connection:
+        connection.execute(
+            """
+            UPDATE jobs SET estimated_total_ms = 10000,
+                estimate_method = 'median_rate_v1', estimate_sample_count = 2
+            WHERE recording_id = %s
+            """,
+            (recording_id,),
+        )
+    first = repository.claim_next_job()
+    assert first.id == ids[0]
+    before = repository.processing_overview(queue_limit=None)
+    assert {item.job.id for item in before.recording_jobs} == set(ids)
+    repository.fail_job(first.id, "synthetic_failure", "Synthetic test failure.")
+    handoff = repository.processing_overview(queue_limit=None)
+    assert handoff.running is None
+    assert {item.job.id for item in handoff.recording_jobs} == set(ids)
+    second = repository.claim_next_job()
+    assert second.id == ids[1]
+    after = repository.processing_overview(queue_limit=None)
+    assert {item.job.id for item in after.recording_jobs} == set(ids)
+    assert sum(item.job.estimated_total_ms for item in after.recording_jobs) == 30000
+    repository.fail_job(second.id, "synthetic_failure", "Synthetic test failure.")
+    third = repository.claim_next_job()
+    repository.fail_job(third.id, "synthetic_failure", "Synthetic test failure.")
+    # A later retry must not inherit elapsed time or estimates from the older run.
+    retried = repository.retry_failed_job(first.id, PLANNER_IDENTITIES)
+    retry_job = repository.claim_next_job()
+    assert retry_job.id == retried.output.job.id
+    retry_overview = repository.processing_overview(queue_limit=None)
+    assert [item.job.id for item in retry_overview.recording_jobs] == [retry_job.id]

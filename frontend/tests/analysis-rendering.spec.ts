@@ -47,7 +47,7 @@ test('dense traces stay painted while playback and scrubbing update the cursor',
     await page.getByRole('button', { name: 'Choose sensor graph' }).click();
     await page.getByRole('menuitemradio', { name: channel, exact: true }).click();
     const cursor = page.locator('.timeline-cursor');
-    const initialCursor = await cursor.getAttribute('transform');
+    const initialCursor = await cursor.getAttribute('style');
     await page.getByRole('button', { name: 'Play timeline', exact: true }).click();
     // Flush the new channel/control state before measuring steady playback.
     await page.screenshot();
@@ -56,7 +56,7 @@ test('dense traces stay painted while playback and scrubbing update the cursor',
     await expect
       .poll(async () => Number(await plot.getAttribute('aria-valuenow')))
       .toBeGreaterThan(initialTime + 0.3);
-    await expect(cursor).not.toHaveAttribute('transform', initialCursor!);
+    await expect(cursor).not.toHaveAttribute('style', initialCursor!);
     await page.screenshot();
     expect(layer()!.paintCount, `${channel} playback must reuse the trace`).toBe(playbackPaints);
     await page.getByRole('button', { name: 'Pause timeline', exact: true }).click();

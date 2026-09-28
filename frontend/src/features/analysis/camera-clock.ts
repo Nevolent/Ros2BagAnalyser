@@ -29,6 +29,7 @@ export function syncCamera(video: HTMLVideoElement, time: number, playing: boole
     };
     states.set(video, state);
   }
+  if (video.readyState === 0) state.hasFrame = false;
   if (video.readyState >= 2) state.hasFrame = true;
   const start = Number(video.dataset.coverageStart ?? 0);
   const end = Number(video.dataset.coverageEnd ?? 0);
@@ -42,7 +43,7 @@ export function syncCamera(video: HTMLVideoElement, time: number, playing: boole
   };
   if (video.error) {
     stopCamera(video);
-    message('Camera could not be loaded.');
+    message(video.dataset.failed === 'true' ? 'Camera could not be loaded.' : 'Loading camera…');
     return;
   }
   if (time < start || time > end) {

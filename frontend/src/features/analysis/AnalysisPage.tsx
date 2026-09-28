@@ -43,6 +43,7 @@ function Camera({
         element.dataset.failed = 'true';
         setFailed(true);
         onError(camera.id, `${camera.label} camera could not be loaded. Retry the camera.`);
+        element.dispatchEvent(new Event('camera-statechange'));
       }
     };
     const ready = () => {
@@ -55,11 +56,13 @@ function Camera({
       reload();
     };
     element.addEventListener('error', recover);
+    element.addEventListener('camera-stalled', recover);
     element.addEventListener('loadeddata', ready);
     if (element.error) recover();
     return () => {
       clearTimeout(timer);
       element.removeEventListener('error', recover);
+      element.removeEventListener('camera-stalled', recover);
       element.removeEventListener('loadeddata', ready);
     };
   }, [camera.id, camera.label, camera.src, onError]);

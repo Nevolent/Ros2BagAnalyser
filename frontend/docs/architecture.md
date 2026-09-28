@@ -68,9 +68,14 @@ clock/readout updates also avoid rasterizing the masked trace again. Pointer
 movement schedules at most one seek update per animation frame.
 `camera-clock.ts` converts the same bag-relative clock to each video's
 coverage-relative time. Measured coverage and initial buffering control
-visibility; decoded frames remain visible during later seeks. Camera load failures trigger
-three bounded retries before a manual Retry control and diagnostic appear.
-Recovery clears that camera’s error; timers are disposed on navigation. Effects dispose
+visibility; decoded frames remain visible during later seeks. Seeks drain only the
+latest requested position, with a brief grace period before automatic drift correction
+so slow decoders can resume playback. Explicit seeks bypass that grace period.
+A watchdog detects eight seconds without media progress, even while paused;
+stalls and camera load failures share three bounded retries before a manual Retry
+control and diagnostic appear. Recovery clears that camera’s error; timers are
+disposed on reload and navigation. Unchanged camera status does not mutate the DOM.
+Effects dispose
 listeners, observers, animation frames and media playback on navigation. Graph zoom changes
 the visible window, not the playback clock. Demo interpolation remains confined
 to the explicit visual fixtures.

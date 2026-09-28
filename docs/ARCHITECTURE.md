@@ -126,9 +126,13 @@ readouts still clear outside measured coverage, and internal gaps remain gaps.
 Dense SVG traces are memoized and kept in a separate composited SVG from the
 HTML cursor, so clock updates do not repeatedly rasterize the masked graph. Pointer
 seeks are coalesced to animation frames. Camera panes show buffering until the
-first frame is decoded, then retain the last frame during seeks. Failed media loads
-retry three times at bounded delays before offering an explicit camera retry;
-recovery clears the diagnostic without reloading the page.
+first frame is decoded, then retain the last frame during seeks. Each decoder
+finishes its in-flight seek before taking the latest requested position. After a
+seek completes, automatic drift correction waits 500 ms so playback can resume;
+explicit user seeks bypass that wait. An eight-second no-progress watchdog also
+recovers stalled loads and seeks while paused. Stalls and failed media loads share
+three bounded reload attempts before offering an explicit camera retry; recovery
+keeps the shared clock and clears the diagnostic without reloading the page.
 
 Video validation streams packet timestamps through ffprobe instead of collecting
 the full packet list. Probe time limits scale with output size and remain bounded.

@@ -53,6 +53,7 @@ export const Timeline = memo(function Timeline({
     span: Math.max(duration, 0.001),
   });
   const current = useRef(state);
+  const seekVersion = useRef(0);
   useEffect(() => () => setState({ ...current.current, playing: false }), [setState]);
   const seekFrame = useRef(0);
   const pendingSeek = useRef<number | null>(null);
@@ -103,10 +104,12 @@ export const Timeline = memo(function Timeline({
     return { ...previous, time, start, playing: time < duration && previous.playing };
   }
   function seek(time: number) {
+    seekVersion.current++;
     update((previous) => atTime(previous, time));
   }
   function togglePlayback() {
     if (!(duration > 0)) return;
+    if (current.current.time >= duration) seekVersion.current++;
     update((previous) => ({
       ...atTime(previous, previous.time >= duration ? 0 : previous.time),
       playing: !previous.playing,
@@ -169,8 +172,19 @@ export const Timeline = memo(function Timeline({
     );
     const controller = new AbortController();
     for (const video of videos.current) {
-      const sync = () => syncCamera(video, current.current.time, current.current.playing);
-      for (const event of ['loadedmetadata', 'canplay', 'waiting', 'seeking', 'seeked', 'error'])
+      const sync = () =>
+        syncCamera(video, current.current.time, current.current.playing, seekVersion.current);
+      for (const event of [
+        'emptied',
+        'loadedmetadata',
+        'loadeddata',
+        'canplay',
+        'waiting',
+        'seeking',
+        'seeked',
+        'error',
+        'camera-statechange',
+      ])
         video.addEventListener(event, sync, { signal: controller.signal });
       sync();
     }
@@ -180,7 +194,8 @@ export const Timeline = memo(function Timeline({
     };
   }, [workspaceRef, duration, bundle.mediaVersion]);
   useEffect(() => {
-    for (const video of videos.current) syncCamera(video, state.time, state.playing);
+    for (const video of videos.current)
+      syncCamera(video, state.time, state.playing, seekVersion.current);
   }, [state.time, state.playing, duration, bundle.mediaVersion]);
   useEffect(() => {
     const oldDuration = lastDuration.current;

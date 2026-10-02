@@ -57,7 +57,7 @@ require_deployable_worktree() {
   )
   for changed_path in "${changed_paths[@]}"; do
     case "$changed_path" in
-      README.md|docs/*|AGENTS.md|tests/*|frontend/tests/*|frontend/docs/*|frontend/README.md|frontend/playwright.config.ts|jetbrains/*|tools/*|vm|scripts/*|support/*|.gitignore)
+      README.md|docs/*|AGENTS.md|tests/*|frontend/tests/*|frontend/playwright.config.ts|tools/*|vm|scripts/*|support/*|.gitignore)
         ;;
       *)
         fail "uncommitted runtime change: $changed_path; commit or stash it first"

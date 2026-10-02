@@ -1,62 +1,49 @@
-# VM operations
+# Operations
 
-The project owner reports the VM application running as of 2026-09-19. This
-guide describes the repository's operating model. Inspect the site for its
-current release and access configuration; dated observations and former
-commissioning plans are in [history](history/README.md).
+## Layout and access
 
-## Layout
-
-| Location | Purpose |
+| Path | Purpose |
 | --- | --- |
-| `/opt/rosbag-analyser/releases/<id>/` | Immutable installed releases |
+| `/opt/rosbag-analyser/releases/<id>/` | Immutable releases |
 | `/opt/rosbag-analyser/current` | Active release symlink |
-| `/opt/rosbag-analyser/repository/` | VM Git checkout; services do not run here |
+| `/opt/rosbag-analyser/repository/` | Deployment checkout; services do not run here |
 | `/opt/rosbag-analyser/staging/` | Release staging |
 | `/etc/rosbag-analyser/` | Private configuration and credentials |
 | `/srv/rosbag-analyser/source` | Read-only source mount |
-| `/var/lib/rosbag-analyser/derived` | Writable reserved-cache mount; service writes to its `rosbag-analyser/` child |
+| `/var/lib/rosbag-analyser/derived` | Writable cache mount; application uses its `rosbag-analyser/` child |
 | `/var/backups/rosbag-analyser/` | Protected database backup staging |
 
-These are repository defaults, not private NAS locations. Source and derived
-mounts remain distinct even when backed by one dataset. The writable mount
-exposes only `Rosbag_Analyser_Cache`. Never test source access with a write probe.
+Source and derived mounts stay distinct, even on one NAS dataset. The writable
+mount exposes only `Rosbag_Analyser_Cache`. Never test source access by writing.
 
-The `rosbag-analyser` account runs API and worker. Releases/configuration are
-root-owned. Keep `application.env` and `migration.env` at
-`root:rosbag-analyser 0640`; `backup.env`, pgpass and CIFS credentials are
-root-owned `0600`. Use separate runtime, migration-owner and backup database
-roles. Secrets, real endpoints and access lists stay outside Git.
+The `rosbag-analyser` account runs API and worker; releases and configuration
+are root-owned. Set `application.env` and `migration.env` to
+`root:rosbag-analyser 0640`; backup configuration, pgpass and CIFS credentials
+are root-owned `0600`. Use separate runtime, migration-owner and backup database
+roles. Keep endpoints, credentials, access lists and the site recovery record
+outside Git. Templates and tool descriptions are in [deploy/](../deploy/README.md).
 
-[Deployment assets](../deploy/README.md) index configuration and package inputs.
-Keep a private site record of current release/schema, mounts, access route,
-backup/restore procedure, recovery access and responsible operator.
+## Status and logs
 
-## Routine checks
-
-From this PC, use the existing private SSH settings:
+Workstation connection settings belong in mode-0600/0400
+`~/.config/rosbag-analyser/vm-deploy.env`; start from the example in `deploy/`.
 
 ```bash
 ./vm status
 ./vm logs
-./vm deploy --push
 ```
 
-`status` saves release, service and health facts; `logs` returns the last 200
-API/worker journal lines with common secrets and paths redacted. Reports land
-in a new private `.vm-reports/<timestamp>-<action>/` directory here. Each includes
-`report.json`, `stdout.txt`, `stderr.txt`, SSH errors and checksums. Reports are
-ignored by Git and remain available when a command fails. Review before sharing.
+Each command writes private reports to a new ignored
+`.vm-reports/<timestamp>-<action>/` directory, including JSON, stdout, stderr,
+SSH errors and checksums. Logs include the last 200 API/worker journal lines
+with common secrets and paths redacted. Review reports before sharing.
 
-`status` runs without sudo and prints a short summary. Missing or denied checks
-produce an incomplete report and a nonzero exit; a complete report can still
-show failed services or unhealthy HTTP responses. `logs`, diagnostics and
-deployment use sudo. In a terminal, SSH prompts for the VM sudo password when
-required; the password is never stored in reports. Without a terminal, these
-commands require existing non-interactive sudo access and explain when it is
-missing. Interactive commands stage their input and captured output in a private
-VM `/tmp/rosbag-vm-*` directory, removed after collection. A broken connection
-can leave that directory behind; its location is reported if collection fails.
+`status` needs no sudo. Missing checks produce an incomplete report and nonzero
+exit; a complete report may still show unhealthy services. Logs, diagnostics and
+deployment use sudo. Interactive SSH can prompt for the password, which is not
+stored; unattended commands need existing non-interactive sudo access.
+Temporary VM `/tmp/rosbag-vm-*` directories are removed after collection; a
+broken connection may leave one behind, with its location reported.
 
 For direct VM inspection:
 
@@ -70,74 +57,60 @@ findmnt --mountpoint /var/lib/rosbag-analyser/derived --output TARGET,SOURCE,FST
 journalctl -u rosbag-analyser-api.service -u rosbag-analyser-worker.service --since today --no-pager
 ```
 
-Raw output can contain private values. For shareable evidence, run
-`/opt/rosbag-analyser/current/deploy/scripts/collect-support-bundle` with a new
-protected output directory, then review the result before sharing.
+Raw output may contain private values. `deploy/scripts/collect-support-bundle`
+creates a bundle in a new protected directory; review it before sharing.
+Readiness reports capabilities: source loss or low derived space can disable
+new work while saved state remains readable. Check individual units as well as
+the grouping target.
 
-Readiness distinguishes capabilities: source loss or low derived capacity may
-disable new work while saved state remains available. Inspect API/worker units
-as well as their grouping target.
+## Deploy a commit
 
-## Routine deployment
-
-```text
-reviewed/tested, pushed commit → ./vm deploy → immutable release → health/smoke
+```bash
+./deploy-vm --check    # Local eligibility check; no VM connection
+./vm deploy           # Deploy the committed, pushed revision
+./vm deploy --push    # Push the existing commit first
 ```
 
-Workstation settings live in mode-0600/0400
-`~/.config/rosbag-analyser/vm-deploy.env`, based on the example in `deploy/`.
-`--push` checks local eligibility, pushes the existing commit, then invokes
-`./deploy-vm`. It never commits files automatically. Omit `--push` if already
-pushed. `./deploy-vm --check` validates local eligibility without contacting the
-VM. Application/release changes must be committed; local docs, tests and
-diagnostic helpers do not block deployment and are not included.
+Application and release changes must be committed. Local documentation, tests
+and diagnostic helpers do not block deployment and are not included.
+The command never commits automatically. It sends the deployment script over
+SSH, then fast-forwards the dedicated VM checkout and validates the exact pushed
+revision. Documentation/test-only changes update that checkout without
+activating a release.
 
-The committed deployment script is sent over SSH, so updating the deployment
-tool itself does not require manually copying it onto the VM first. Application
-code still comes from the exact pushed revision in the dedicated VM checkout.
+The deployer stages an immutable release before interrupting services.
+Frontend-only changes restart API only. Other application changes close writes
+and let active worker work finish; queued work remains saved. Dependency changes
+build a checked wheelhouse on the existing platform. OS/ROS/Python or service,
+proxy, firewall and private configuration changes use the site-upgrade procedure.
 
-The VM fast-forwards its dedicated checkout, validates the exact pushed revision,
-and stages an immutable release before interrupting services. Frontend changes
-restart API only. Other application changes close API writes and let the current
-worker job finish before switching; queued work remains saved. New dependencies
-build a checked wheelhouse automatically on the existing platform.
-Documentation/tests alone update the checkout without activating a release.
+Migrations must be appended consecutively; existing migrations cannot change.
+Before migrating, the deployer stops API and worker, creates a protected dump,
+restores it into a fresh disposable database, and checks the previous release's
+schema. It copies and verifies the dump under a new local
+`.vm-reports/<run>-deploy/` directory and waits for that acknowledgement before
+running the migration service. PostgreSQL inspection, backup and disposable
+restore use the `postgres` OS account with peer authentication. Migration role
+and unit checks happen before interruption. Transfers are bounded to 10 GiB and
+ten minutes; each attempt records its exit status in `result.json`.
 
-Appended database migrations also use this same command. Existing migrations
-must remain unchanged and new numbers must be consecutive. Before migrating,
-the deployer stops API and worker, creates a protected database dump, restores
-it into a fresh disposable database, and checks the previous release's schema.
-It copies and verifies the dump on this PC under a new private
-`.vm-reports/<run>-deploy/` directory, then waits for that acknowledgement before
-running the candidate migration service. The sudo deployer runs local PostgreSQL inspection, dumping and disposable restore
-as the `postgres` OS account using peer authentication; a separate backup password
-is not required. The migration account and unit are checked before interruption.
-Missing prerequisites fail before changing the running release.
-The dump transfer is bounded to 10 GiB and ten minutes. Each SSH deployment attempt
-returns a private `result.json` beside any verified backup, recording its exit
-status. Success requires the expected API release and online worker; frontend-only
-updates and recovery also verify the expected API release before reporting success.
+The root-owned `/run/rosbag-analyser-maintenance` gate blocks mutations and new
+worker claims until candidate preflight, API health/smoke and service startup
+pass. API access is unavailable while the old worker drains and backup/migration
+runs; reads and media return when the candidate API starts. Resolve paused jobs
+through the resume/cancel API before deployment. Drain waits up to one hour
+without force-killing processors. An exclusive VM lock serializes deployments.
+Deployment never scans or prepares recordings.
 
-The root-owned `/run/rosbag-analyser-maintenance` gate blocks API mutations and
-new worker claims until candidate preflight, API health/smoke and service startup
-pass. Reads and media stay available once the candidate API has started. The API
-is unavailable while the old worker drains and the database is backed up/migrated.
-Paused jobs require resume/cancel in Processing before deployment; drain waits
-up to one hour without force-killing a processor. Deployments are serialized by
-an exclusive VM lock. No recording scan or preparation is performed.
+Success requires the expected API release and online worker. Frontend updates
+and recovery also verify the expected API release. Failure reopens a compatible
+previous release automatically. If that release cannot validate the changed
+schema, services remain stopped with the gate, dump and recovery configuration
+under `/var/backups/rosbag-analyser/deploy-<release>-<run>/`. The error identifies
+the directory. An incomplete maintenance gate blocks another deployment; use
+the recovery procedure below.
 
-On failure, a compatible previous release is reopened automatically. If the old
-release cannot validate the changed schema, services stay stopped with the
-maintenance gate, dump and recovery configuration preserved under
-`/var/backups/rosbag-analyser/deploy-<release>-<run>/`. The error identifies this
-recovery directory; use the recovery procedure below rather than inventing a
-reverse migration. An incomplete maintenance gate blocks another deployment.
-
-OS/ROS/Python platform changes and service, proxy, firewall or private site
-configuration templates require the planned site-upgrade procedure below. The
-ordinary command does not change access policy or install OS packages.
-
-## Run a diagnostic and get the result back
+## Diagnostics
 
 ```bash
 ./vm topics --recording 'folder/recording'
@@ -146,42 +119,36 @@ ordinary command does not change access policy or install OS packages.
 ./vm run --recording 'folder/recording' tools/diagnostics/my_check.py -- argument
 ```
 
-Recording paths are relative to the configured archive root; repeat
-`--recording` for several. Root and topic settings come from the VM. Put wrapper
-options before the custom script path; arguments after it are passed literally
-to the script. `--timeout` changes the default five-minute limit (up to one hour);
-`--output` selects a new local report directory. Source inventories have explicit
-`--max-depth` and `--max-entries` bounds.
+Recording paths are relative to the configured root; repeat `--recording` as
+needed. Put wrapper options before the script; trailing arguments pass through
+literally. `--timeout` sets the five-minute default, up to one hour.
+`--output` selects a new local report directory. Inventories have explicit
+`--max-depth` and `--max-entries` limits.
 
-`run` sends the current local Python file, including uncommitted edits. It needs
-no push, install, application release or restart. The VM stages it temporarily
-and uses the active release's Python environment plus ROS Humble. Print results
-to stdout (JSON/CSV/text); they return in `stdout.txt`. Arbitrary generated files
-and sibling Python modules are not transferred. A script's installed application
-imports reflect the running release, not uncommitted local backend edits.
+`run` transfers the current local Python file, including uncommitted edits, into
+a temporary VM directory. It uses the active release's environment and Humble;
+no push, installation or restart is needed. Print JSON/CSV/text to stdout.
+Generated files and sibling modules are not transferred; application imports
+come from the active release.
 
-Diagnostics run as `rosbag-analyser` in a transient systemd sandbox: filesystem
-writes outside its temporary work area are blocked, network/database access and
-private service configuration are hidden, and runtime/memory/output are bounded.
-Without `--recording`, the source root is hidden too. With a selection, scripts
-must limit reads to it; the wrapper compares lightweight inventories before and
-after, including script failures. It reports incomplete evidence on hard kills
-or transport failures rather than claiming source safety was verified. Original
-source mounts must be read-only. No application service is restarted.
+Diagnostics run as `rosbag-analyser` in a transient systemd sandbox with bounded
+runtime, memory and output. Writes outside its temporary directory, network,
+database and private service settings are blocked. Source is hidden unless
+recordings are selected. Scripts must stay within that selection. The wrapper
+compares lightweight before/after inventories even on script failure; hard
+kills or transport failure produce incomplete evidence. Source mounts must be
+read-only.
 
-Scripts receive `ROS_BAG_ANALYSER_ARCHIVE_ROOT`, configured front/IMU topic
-variables, and `VM_DIAGNOSTIC_RECORDINGS` (a JSON list of relative directories).
-The SSH operator needs sudo access for the receiver and systemd-run; no sudoers
-change is needed for normal password authentication in a terminal. Connection
-failures show their cause and are saved in `ssh-stderr.txt`; check VM power,
-network/VPN and the private SSH settings before retrying. Interactive sudo
-authentication errors appear directly in the terminal.
+Scripts receive `ROS_BAG_ANALYSER_ARCHIVE_ROOT`, configured front/IMU topics and
+`VM_DIAGNOSTIC_RECORDINGS` (JSON relative paths). The SSH operator needs sudo
+for the receiver and systemd-run. Connection errors are saved in
+`ssh-stderr.txt`; check VM power, network/VPN and private SSH settings.
 
-## Planned releases and new installations
+## New installations and site upgrades
 
-Stage candidates beside the running release. Record target, interruption,
-backup and rollback before switching. Use the platform in
-`deploy/release-contract.json` to build:
+Record the target, interruption, backup and rollback before changing a site.
+Stage candidates beside the active release using the platform in
+`deploy/release-contract.json`:
 
 ```bash
 deploy/scripts/build-wheelhouse /protected/staging/wheelhouse-RELEASE BUILDER
@@ -189,84 +156,80 @@ deploy/scripts/build-release RELEASE BUILDER \
   /protected/staging/wheelhouse-RELEASE /protected/staging/release-RELEASE
 ```
 
-The builder requires clean committed source. Verify archive and installer
-checksums, then run the output directory's `install-release` with release ID,
-absolute archive path and expected SHA-256. Installation validates contents and
-dependencies and refuses to replace an existing release.
+Build from clean committed source. Verify archive and installer checksums, then
+run the output's `install-release` with release ID, absolute archive path and
+expected SHA-256. Installation validates dependencies and refuses replacement
+of an existing release.
 
-For a new VM, provision runtime packages, service identities, separate mounts,
-local database roles, private configuration and the access proxy. Render the
-`deploy/` templates for that site; placeholders are intentionally invalid.
-Use `validate-site`, `validate-firewall`, `validate-proxy`, `nginx -t` and
-systemd validation before applying configuration. Source stays read-only;
-API and database remain local behind the access boundary.
+For a new VM, provision packages, service identities, separate mounts, local
+database roles, private configuration and the access proxy. Render the
+intentionally invalid template placeholders. Run `validate-site`,
+`validate-firewall`, `validate-proxy`, `nginx -t` and systemd validation before
+applying settings. Source stays read-only; API and database stay local behind
+the access boundary.
 
-For a site upgrade or manual recovery (application migrations are automated above):
+For a site upgrade or manual recovery:
 
-1. Record active release/schema and rollback compatibility; stage and validate
-   the candidate and available capacity.
-2. Close engineer writes at the site proxy and run the active release's
-   `deploy/scripts/drain-worker`. Resolve paused work using resume/cancel first;
-   drain refuses paused work.
-3. Back up PostgreSQL, retaining configuration and derived recovery information.
-   Verify the dump and its protected off-VM copy.
-4. Stop worker and API. Apply candidate migrations once through
+1. Record the active release/schema and rollback compatibility. Stage and validate
+   the candidate and capacity.
+2. Close writes at the proxy. Resolve paused work through the resume/cancel API,
+   then run the active release's `deploy/scripts/drain-worker`.
+3. Back up PostgreSQL, configuration and derived recovery information. Verify the
+   dump and a protected off-VM copy.
+4. Stop worker and API. Apply migrations once with
    `rosbag-analyser-migrate@RELEASE.service`; startup never migrates.
-5. Use `deploy/scripts/activate-release RELEASE`, rerun preflight, start API and
-   worker, and run `deploy/scripts/smoke-check`.
+5. Run `deploy/scripts/activate-release RELEASE`, preflight, service startup and
+   `deploy/scripts/smoke-check`.
 6. Check saved catalog, queue, representative output and media ranges before
    reopening access. Retain the previous release until the update is accepted.
 
-Enable the application target and verify guest boot persistence when setting
-up or changing boot behavior. Verify TrueNAS VM-autostart separately; an
-application update does not require a NAS-host reboot.
+Verify application target enablement and guest boot persistence when changing
+boot setup. TrueNAS VM autostart is a separate setting; application updates do
+not require a NAS-host reboot.
 
 ## Backup and recovery
 
-If deployment stopped before activation and both services are down, run
-`./vm recover` from this PC and enter the VM sudo password. It requires a free
-deployment lock and the previous release still selected, checks that release's
-schema and that no jobs are running, then restarts services and clears maintenance
-only after API readiness and worker health pass. It does not change the database,
-restore a dump or switch release pointers. A schema mismatch requires the recovery
-procedure below. Do not rerun a failed deployment just to reopen the old version.
+If deployment stopped before activation with both services down, use
+`./vm recover`. It requires a free deployment lock and the previous release
+still selected, checks its schema and absence of running jobs, then starts
+services. Maintenance clears only after API readiness and worker health pass.
+It does not restore data or switch releases. A schema mismatch needs the
+rollback procedure below; rerunning deployment is not a recovery step.
 
-With private backup environment and `PGPASSFILE` configured, run
+With private backup settings and `PGPASSFILE`, run
 `deploy/scripts/backup-database BACKUP_DIRECTORY RELEASE_ID`. Keep the verified
 custom dump in an independent protected location. Periodically test
 `restore-disposable-database DUMP_FILE rosbag_analyser_restore_CASE` against a
-new disposable target. A dump listing alone is not a restore test.
+new disposable target. Listing a dump is not a restore test.
 
-Restored metadata must agree with derived files: restore a coherent snapshot
-or identify absent artifacts for deliberate regeneration. Never mark missing
-files ready. Keep backup contents and secrets out of support reports.
+Restored metadata must match derived files: restore a coherent snapshot or
+identify absent artifacts for deliberate regeneration. Never mark missing files
+ready. Keep dumps and credentials out of support reports.
 
-For rollback, close writes and stop services before switching releases.
-Code-only rollback requires compatibility with the current schema. Otherwise
-restore the verified database into a new target with its derived-state policy,
-update configuration, preflight and smoke-test, then reopen access. Do not
-invent down migrations; schema 0008 is not automatically safe for older code.
+For rollback, close writes and stop services first. Code-only rollback requires
+schema compatibility. Otherwise restore the verified database into a new target,
+resolve derived-state consistency, update private configuration, preflight and
+smoke-test before reopening. Do not invent reverse migrations or assume older
+code can read a newer schema.
 
 ## Source checks and incidents
 
-Rescan is explicit through the operator interface/API. It refreshes catalog
-and output identities without creating jobs. Retry and queue controls belong
-in the application, not hand-edited database rows.
+Rescan explicitly through the operator interface/API. It refreshes saved catalog
+and identities without creating jobs. Use application retry and queue controls,
+not database edits.
 
-Bound real-source diagnostics to an identified root, selected recordings and
-intended work. Capture lightweight before/after inventories using
-`rosbag-analyser-source-manifest`, outside source and Git. Compare relative
-names, kinds, sizes and high-resolution mtimes; do not hash large payloads.
-Diagnostic tools are listed in `deploy/README.md`; inspect their CLI bounds.
+Bound source checks to an identified root, selected recordings and intended work.
+Use `rosbag-analyser-source-manifest` for lightweight before/after inventories,
+outside source and Git. Compare names, kinds, sizes and high-resolution mtimes;
+do not hash large payloads.
 
 | Symptom | Response |
 | --- | --- |
-| Worker offline/interrupted | Inspect logs and lock ownership, recover one worker and explicitly retry |
-| Wrong/missing/writable source mount | Stop source-dependent work and restore the configured read-only mount |
-| Low derived space | Add capacity or plan retention; new work is rejected without deleting ready output |
-| Database/derived storage loss | Restore the dependency, preserve state and avoid restart loops |
-| Failed deployment | Inspect revision/schema and logs, then use the recorded rollback |
+| Worker offline/interrupted | Inspect logs and lock ownership, restore one worker, retry explicitly |
+| Missing/writable source mount | Stop source-dependent work; restore the configured read-only mount |
+| Low derived space | Add capacity or plan retention; ready output is not deleted automatically |
+| Database/derived storage loss | Restore the dependency and preserve saved state |
+| Failed deployment | Inspect revision, schema and logs; use the recorded recovery procedure |
 
 Assign backup checks, capacity, access/certificate maintenance and platform
-updates to an operator. Use disposable targets for outage/full-disk drills.
-Resolve exact targets before destructive recovery or storage changes.
+updates to an operator. Use disposable targets for outage and full-disk drills.

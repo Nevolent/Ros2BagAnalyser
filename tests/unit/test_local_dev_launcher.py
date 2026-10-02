@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import subprocess
 
 
@@ -94,3 +95,42 @@ def test_windows_shortcut_runs_the_one_command_open_flow() -> None:
     assert "Open-RosbagAnalyser.ps1" in installer
     launcher = (PROJECT_ROOT / "support/windows/Open-RosbagAnalyser.ps1").read_text()
     assert '--exec "$ProjectRoot/dev" open $Mode' in launcher
+
+
+def test_dev_check_accepts_automatic_topic_discovery(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "dev").write_text((PROJECT_ROOT / "dev").read_text())
+    for name in (".venv/bin/rosbag-analyser", "scripts/rosbag-analyser-service"):
+        command = project / name
+        command.parent.mkdir(parents=True, exist_ok=True)
+        command.write_text("#!/bin/sh\nexit 99\n")
+        command.chmod(0o755)
+    archive = tmp_path / "source"
+    derived = tmp_path / "derived"
+    archive.mkdir()
+    derived.mkdir()
+    settings = tmp_path / "environment"
+    settings.write_text(
+        f"ROS_BAG_ANALYSER_ARCHIVE_ROOT={archive}\n"
+        f"ROS_BAG_ANALYSER_DERIVED_ROOT={derived}\n"
+    )
+    secret = tmp_path / "database.env"
+    secret.write_text("# No connection is made by the configuration check.\n")
+    settings.chmod(0o600)
+    secret.chmod(0o600)
+    env = dict(
+        os.environ,
+        ROS_BAG_ANALYSER_SETTINGS_FILE=str(settings),
+        ROS_BAG_ANALYSER_DATABASE_SECRET_FILE=str(secret),
+    )
+    env.pop("ROS_BAG_ANALYSER_FRONT_TOPIC", None)
+    env.pop("ROS_BAG_ANALYSER_IMU_TOPIC", None)
+    result = subprocess.run(
+        ["bash", str(project / "dev"), "check"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Configuration is valid." in result.stdout

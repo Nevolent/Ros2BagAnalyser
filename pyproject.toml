@@ -37,10 +37,6 @@ where = ["src"]
 [tool.setuptools.package-data]
 rosbag_analyser = [
     "persistence/migrations/*.sql",
-    "web/*.css",
-    "web/*.html",
-    "web/*.js",
-    "web/assets/*.svg",
     "web/react/*.html",
     "web/react/assets/*",
 ]

@@ -1,3 +1,4 @@
+import { syntheticVideo } from './media-fixture';
 import { test, expect } from '@playwright/test';
 import { apiFixture, detail, job, diagnostic } from './api-fixture';
 
@@ -368,16 +369,13 @@ test('pagination loads all pages automatically and follows opaque API cursors', 
 test('camera videos follow the shared clock with measured offsets and clear outside coverage', async ({
   page,
 }) => {
-  const { readFileSync } = await import('node:fs');
-  const source = readFileSync('../tools/serve_frontend_mock.py', 'utf8');
-  const encoded = source.match(/MOCK_VIDEO = base64.b64decode\(\s*"([A-Za-z0-9+/=]+)"/)![1];
   const api = await apiFixture(page);
   api.recording.outputs[0].artifact!.coverage_end_ns = '2000000000';
   api.recording.outputs[1].artifact!.coverage_start_ns = '2000000000';
   api.recording.outputs[1].artifact!.coverage_end_ns = '3000000000';
   api.override = async (route, path) => {
     if (!path.includes('/media/')) return false;
-    const media = Buffer.from(encoded, 'base64');
+    const media = syntheticVideo;
     const range = route
       .request()
       .headers()

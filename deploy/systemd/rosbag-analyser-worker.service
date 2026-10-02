@@ -1,6 +1,6 @@
 [Unit]
 Description=ROS Bag Analyser single serial worker
-Documentation=file:/opt/rosbag-analyser/current/docs/NAS_TRIAL_RUNBOOK.md
+Documentation=file:/opt/rosbag-analyser/current/docs/OPERATIONS.md
 Wants=network-online.target postgresql.service srv-rosbag\x2danalyser-source.mount var-lib-rosbag\x2danalyser-derived.mount
 After=network-online.target postgresql.service srv-rosbag\x2danalyser-source.mount var-lib-rosbag\x2danalyser-derived.mount rosbag-analyser-api.service
 StartLimitIntervalSec=120

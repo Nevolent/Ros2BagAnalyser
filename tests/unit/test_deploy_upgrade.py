@@ -83,6 +83,23 @@ def test_unsafe_schema_or_site_changes_fail_before_activation(repository, change
         deploy.plan(root, old, commit(root))
 
 
+@pytest.mark.parametrize('extra', ['', 'ExecStart=/usr/bin/changed\n', 'Documentation=https://example.invalid/help\n'])
+def test_only_local_unit_documentation_links_bypass_site_upgrade(repository, extra):
+    root, _ = repository
+    path = root / 'deploy/systemd/example.service'
+    path.parent.mkdir()
+    path.write_text('[Unit]\nDocumentation=file:/opt/rosbag-analyser/current/docs/OLD.md\n'
+                    '[Service]\nExecStart=/usr/bin/original\n')
+    old = commit(root)
+    path.write_text(path.read_text().replace('docs/OLD.md', 'docs/OPERATIONS.md') + extra)
+    new = commit(root)
+    if extra:
+        with pytest.raises(ValueError, match='site upgrade'):
+            deploy.plan(root, old, new)
+    else:
+        assert deploy.plan(root, old, new) == ('none', False, False)
+
+
 def upgrade_fixture(tmp_path, monkeypatch, failure=None):
     events = []
     marker = tmp_path / 'maintenance'

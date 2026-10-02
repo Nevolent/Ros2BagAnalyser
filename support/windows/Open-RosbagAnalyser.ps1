@@ -2,7 +2,7 @@ param(
     [ValidateSet("real", "synthetic")]
     [string]$Mode = "real",
     [string]$Distro = "Ubuntu-22.04",
-    [string]$ProjectRoot = "/home/kardo/projects/rosbag-dashboard",
+    [string]$ProjectRoot,
     [string]$Url
 )
 
@@ -28,6 +28,9 @@ try {
         [System.Diagnostics.Process]::Start($start) | Out-Null
         Write-Output "Opened Chrome at $($address.AbsoluteUri)"
     } else {
+        if (!$ProjectRoot -or !$ProjectRoot.StartsWith("/")) {
+            throw "Provide the absolute WSL project path with -ProjectRoot, or install shortcuts using ./dev install."
+        }
         # Some Windows environments omit .EXE from PATHEXT. Correct only this
         # launcher's environment so PowerShell invokes WSL as an executable.
         if (($env:PATHEXT -split ";") -notcontains ".EXE") {

@@ -2,29 +2,30 @@ import { conciseIssues } from '../../data/diagnostics';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+let activeDiagnostic: { id: string; close: () => void } | null = null;
+
 /** Keep diagnostics outside the scrolling table so the left-hand popup is never clipped. */
 export function StatusDiagnostic({ status, issues }: { status: string; issues: string[] }) {
   const id = useId();
   const target = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
-  const showTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [open, setOpen] = useState(false);
   function show() {
     clearTimeout(hideTimer.current);
-    clearTimeout(showTimer.current);
-    showTimer.current = setTimeout(() => setOpen(true), 100);
+    if (activeDiagnostic?.id !== id) activeDiagnostic?.close();
+    activeDiagnostic = { id, close: hide };
+    setOpen(true);
   }
   function hide() {
-    clearTimeout(showTimer.current);
     clearTimeout(hideTimer.current);
+    if (activeDiagnostic?.id === id) activeDiagnostic = null;
     setOpen(false);
   }
   function leave() {
-    clearTimeout(showTimer.current);
     clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
-      if (document.activeElement !== target.current) setOpen(false);
+      if (document.activeElement !== target.current) hide();
     }, 100);
   }
   useLayoutEffect(() => {
@@ -68,9 +69,9 @@ export function StatusDiagnostic({ status, issues }: { status: string; issues: s
   useEffect(
     () => () => {
       clearTimeout(hideTimer.current);
-      clearTimeout(showTimer.current);
+      if (activeDiagnostic?.id === id) activeDiagnostic = null;
     },
-    [],
+    [id],
   );
   return (
     <>
@@ -84,8 +85,7 @@ export function StatusDiagnostic({ status, issues }: { status: string; issues: s
         onPointerLeave={leave}
         onClick={(event) => {
           event.stopPropagation();
-          clearTimeout(showTimer.current);
-          setOpen((value) => !value);
+          show();
         }}
         onFocus={show}
         onBlur={leave}

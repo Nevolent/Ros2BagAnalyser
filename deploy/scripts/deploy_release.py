@@ -36,10 +36,31 @@ def git(repository, *arguments):
     return run(['git', '-C', repository, *arguments], capture=True).stdout.strip()
 
 
+def unit_documentation_only(repository, previous, candidate, path):
+    """Recognize a documentation-link edit without accepting service changes."""
+    try:
+        old = git(repository, 'show', f'{previous}:{path}')
+        new = git(repository, 'show', f'{candidate}:{path}')
+    except subprocess.CalledProcessError:
+        return False
+    documentation = re.compile(
+        r'Documentation=file:/opt/rosbag-analyser/(?:current|releases/%i)/docs/[A-Z_]+\.md'
+    )
+
+    def settings(text):
+        return [line for line in text.splitlines() if not documentation.fullmatch(line)]
+
+    return old != new and settings(old) == settings(new)
+
+
 def plan(repository, previous, candidate):
     changes = git(repository, 'diff', '--name-only', previous, candidate).splitlines()
     mode, migrate, dependencies = 'none', False, False
     for path in changes:
+        if path.startswith('deploy/systemd/') and unit_documentation_only(
+            repository, previous, candidate, path
+        ):
+            continue
         if path.startswith('deploy/scripts/') and path not in (
             'deploy/scripts/deploy-from-git', 'deploy/scripts/deploy_release.py'
         ):

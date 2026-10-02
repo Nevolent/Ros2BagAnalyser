@@ -1,16 +1,9 @@
 # Development
 
-The packaged UI in `src/rosbag_analyser/web/react/` is built from `frontend/`
-using React, TypeScript and Vite. Run `npm ci && npm run dev` from that folder:
-Vite uses port 5173 and proxies `/api` to port 8000. Override
-`ROS_BAG_API_TARGET` for a different backend. Use Node
-22.12+ or 24. See [frontend development](../frontend/README.md) for its explicit
-visual demo, build, browser tests and visual comparison commands. Copy a tested
-build into the packaged directory before committing frontend changes.
+Use Ubuntu 22.04 / WSL and Python 3.10 to match the VM runtime.
+Processing also requires ROS 2 Humble, PostgreSQL and FFmpeg/ffprobe.
 
-## Python setup
-
-For a new environment matching the VM's Python 3.10 baseline:
+## Backend setup
 
 ```bash
 python3.10 -m venv .venv
@@ -18,12 +11,52 @@ python3.10 -m venv .venv
 .venv/bin/python -m pip install --no-deps --no-build-isolation -e .
 ```
 
-Reuse an existing working `.venv`. `requirements.lock` pins development
-packages; `deploy/` owns VM runtime/build inputs. Update both deliberately when
-changing dependencies. Full processing also requires ROS 2 Humble and
-FFmpeg/ffprobe.
+Reuse a working `.venv`. `requirements.lock` pins development dependencies;
+`deploy/` owns runtime and build inputs. Update both when changing dependencies.
 
-## Frontend without infrastructure
+The local launcher reads mode-0600/0400 private files:
+
+- `~/.config/rosbag-analyser/environment`: separate source/derived roots and
+  optional sensor-topic preferences.
+- `~/.config/rosbag-analyser/database.env`: database password and optional
+  host, user, database name and port.
+
+The default database host is the Windows host. Override file locations with
+`ROS_BAG_ANALYSER_SETTINGS_FILE` and `ROS_BAG_ANALYSER_DATABASE_SECRET_FILE`.
+Keep these files out of Git.
+
+```bash
+./dev check
+./dev open real
+./dev status
+./dev logs
+./dev rescan          # Explicit source scan; startup does not scan
+./dev stop
+./dev install        # Install local Windows shortcuts
+```
+
+`scripts/rosbag-analyser-service` manages the local services. The Windows
+shortcut opens Chrome and retains startup output on failure. Other environments
+can use the installed `rosbag-analyser`, `rosbag-analyser-worker` and
+`rosbag-analyser-migrate` commands with explicit settings. Migrate a development
+database before starting it. Configuration validation lives in `config.py`.
+
+## Frontend
+
+The React/TypeScript source is in `frontend/`. Use Node.js 22.12+ or 24:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+# http://127.0.0.1:5173
+```
+
+Vite proxies `/api`, including media ranges, to `http://127.0.0.1:8000`.
+Set `ROS_BAG_API_TARGET` to use another backend. An unavailable API shows an
+error; the application never falls back to simulated data.
+
+To run the committed build without backend infrastructure, from the repository root:
 
 ```bash
 ./dev open synthetic
@@ -31,49 +64,44 @@ FFmpeg/ffprobe.
 ./dev stop synthetic
 ```
 
-This serves the same packaged frontend with over 500 in-memory recordings,
-failures, history, a timed queue, and shared camera/IMU visual fixtures. No local
-backend configuration, ROS, PostgreSQL, or Node is needed. Reloading resets the
-simulation; it does not verify ROS processing or real camera timing. The real
-app and Vite also accept `?synthetic=1`; omitting it selects the real API and
-never falls back to simulated data. Both modes are maintained on `main`.
+`?synthetic=1` also works in Vite. It uses in-memory recordings, jobs and shared
+camera/IMU fixtures; reloading resets it. `?demo=1` selects fixed visual fixtures
+in the Vite development server only. Neither mode verifies real processing.
 
-## Full local application
-
-The existing WSL/Windows launcher remains supported:
+From `frontend/`, build the production assets before committing a UI change:
 
 ```bash
-./dev check
-./dev start
-./dev open real
-./dev install # two local Windows shortcuts; existing VM launchers are untouched
-./dev status
-./dev logs
-./dev rescan   # explicit source scan; startup does not scan
-./dev stop
+npm run build:package
 ```
 
-It reads private mode-0600/0400 files from
-`~/.config/rosbag-analyser/environment` and `database.env`. The first sets
-existing separate source/derived roots and optional sensor-topic preferences; the second holds
-`ROS_BAG_ANALYSER_DATABASE_PASSWORD` and optional database host/user/name/port.
-The launcher defaults to PostgreSQL on the Windows host and sources Humble for
-the worker. File locations can be overridden with
-`ROS_BAG_ANALYSER_SETTINGS_FILE` and `ROS_BAG_ANALYSER_DATABASE_SECRET_FILE`.
-Never commit them.
+This typechecks the source and builds into `src/rosbag_analyser/web/react/`.
+Commit the source and packaged assets together. The VM serves these files without
+Node.js. `npm run build` builds to ignored `dist/`; `npm run preview` serves
+that local build with the same API proxy.
 
-For other environments, use the installed `rosbag-analyser`,
-`rosbag-analyser-worker`, and `rosbag-analyser-migrate` entry points with explicit
-environment settings. `config.py` validates roots, database URL, topics, tools
-and bounds. Migrate the development database explicitly before starting.
+### Components and styling
 
-`scripts/rosbag-analyser-service` is used by `./dev`;
-`scripts/install-local-dev` installs the Real data and Synthetic data Windows
-shortcuts without starting either mode. Both remain
-active. VM release instructions are in [Operations](OPERATIONS.md).
+Reuse the shared components in `frontend/src/components/`:
 
-The desktop launcher opens Chrome explicitly. A console shows local startup
-output and stays open on failure; `./dev install` repairs the shortcut targets.
+| Purpose | Components |
+| --- | --- |
+| Page and panels | `Page`, `Workspace`, `SidePanel` |
+| Tables | `TablePanel`, `TableBody`, `EmptyState`, `SortableHeader` |
+| Inputs and actions | `Button`, `Tabs`, `SearchField`, `FilterMenu`, `Checkbox` |
+| Overlays and status | `Dialog`, `Popover`, `StatusBadge` |
+| Panel scrolling | `ScrollArea` |
+
+Use semantic tokens from `src/styles/theme.css` for colors, spacing and control
+sizes. Put shared layout in `app.css` or `table.css`, and feature rules in their
+own stylesheets. Utility classes are a fixed stylesheet, not a generated
+Tailwind build. Dark mode uses the document root's `dark` class.
+
+Use buttons for actions, links for navigation, accessible names and visible
+focus. Preserve dialog focus restoration, keyboard equivalents and reduced
+motion. Loading and empty states use muted text; background refresh never
+covers cached content. Restore optimistically dismissed jobs if a request fails.
+Sorting changes presentation only, not queue order. Calendar timestamps use
+`formatDateTime` (Europe/Tallinn); timeline timestamps keep their own units.
 
 ## Verification
 
@@ -81,29 +109,32 @@ From the repository root:
 
 ```bash
 .venv/bin/python -m pytest -q tests/unit tests/api
-node --test tests/js/test_*.js
+node --test tests/js/test_*.mjs
 ```
 
-Node needs the built-in test runner; it is a development tool, not an application
-runtime dependency. Additional suites have explicit prerequisites:
+Frontend checks, from `frontend/`:
 
-| Suite | Prerequisite |
+```bash
+npx playwright install chromium
+npm test
+npm run build
+npm run format:check
+```
+
+Browser tests use synthetic API responses and media. `CHROMIUM_PATH` selects an
+installed browser; `PLAYWRIGHT_BASE_URL` selects an existing Vite server.
+Inspect affected loading, error, keyboard, responsive and playback behavior.
+For visual comparisons, run `npm run visual:capture` before a change, then
+`npm run visual:compare` with the same browser and OS. Captures stay in ignored
+`artifacts/visual/`; review differences before replacing a baseline.
+
+| Additional suite | Prerequisite |
 | --- | --- |
-| `tests/ros/` | Source `/opt/ros/humble/setup.bash`, then run with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` to avoid unrelated ROS pytest plugins |
-| `tests/postgres/` | Disposable database in `ROS_BAG_ANALYSER_TEST_DATABASE_URL`, `ROS_BAG_ANALYSER_ALLOW_TEST_DATABASE_RESET=1`; use `--require-postgres` |
-| `tests/deployment/` | Configured disposable proxy/tools; see its fixtures |
-| `tests/real_archive/` | `RUN_REAL_ARCHIVE_TESTS=1`, source settings and disposable database; inspect fixtures and bound the check first |
+| `tests/ros/` | Source Humble; set `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` |
+| `tests/postgres/` | Disposable `ROS_BAG_ANALYSER_TEST_DATABASE_URL`, `ROS_BAG_ANALYSER_ALLOW_TEST_DATABASE_RESET=1`, and `--require-postgres` |
+| `tests/deployment/` | Disposable proxy/tools; see fixtures |
+| `tests/real_archive/` | `RUN_REAL_ARCHIVE_TESTS=1`, source settings and disposable database; define a bounded target first |
 
-The PostgreSQL suite resets its target schema. Never use a database whose data
-you need to retain. Routine tests use small synthetic archives and temporary
-output. Skipped integration tests are not evidence that those integrations pass.
-
-For frontend changes, inspect affected workflows in a browser, including
-loading/error states, keyboard access, responsive layout and playback when
-relevant. Tests should protect behavior, not freeze whole stylesheets by hash.
-
-## Git
-
-Use focused, descriptive commits and preserve shared release commit IDs.
-Commit, push and deployment are separate actions. There is no numbered-phase
-workflow. Local recovery files belong in ignored `.local-backup/`.
+The PostgreSQL suite resets its target schema. Routine tests use synthetic
+archives and temporary output. A skipped integration suite is not a passing
+integration check. VM procedures are in [Operations](OPERATIONS.md).

@@ -1,12 +1,10 @@
 import { chromium } from '@playwright/test';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { PNG } from 'pngjs';
 import pixelmatch from 'pixelmatch';
 
 const mode = process.argv[2] ?? 'compare';
-const root = process.env.VISUAL_OUTPUT_DIR || 'artifacts/react-migration';
+const root = process.env.VISUAL_OUTPUT_DIR || 'artifacts/visual';
 if (!['baseline', 'compare'].includes(mode)) throw new Error('Use baseline or compare.');
 if (mode === 'compare' && !existsSync(`${root}/baseline`))
   throw new Error(
@@ -14,12 +12,8 @@ if (mode === 'compare' && !existsSync(`${root}/baseline`))
   );
 const destination = `${root}/${mode === 'baseline' ? 'baseline' : 'current'}`;
 mkdirSync(destination, { recursive: true });
-const cached = join(
-  homedir(),
-  'Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell',
-);
 const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_PATH || (existsSync(cached) ? cached : undefined),
+  executablePath: process.env.CHROMIUM_PATH,
 });
 const results = [];
 try {
@@ -107,4 +101,4 @@ if (mode !== 'baseline') {
   writeFileSync(`${root}/comparison.json`, JSON.stringify(results, null, 2) + '\n');
   console.table(results);
   if (results.some((result) => result.pixels > 0)) process.exitCode = 1;
-} else console.log('Captured 30 tailored UI baselines.');
+} else console.log('Captured visual baselines.');

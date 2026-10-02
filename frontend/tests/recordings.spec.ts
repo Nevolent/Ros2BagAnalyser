@@ -1,14 +1,19 @@
 import { test, expect } from '@playwright/test';
 
 test('synthetic red statuses show separate source and output diagnostics', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-02T10:00:00Z') });
   await page.goto('/?synthetic=1');
   await page.getByRole('searchbox', { name: 'Search recordings' }).fill('bunker_night_run_03');
+  await page.clock.pauseAt(new Date('2026-10-02T10:01:00Z'));
   const row = page.locator('.bag-table tbody tr:visible');
   await expect(row).toHaveCount(1);
   const tooltip = page.getByRole('tooltip').and(page.locator('.recording-diagnostic-tooltip'));
-  await row.getByText('Damaged', { exact: true }).hover();
+  const damaged = row.getByRole('button', { name: 'Damaged', exact: true });
+  const failed = row.getByRole('button', { name: 'Failed', exact: true });
+  // Opening and switching diagnostics must work while application timers are paused.
+  await damaged.hover();
   await expect(tooltip).toHaveText('source recording is damaged.');
-  await row.getByText('Failed', { exact: true }).hover();
+  await failed.hover();
   await expect(tooltip).toHaveCount(1);
   await expect(tooltip).toHaveText('Top-down preview: angular velocity field is absent.');
   const table = (await page.locator('[data-component="recordings-table"]').boundingBox())!;
@@ -16,6 +21,17 @@ test('synthetic red statuses show separate source and output diagnostics', async
     path: test.info().outputPath('status-diagnostic.png'),
     clip: { x: table.x, y: table.y, width: table.width, height: 220 },
   });
+  await tooltip.hover();
+  await page.clock.runFor(150);
+  await expect(tooltip).toHaveCount(1);
+  await damaged.focus();
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip).toHaveText('source recording is damaged.');
+  await expect(damaged).toHaveAttribute('aria-describedby', (await tooltip.getAttribute('id'))!);
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+  await damaged.click();
+  await expect(tooltip).toHaveCount(1);
   await page
     .locator('.bag-table-scroll')
     .evaluate((element) => element.dispatchEvent(new Event('scroll')));

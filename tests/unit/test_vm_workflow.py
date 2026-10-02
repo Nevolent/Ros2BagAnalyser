@@ -244,7 +244,7 @@ def test_journal_failure_is_not_reported_as_success(monkeypatch):
         remote.sanitized_logs()
 
 
-@pytest.mark.parametrize("path,allowed", [("tools/check.py", True), ("jetbrains/styles.css", True),
+@pytest.mark.parametrize("path,allowed", [("tools/check.py", True), ("docs/USAGE.md", True),
                                           ("tests/unit/test_vm_workflow.py", True), ("frontend/tests/clock.spec.ts", True),
                                           ("src/rosbag_analyser/worker.py", False),
                                           ("deploy/environment.example", False)])

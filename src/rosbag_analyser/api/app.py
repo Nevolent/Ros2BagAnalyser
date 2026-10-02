@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, Path as PathParameter, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
@@ -58,12 +58,6 @@ from .v1_routes import router as v1_router
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
 REACT_ROOT = WEB_ROOT / "react"
 INDEX_HTML = (REACT_ROOT / "index.html").read_text(encoding="utf-8")
-APP_JAVASCRIPT = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
-IMU_GRAPH_JAVASCRIPT = (WEB_ROOT / "imu_graph.js").read_text(encoding="utf-8")
-STYLESHEET = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
-TECH_TRACE_ICON = (WEB_ROOT / "assets" / "tech-trace-icon.svg").read_text(
-    encoding="utf-8"
-)
 FRONTEND_RESPONSE_HEADERS = {"Cache-Control": "no-store"}
 
 
@@ -334,38 +328,6 @@ def create_app(
         recording_id: Annotated[int, PathParameter(gt=0)],
     ) -> HTMLResponse:
         return HTMLResponse(INDEX_HTML, headers=FRONTEND_RESPONSE_HEADERS)
-
-    @application.get("/app.js", include_in_schema=False)
-    async def browser_script() -> Response:
-        return Response(
-            APP_JAVASCRIPT,
-            media_type="text/javascript",
-            headers=FRONTEND_RESPONSE_HEADERS,
-        )
-
-    @application.get("/imu_graph.js", include_in_schema=False)
-    async def imu_graph_script() -> Response:
-        return Response(
-            IMU_GRAPH_JAVASCRIPT,
-            media_type="text/javascript",
-            headers=FRONTEND_RESPONSE_HEADERS,
-        )
-
-    @application.get("/styles.css", include_in_schema=False)
-    async def browser_styles() -> Response:
-        return Response(
-            STYLESHEET,
-            media_type="text/css",
-            headers=FRONTEND_RESPONSE_HEADERS,
-        )
-
-    @application.get("/assets/tech-trace-icon.svg", include_in_schema=False)
-    async def browser_icon() -> Response:
-        return Response(
-            TECH_TRACE_ICON,
-            media_type="image/svg+xml",
-            headers=FRONTEND_RESPONSE_HEADERS,
-        )
 
     return application
 

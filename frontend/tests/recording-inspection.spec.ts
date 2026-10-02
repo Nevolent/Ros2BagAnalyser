@@ -1,5 +1,5 @@
+import { syntheticVideo } from './media-fixture';
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
 import { apiFixture } from './api-fixture';
 
 test('topics are searchable, scrollable and safe text; details retain gap evidence', async ({
@@ -65,11 +65,7 @@ test('camera selector changes identity and coverage without resetting the timeli
     coverage_start_ns: String(index * 1000000000),
     coverage_end_ns: '4000000000',
   }));
-  const source = readFileSync('../tools/serve_frontend_mock.py', 'utf8');
-  const media = Buffer.from(
-    source.match(/MOCK_VIDEO = base64.b64decode\(\s*"([A-Za-z0-9+/=]+)"/)![1],
-    'base64',
-  );
+  const media = syntheticVideo;
   api.override = async (route, path) => {
     if (!path.includes('/media/')) return false;
     await route.fulfill({ contentType: 'video/mp4', body: media });

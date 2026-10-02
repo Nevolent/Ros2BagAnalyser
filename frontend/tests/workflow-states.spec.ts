@@ -1,3 +1,4 @@
+import { syntheticVideo } from './media-fixture';
 import { test, expect } from '@playwright/test';
 import { apiFixture, job, diagnostic } from './api-fixture';
 
@@ -250,12 +251,7 @@ test('scrubbing beyond the graph never selects page text and the visual tail fil
 test('dense six-axis telemetry scrubs with decoded cameras without rebuilding the trace', async ({
   page,
 }, testInfo) => {
-  const { readFileSync } = await import('node:fs');
-  const source = readFileSync('../tools/serve_frontend_mock.py', 'utf8');
-  const video = Buffer.from(
-    source.match(/MOCK_VIDEO = base64.b64decode\(\s*"([A-Za-z0-9+/=]+)"/)![1],
-    'base64',
-  );
+  const video = syntheticVideo;
   const api = await apiFixture(page);
   const count = 120_000;
   api.recording.duration_ns = '1000000000';

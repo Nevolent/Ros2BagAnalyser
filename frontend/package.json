@@ -1,5 +1,5 @@
 {
-  "name": "tectrace-workspace",
+  "name": "rosbag-analyser-frontend",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -9,10 +9,11 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "playwright test",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write src docs README.md index.html vite.config.ts playwright.config.ts tsconfig.json scripts/visual-regression.mjs tests",
-    "format:check": "prettier --check src docs README.md index.html vite.config.ts playwright.config.ts tsconfig.json scripts/visual-regression.mjs tests",
+    "format": "prettier --write src index.html vite.config.ts playwright.config.ts tsconfig.json scripts tests",
+    "format:check": "prettier --check src index.html vite.config.ts playwright.config.ts tsconfig.json scripts tests",
     "visual:capture": "node scripts/visual-regression.mjs baseline",
-    "visual:compare": "node scripts/visual-regression.mjs compare"
+    "visual:compare": "node scripts/visual-regression.mjs compare",
+    "build:package": "tsc --noEmit && vite build --outDir ../src/rosbag_analyser/web/react --emptyOutDir"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",
@@ -29,5 +30,8 @@
   "dependencies": {
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
+  },
+  "engines": {
+    "node": "^22.12.0 || >=24.0.0"
   }
 }

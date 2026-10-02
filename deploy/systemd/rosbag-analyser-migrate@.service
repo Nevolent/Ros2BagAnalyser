@@ -1,6 +1,6 @@
 [Unit]
 Description=Apply ROS Bag Analyser schema migration for release %i
-Documentation=file:/opt/rosbag-analyser/releases/%i/docs/NAS_TRIAL_RUNBOOK.md
+Documentation=file:/opt/rosbag-analyser/releases/%i/docs/OPERATIONS.md
 Requires=postgresql.service
 After=postgresql.service
 Conflicts=rosbag-analyser-api.service rosbag-analyser-worker.service

@@ -28,8 +28,6 @@ application.env
 migration.env
 backup.env
 vm-deploy.env
-GATE0_HANDOFF.md
-REAL_DATA_ANNEX.md
 wheelhouse/
 release/
 releases/
@@ -53,6 +51,3 @@ releases/
 __MACOSX/
 ._*
 *:Zone.Identifier
-
-# The one intentional archive is documentation history, not a release payload.
-!docs/history/legacy-docs-2026-09-19.tar.gz

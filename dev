@@ -80,8 +80,6 @@ check_configuration() {
 
   : "${ROS_BAG_ANALYSER_ARCHIVE_ROOT:?missing archive root in $settings_file}"
   : "${ROS_BAG_ANALYSER_DERIVED_ROOT:?missing derived root in $settings_file}"
-  : "${ROS_BAG_ANALYSER_FRONT_TOPIC:?missing front topic in $settings_file}"
-  : "${ROS_BAG_ANALYSER_IMU_TOPIC:?missing IMU topic in $settings_file}"
 
   [[ -d "$ROS_BAG_ANALYSER_ARCHIVE_ROOT" ]] \
     || fail "archive root is not mounted: $ROS_BAG_ANALYSER_ARCHIVE_ROOT"
@@ -231,11 +229,6 @@ frontend_assets_changed() {
 
   [[ -r "$api_pid_file" ]] || return 1
   for asset in \
-    "$project_root/src/rosbag_analyser/web/index.html" \
-    "$project_root/src/rosbag_analyser/web/app.js" \
-    "$project_root/src/rosbag_analyser/web/imu_graph.js" \
-    "$project_root/src/rosbag_analyser/web/styles.css" \
-    "$project_root/src/rosbag_analyser/web/assets/tech-trace-icon.svg" \
     "$project_root/src/rosbag_analyser/web/react/index.html" \
     "$project_root/src/rosbag_analyser/web/react/assets/"*
   do

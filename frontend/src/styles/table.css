@@ -164,7 +164,7 @@
   font-variant-numeric: tabular-nums;
 }
 .page-tabs .page-tab-count > span {
-  transform: translateY(1px);
+  transform: translateY(-0.5px);
 }
 .page-tabs button[aria-pressed='true'] .page-tab-count {
   background: #fff;

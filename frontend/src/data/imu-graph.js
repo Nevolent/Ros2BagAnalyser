@@ -1,19 +1,17 @@
-"use strict";
-
 function parseDecimalNanoseconds(value) {
-  if (typeof value !== "string" || !/^-?(0|[1-9]\d*)$/.test(value)) {
-    throw new Error("The IMU series contains an invalid timestamp.");
+  if (typeof value !== 'string' || !/^-?(0|[1-9]\d*)$/.test(value)) {
+    throw new Error('The IMU series contains an invalid timestamp.');
   }
   const nanoseconds = BigInt(value);
   const limit = BigInt(Number.MAX_SAFE_INTEGER);
   if (nanoseconds < -limit || nanoseconds > limit) {
-    throw new Error("The IMU series timestamp is outside the browser range.");
+    throw new Error('The IMU series timestamp is outside the browser range.');
   }
   return nanoseconds;
 }
 
 function parseCount(value, label) {
-  if (typeof value !== "string" || !/^\d+$/.test(value)) {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
     throw new Error(`The IMU ${label} count is invalid.`);
   }
   const count = Number(value);
@@ -25,43 +23,43 @@ function parseCount(value, label) {
 
 function parseSeries(document, artifact) {
   if (
-    !document
-    || typeof document !== "object"
-    || Array.isArray(document)
-    || document.schema_version !== 2
-    || !Array.isArray(document.samples)
-    || !Array.isArray(artifact.series)
-    || artifact.series.length === 0
+    !document ||
+    typeof document !== 'object' ||
+    Array.isArray(document) ||
+    document.schema_version !== 2 ||
+    !Array.isArray(document.samples) ||
+    !Array.isArray(artifact.series) ||
+    artifact.series.length === 0
   ) {
-    throw new Error("The IMU series format is unsupported.");
+    throw new Error('The IMU series format is unsupported.');
   }
   const coverageStartNs = parseDecimalNanoseconds(artifact.coverage_start_ns);
   const coverageEndNs = parseDecimalNanoseconds(artifact.coverage_end_ns);
-  const deliveredCount = parseCount(artifact.delivered_sample_count, "delivered sample");
+  const deliveredCount = parseCount(artifact.delivered_sample_count, 'delivered sample');
   if (document.samples.length !== deliveredCount) {
-    throw new Error("The IMU series sample count does not match its metadata.");
+    throw new Error('The IMU series sample count does not match its metadata.');
   }
 
   const seenIds = new Set();
   const seenColumns = new Set();
   const series = artifact.series.map((definition) => {
     if (
-      !definition
-      || typeof definition !== "object"
-      || Array.isArray(definition)
-      || typeof definition.id !== "string"
-      || !/^[a-z][a-z0-9_]*$/.test(definition.id)
-      || seenIds.has(definition.id)
-      || typeof definition.component !== "string"
-      || typeof definition.display_label !== "string"
-      || typeof definition.units !== "string"
-      || !Number.isInteger(definition.column_index)
-      || definition.column_index < 1
-      || definition.column_index > artifact.series.length
-      || seenColumns.has(definition.column_index)
-      || typeof definition.available !== "boolean"
+      !definition ||
+      typeof definition !== 'object' ||
+      Array.isArray(definition) ||
+      typeof definition.id !== 'string' ||
+      !/^[a-z][a-z0-9_]*$/.test(definition.id) ||
+      seenIds.has(definition.id) ||
+      typeof definition.component !== 'string' ||
+      typeof definition.display_label !== 'string' ||
+      typeof definition.units !== 'string' ||
+      !Number.isInteger(definition.column_index) ||
+      definition.column_index < 1 ||
+      definition.column_index > artifact.series.length ||
+      seenColumns.has(definition.column_index) ||
+      typeof definition.available !== 'boolean'
     ) {
-      throw new Error("The IMU series definition is invalid.");
+      throw new Error('The IMU series definition is invalid.');
     }
     seenIds.add(definition.id);
     seenColumns.add(definition.column_index);
@@ -74,24 +72,18 @@ function parseSeries(document, artifact) {
       `${definition.id} non-finite sample`,
     );
     if (
-      finiteCount + nonFiniteCount !== deliveredCount
-      || definition.available !== (finiteCount > 0)
-      || (
-        finiteCount > 0
-        && (
-          typeof definition.minimum_value !== "number"
-          || !Number.isFinite(definition.minimum_value)
-          || typeof definition.maximum_value !== "number"
-          || !Number.isFinite(definition.maximum_value)
-          || definition.minimum_value > definition.maximum_value
-        )
-      )
-      || (
-        finiteCount === 0
-        && (definition.minimum_value !== null || definition.maximum_value !== null)
-      )
+      finiteCount + nonFiniteCount !== deliveredCount ||
+      definition.available !== finiteCount > 0 ||
+      (finiteCount > 0 &&
+        (typeof definition.minimum_value !== 'number' ||
+          !Number.isFinite(definition.minimum_value) ||
+          typeof definition.maximum_value !== 'number' ||
+          !Number.isFinite(definition.maximum_value) ||
+          definition.minimum_value > definition.maximum_value)) ||
+      (finiteCount === 0 &&
+        (definition.minimum_value !== null || definition.maximum_value !== null))
     ) {
-      throw new Error("The IMU series definition does not match its samples.");
+      throw new Error('The IMU series definition does not match its samples.');
     }
     return {
       id: definition.id,
@@ -107,7 +99,7 @@ function parseSeries(document, artifact) {
     };
   });
   if (seenColumns.size !== series.length) {
-    throw new Error("The IMU series columns are invalid.");
+    throw new Error('The IMU series columns are invalid.');
   }
 
   let previousNs = null;
@@ -117,11 +109,11 @@ function parseSeries(document, artifact) {
   const actualMaximum = series.map(() => null);
   const rows = document.samples.map((sample) => {
     if (!Array.isArray(sample) || sample.length !== series.length + 1) {
-      throw new Error("The IMU series contains an invalid sample.");
+      throw new Error('The IMU series contains an invalid sample.');
     }
     const timeNs = parseDecimalNanoseconds(sample[0]);
     if (previousNs !== null && timeNs < previousNs) {
-      throw new Error("The IMU series timestamps are not ordered.");
+      throw new Error('The IMU series timestamps are not ordered.');
     }
     previousNs = timeNs;
     const values = series.map((definition, index) => {
@@ -130,16 +122,14 @@ function parseSeries(document, artifact) {
         actualNonFinite[index] += 1;
         return null;
       }
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error("The IMU series contains an invalid value.");
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new Error('The IMU series contains an invalid value.');
       }
       actualFinite[index] += 1;
-      actualMinimum[index] = actualMinimum[index] === null
-        ? value
-        : Math.min(actualMinimum[index], value);
-      actualMaximum[index] = actualMaximum[index] === null
-        ? value
-        : Math.max(actualMaximum[index], value);
+      actualMinimum[index] =
+        actualMinimum[index] === null ? value : Math.min(actualMinimum[index], value);
+      actualMaximum[index] =
+        actualMaximum[index] === null ? value : Math.max(actualMaximum[index], value);
       return value;
     });
     return {
@@ -149,23 +139,22 @@ function parseSeries(document, artifact) {
     };
   });
   if (
-    rows.length === 0
-    || rows[0].timeNs !== coverageStartNs
-    || rows[rows.length - 1].timeNs !== coverageEndNs
-    || series.some((definition, index) => (
-      actualFinite[index] !== definition.finiteCount
-      || actualNonFinite[index] !== definition.nonFiniteCount
-      || actualMinimum[index] !== definition.minimumValue
-      || actualMaximum[index] !== definition.maximumValue
-    ))
+    rows.length === 0 ||
+    rows[0].timeNs !== coverageStartNs ||
+    rows[rows.length - 1].timeNs !== coverageEndNs ||
+    series.some(
+      (definition, index) =>
+        actualFinite[index] !== definition.finiteCount ||
+        actualNonFinite[index] !== definition.nonFiniteCount ||
+        actualMinimum[index] !== definition.minimumValue ||
+        actualMaximum[index] !== definition.maximumValue,
+    )
   ) {
-    throw new Error("The IMU series does not match its declared coverage.");
+    throw new Error('The IMU series does not match its declared coverage.');
   }
-  const defaultSeries = series.find(
-    (definition) => definition.id === artifact.default_series_id,
-  );
+  const defaultSeries = series.find((definition) => definition.id === artifact.default_series_id);
   if (!defaultSeries?.available) {
-    throw new Error("The default IMU series is unavailable.");
+    throw new Error('The default IMU series is unavailable.');
   }
   return {
     rows,
@@ -178,72 +167,93 @@ function parseSeries(document, artifact) {
 
 async function parseSeriesStream(body, artifact) {
   const reader = body.getReader();
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = new TextDecoder('utf-8', { fatal: true });
   const samples = [];
-  let pending = "";
-  let state = "prefix";
+  let pending = '';
+  let state = 'prefix';
   let first = true;
   const consume = () => {
     while (true) {
       pending = pending.trimStart();
-      if (state === "prefix") {
+      if (state === 'prefix') {
         const match = /^\{\s*"schema_version"\s*:\s*2\s*,\s*"samples"\s*:\s*\[/.exec(pending);
         if (!match) {
-          if (pending.length > 1024) throw new Error("The IMU series format is unsupported.");
+          if (pending.length > 1024) throw new Error('The IMU series format is unsupported.');
           return;
         }
         pending = pending.slice(match[0].length);
-        state = "row";
+        state = 'row';
       }
-      if (state === "row") {
+      if (state === 'row') {
         pending = pending.trimStart();
         if (!pending) return;
-        if (pending[0] === "]") {
-          if (!first) throw new Error("The IMU series contains a trailing separator.");
+        if (pending[0] === ']') {
+          if (!first) throw new Error('The IMU series contains a trailing separator.');
           pending = pending.slice(1);
-          state = "suffix";
+          state = 'suffix';
           continue;
         }
-        if (pending[0] !== "[") throw new Error("The IMU series contains an invalid sample.");
+        if (pending[0] !== '[') throw new Error('The IMU series contains an invalid sample.');
         let depth = 0;
         let quoted = false;
         let escaped = false;
         let end = -1;
         for (let index = 0; index < pending.length; index += 1) {
           const character = pending[index];
-          if (escaped) { escaped = false; continue; }
-          if (quoted && character === "\\") { escaped = true; continue; }
-          if (character === '"') { quoted = !quoted; continue; }
+          if (escaped) {
+            escaped = false;
+            continue;
+          }
+          if (quoted && character === '\\') {
+            escaped = true;
+            continue;
+          }
+          if (character === '"') {
+            quoted = !quoted;
+            continue;
+          }
           if (quoted) continue;
-          if (character === "[") depth += 1;
-          if (character === "]" && --depth === 0) { end = index + 1; break; }
+          if (character === '[') depth += 1;
+          if (character === ']' && --depth === 0) {
+            end = index + 1;
+            break;
+          }
         }
         if (end < 0) {
-          if (pending.length > 2 * 1024 * 1024) throw new Error("The IMU series sample is too large.");
+          if (pending.length > 2 * 1024 * 1024)
+            throw new Error('The IMU series sample is too large.');
           return;
         }
         samples.push(JSON.parse(pending.slice(0, end)));
         pending = pending.slice(end);
         first = false;
-        state = "separator";
+        state = 'separator';
       }
-      if (state === "separator") {
+      if (state === 'separator') {
         pending = pending.trimStart();
         if (!pending) return;
-        if (pending[0] === ",") { pending = pending.slice(1); state = "row"; continue; }
-        if (pending[0] === "]") { pending = pending.slice(1); state = "suffix"; continue; }
-        throw new Error("The IMU series contains an invalid separator.");
+        if (pending[0] === ',') {
+          pending = pending.slice(1);
+          state = 'row';
+          continue;
+        }
+        if (pending[0] === ']') {
+          pending = pending.slice(1);
+          state = 'suffix';
+          continue;
+        }
+        throw new Error('The IMU series contains an invalid separator.');
       }
-      if (state === "suffix") {
+      if (state === 'suffix') {
         pending = pending.trimStart();
         if (!pending) return;
-        if (pending[0] !== "}") throw new Error("The IMU series format is unsupported.");
+        if (pending[0] !== '}') throw new Error('The IMU series format is unsupported.');
         pending = pending.slice(1);
-        state = "done";
+        state = 'done';
       }
-      if (state === "done") {
-        if (pending.trim()) throw new Error("The IMU series contains trailing data.");
-        pending = "";
+      if (state === 'done') {
+        if (pending.trim()) throw new Error('The IMU series contains trailing data.');
+        pending = '';
         return;
       }
     }
@@ -257,7 +267,7 @@ async function parseSeriesStream(body, artifact) {
     }
     pending += decoder.decode();
     consume();
-    if (state !== "done") throw new Error("The IMU series is incomplete.");
+    if (state !== 'done') throw new Error('The IMU series is incomplete.');
     return parseSeries({ schema_version: 2, samples }, artifact);
   } finally {
     reader.releaseLock();
@@ -267,7 +277,7 @@ async function parseSeriesStream(body, artifact) {
 function selectSeries(parsed, seriesId) {
   const definition = parsed.series.find((candidate) => candidate.id === seriesId);
   if (!definition?.available) {
-    throw new Error("The selected IMU series is unavailable.");
+    throw new Error('The selected IMU series is unavailable.');
   }
   const seriesIndex = parsed.series.indexOf(definition);
   return {
@@ -333,9 +343,13 @@ function traceSegments(samples) {
 }
 
 function visibleTraceSegments(samples, start, end, pixelWidth) {
-  if (!samples.length || !(end > start)
-      || samples[0].timeSeconds > end
-      || samples.at(-1).timeSeconds < start) return [];
+  if (
+    !samples.length ||
+    !(end > start) ||
+    samples[0].timeSeconds > end ||
+    samples.at(-1).timeSeconds < start
+  )
+    return [];
   let low = 0;
   let high = samples.length;
   while (low < high) {
@@ -357,9 +371,11 @@ function visibleTraceSegments(samples, start, end, pixelWidth) {
   const smallSegments = new Map();
   let segment = [];
   let bucket = null;
-  const columnFor = (sample) => Math.min(width - 1, Math.max(0, Math.floor(
-    (sample.timeSeconds - start) / (end - start) * width,
-  )));
+  const columnFor = (sample) =>
+    Math.min(
+      width - 1,
+      Math.max(0, Math.floor(((sample.timeSeconds - start) / (end - start)) * width)),
+    );
   const flushBucket = () => {
     if (!bucket) return;
     const points = [bucket.first, bucket.minimum, bucket.maximum, bucket.last];
@@ -385,7 +401,9 @@ function visibleTraceSegments(samples, start, end, pixelWidth) {
             if (points[i].value < points[minimum].value) minimum = i;
             if (points[i].value > points[maximum].value) maximum = i;
           }
-          const indices = [...new Set([0, minimum, maximum, points.length - 1])].sort((a, b) => a - b);
+          const indices = [...new Set([0, minimum, maximum, points.length - 1])].sort(
+            (a, b) => a - b,
+          );
           segments[prior.index] = indices.map((index) => points[index]);
         } else {
           segments.push(segment);
@@ -418,7 +436,7 @@ function visibleTraceSegments(samples, start, end, pixelWidth) {
   return segments;
 }
 
-const ImuGraph = Object.freeze({
+export default Object.freeze({
   parseSeries,
   parseSeriesStream,
   selectSeries,
@@ -429,6 +447,3 @@ const ImuGraph = Object.freeze({
   traceSegments,
   visibleTraceSegments,
 });
-
-if (typeof window !== "undefined") window.ImuGraph = ImuGraph;
-if (typeof module !== "undefined" && module.exports) module.exports = ImuGraph;

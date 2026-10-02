@@ -1,8 +1,6 @@
-"use strict";
-
-const assert = require("node:assert/strict");
-const test = require("node:test");
-const ImuGraph = require("../../src/rosbag_analyser/web/imu_graph.js");
+import assert from "node:assert/strict";
+import test from "node:test";
+import ImuGraph from "../../frontend/src/data/imu-graph.js";
 
 const definitions = [
   ["angular_velocity_x", "angular_velocity.x", "IMU angular_velocity.x (rad/s)", "rad/s"],

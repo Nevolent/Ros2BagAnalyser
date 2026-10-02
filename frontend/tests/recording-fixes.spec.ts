@@ -1,5 +1,5 @@
+import { syntheticVideo } from './media-fixture';
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
 import { apiFixture, job } from './api-fixture';
 import type { Overview } from '../src/data/api-types';
 
@@ -82,11 +82,7 @@ test('fresh camera requests recover automatically and persistent failures offer 
   page,
 }) => {
   const api = await apiFixture(page);
-  const source = readFileSync('../tools/serve_frontend_mock.py', 'utf8');
-  const media = Buffer.from(
-    source.match(/MOCK_VIDEO = base64.b64decode\(\s*"([A-Za-z0-9+/=]+)"/)![1],
-    'base64',
-  );
+  const media = syntheticVideo;
   const attempts = new Map<string, number>();
   let topReady = false;
   api.override = async (route, path) => {

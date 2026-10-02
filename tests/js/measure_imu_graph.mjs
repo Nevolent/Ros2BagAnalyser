@@ -1,7 +1,5 @@
-"use strict";
-
-const { performance } = require("node:perf_hooks");
-const ImuGraph = require("../../src/rosbag_analyser/web/imu_graph.js");
+import { performance } from "node:perf_hooks";
+import ImuGraph from "../../frontend/src/data/imu-graph.js";
 
 const sampleCount = 76_000;
 const startNs = 0n;

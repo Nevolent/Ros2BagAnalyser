@@ -102,13 +102,17 @@ async def test_list_detail_and_static_browser_contract() -> None:
         processing_page = await client.get("/processing")
         detail_page = await client.get("/recordings/7")
         invalid_detail_page = await client.get("/recordings/not-a-number")
-        script = await client.get("/app.js")
-        imu_script = await client.get("/imu_graph.js")
-        stylesheet = await client.get("/styles.css")
+        retired_assets = [
+            await client.get(path)
+            for path in ("/app.js", "/imu_graph.js", "/styles.css")
+        ]
         icon = await client.get("/assets/tectrace-icon.svg")
         css_path = re.search(r'href="(/assets/index-[^"]+\.css)"', page.text)
         assert css_path is not None
         react_css = await client.get(css_path.group(1))
+        script_path = re.search(r'src="(/assets/index-[^"]+\.js)"', page.text)
+        assert script_path is not None
+        react_script = await client.get(script_path.group(1))
         font = await client.get("/assets/geist-latin.woff2")
 
     assert listing.status_code == 200
@@ -139,61 +143,12 @@ async def test_list_detail_and_static_browser_contract() -> None:
     assert processing_page.headers["cache-control"] == "no-store"
     assert detail_page.headers["cache-control"] == "no-store"
     assert invalid_detail_page.status_code == 404
-    assert script.status_code == 200
-    assert script.headers["cache-control"] == "no-store"
-    assert 'requestJson("/api/v1/catalog"' in script.text
-    assert 'requestJson("/api/v1/catalog/rescan"' in script.text
-    assert 'requestJson("/api/v1/recordings/prepare"' in script.text
-    assert 'requestJson("/api/v1/processing/overview"' in script.text
-    assert "/api/v1/processing/jobs" in script.text
-    assert '/api/v1/recordings/${recordingId}' in script.text
-    assert "document.title" in script.text
-    assert "showMediaFailure(kind);" in script.text
-    assert "VIDEO_DRIFT_TOLERANCE_SECONDS" in script.text
-    assert "front-preview" in script.text
-    assert "topdown-preview" in script.text
-    assert "imu-series" in script.text
-    assert 'link.href = `/recordings/${recording.id}`' in script.text
-    assert "Object.entries(controller.players).forEach" in script.text
-    assert "forceSeek" in script.text
-    assert "playPending" in script.text
-    assert "reviewController === controller" in script.text
-    assert "updateImuAtGlobalTime(controller.clock.globalTime);" in script.text
-    assert "applyImuSeriesSelection" in script.text
-    assert "moveImuSeek" in script.text
-    assert 'imuElements.plot.addEventListener("pointerdown"' in script.text
-    assert "telemetry.cursor.style.transform" in script.text
-    assert "createLinearGradient" in script.text
-    assert "Back to Recordings" not in script.text
-    end_tick = script.text.index("const ended = next >= reviewController.durationSeconds;")
-    stop_clock = script.text.index("clock.playing = false;", end_tick)
-    synchronize_media = script.text.index("applyGlobalTime(next);", end_tick)
-    assert stop_clock < synchronize_media
-    assert stylesheet.status_code == 200
-    assert stylesheet.headers["content-type"].startswith("text/css")
-    assert stylesheet.headers["cache-control"] == "no-store"
-    assert imu_script.status_code == 200
-    assert imu_script.headers["cache-control"] == "no-store"
-    assert "sampleAtOrBefore" in imu_script.text
-    assert "cursorFraction" in imu_script.text
-    assert "selectSeries" in imu_script.text
-    assert "timeFromPlotPosition" in imu_script.text
-    assert ".skip-link" in stylesheet.text
-    assert 'grid-template-areas:' in stylesheet.text
-    assert ".camera-card--front .camera-viewport" in stylesheet.text
-    assert ".camera-card--top .camera-viewport" in stylesheet.text
-    assert ".imu-cursor" in stylesheet.text
-    assert ".state-badge.unavailable" in stylesheet.text
-    assert ".state-badge.queued" in stylesheet.text
-    assert ".coverage-message" in stylesheet.text
-    assert "@media (prefers-reduced-motion: reduce)" in stylesheet.text
-    assert "innerHTML" not in script.text
-    assert "setInterval" not in script.text
-    assert "mockRecordings" not in script.text
-    assert "mockJobs" not in script.text
+    assert react_script.status_code == 200
+    assert react_script.headers["content-type"].startswith("text/javascript")
+    assert react_css.headers["content-type"].startswith("text/css")
+    assert all(response.status_code == 404 for response in retired_assets)
     assert icon.status_code == 200
     assert icon.headers["content-type"].startswith("image/svg+xml")
-    assert "__MACOSX" not in page.text + script.text + stylesheet.text
     assert listing.headers["x-content-type-options"] == "nosniff"
     assert "default-src 'self'" in listing.headers["content-security-policy"]
     assert "media-src 'self'" in listing.headers["content-security-policy"]

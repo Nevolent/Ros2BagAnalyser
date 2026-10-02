@@ -1,14 +1,10 @@
+import { syntheticVideo } from './media-fixture';
 import { test, expect, type Page } from '@playwright/test';
-import { readFileSync } from 'node:fs';
 import { apiFixture } from './api-fixture';
 
 async function mediaFixture(page: Page) {
   const api = await apiFixture(page);
-  const source = readFileSync('../tools/serve_frontend_mock.py', 'utf8');
-  const media = Buffer.from(
-    source.match(/MOCK_VIDEO = base64.b64decode\(\s*"([A-Za-z0-9+/=]+)"/)![1],
-    'base64',
-  );
+  const media = syntheticVideo;
   // The synthetic H.264 clip is one second long.
   for (const output of api.recording.outputs.slice(0, 2)) {
     output.artifact!.coverage_start_ns = '0';

@@ -1,217 +1,196 @@
 # Architecture
 
-## Runtime
+## Runtime and code
 
-One FastAPI application serves the packaged React browser frontend from
-`src/rosbag_analyser/web/react/`. The source app in `frontend/` also runs
-through a local Vite proxy during development. The same build selects the real API
-workspace by default, or the in-memory archive with explicit `?synthetic=1`.
-Synthetic mode never calls the backend; its local launcher serves only the
-packaged frontend on loopback without starting the API or worker. PostgreSQL
-stores catalog and job metadata; one serial ROS-aware worker creates files in
-the derived-data root. The VM runtime is Ubuntu 22.04, Python 3.10, and ROS 2
-Humble, as recorded in [the release contract](../deploy/release-contract.json).
+FastAPI serves the packaged React frontend from `src/rosbag_analyser/web/react/`.
+PostgreSQL stores catalog and job metadata; one serial ROS-aware worker creates
+derived files. The runtime is Ubuntu 22.04, Python 3.10 and ROS 2 Humble; the
+[release contract](../deploy/release-contract.json) defines deployment requirements.
 
 ```text
-Browser → private access proxy → FastAPI → PostgreSQL
-                                   │          ↑
-                      explicit scan│          │jobs
-                                   ↓          │
-                         read-only source ← Worker → derived artifacts
-                                                        ↑
-                                      identity-checked API delivery
+Browser -> private proxy -> FastAPI -> PostgreSQL
+                               |           |
+                         explicit scan    jobs
+                               |           |
+                         read-only source <- Worker -> derived files
+                                                            |
+                                              identity-checked API delivery
 ```
 
-The API owns request validation and delivery. Application services own
-workflows; processors own expensive decoding/transcoding. Services do not
-scan, prepare, or migrate automatically at startup.
+The API validates requests and delivers data. Services coordinate workflows;
+processors decode and transcode. Startup does not scan, prepare or migrate.
 
-## Code map
-
-| Modules | Responsibility |
+| Modules in `src/rosbag_analyser/` | Responsibility |
 | --- | --- |
-| `catalog/`, `v1_catalog.py` | Bounded discovery, metadata, health, saved catalog and folders |
-| `preparation_planner.py`, `preparation.py` | Current output identities, prerequisites, reuse and scheduling |
-| `processing_view.py`, `estimation.py`, `job_control.py` | Queue views, factual runtime, estimates and cooperative controls |
-| `persistence/` | PostgreSQL repositories and ordered SQL migrations |
-| `processors/`, `front_preview.py`, `topdown_preview.py`, `imu_series.py` | Source resolution and the three output processors |
-| `artifact_store.py`, `timeline.py` | Contained publication, validation, coverage and time mapping |
-| `api/`, `worker.py`, `web/` | HTTP delivery, serial execution and the served browser |
-| `config.py`, `deployment.py`, `preflight.py`, `health.py` | Validated settings, mount/capacity admission and service health |
-
-Paths above are relative to `src/rosbag_analyser/`.
+| `catalog/`, `v1_catalog.py` | Bounded discovery, metadata, health and saved catalog |
+| `preparation_planner.py`, `preparation.py` | Output identity, prerequisites, reuse and scheduling |
+| `processing_view.py`, `estimation.py`, `job_control.py` | Queue views, runtime, estimates and controls |
+| `persistence/` | PostgreSQL repositories and ordered migrations |
+| `processors/`, `front_preview.py`, `topdown_preview.py`, `imu_series.py` | Output processing |
+| `artifact_store.py`, `timeline.py` | Publication, validation, coverage and time mapping |
+| `api/`, `worker.py`, `web/` | HTTP delivery, worker and packaged frontend |
+| `config.py`, `deployment.py`, `preflight.py`, `health.py` | Configuration, mount/capacity checks and service health |
 
 ## Catalog and persistence
 
-The scanner traverses one configured source root with depth, entry, directory,
-and recording limits. It never follows symlinks. A damaged recording is isolated;
-an incomplete traversal cannot replace the last successful catalog or mark
-unseen recordings missing. Scanning creates no processing jobs.
+The scanner has depth, entry, directory and recording limits and never follows
+symlinks. A damaged recording is isolated. An incomplete scan cannot replace the
+last successful catalog or mark unseen recordings missing. Scanning creates no jobs.
 
-Six domain tables hold state: `recordings`, `source_components`, `artifacts`,
-`jobs`, `catalog_state`, and `preparation_targets`. Migrations currently run
-through `0009_recording_inspection.sql`; applied migrations remain part of the upgrade
-path and must not be removed as old files.
+Six tables hold domain state: `recordings`, `source_components`, `artifacts`,
+`jobs`, `catalog_state` and `preparation_targets`. Applied SQL migrations,
+currently through `0009_recording_inspection.sql`, remain part of the upgrade path.
 
-Ordinary catalog and processing reads use saved PostgreSQL projections. Each
-successful scan stores three preparation targets per recording. A changed
-planner/configuration needs an explicit rescan; browsing does not stat or parse
-the source per row. The worker independently revalidates inputs.
+Catalog and processing reads use saved projections, without source access per row.
+Each successful scan saves three preparation targets per recording. Planner or
+configuration changes require an explicit rescan; the worker revalidates inputs.
 
-The scan saves topic names, types and message counts in `recordings.scan_details`
-for the detail view. It also inspects record timestamps without loading payloads,
-using the same verified, immutable SQLite descriptor. Inspection is bounded to
-two million messages, five seconds and 256 Image/IMU topics per recording.
-Gaps must be at least five seconds and twenty times the median of the first
+The scan saves topic names, types and counts in `recordings.scan_details`.
+Timestamp inspection uses a verified immutable SQLite descriptor without loading
+payloads, bounded to two million messages, five seconds and 256 Image/IMU topics.
+A gap must be at least five seconds and twenty times the median of the first
 1,024 positive intervals, with at least twenty intervals of cadence evidence.
-Checks cover the whole bag and individual camera/IMU streams; up to 24 largest
-gaps are saved with bag-relative locations. An incomplete check is labeled
-partial. Gap evidence sets presentation health to Review without changing source
-readability or processing eligibility; timestamps alone do not prove data loss.
+Checks cover the bag and individual camera/IMU streams; the largest 24 gaps are
+saved with relative locations. Incomplete checks are marked partial. Gap evidence
+sets presentation health to Review without changing readability or preparation
+eligibility; timestamps alone do not prove data loss.
 
-Missing paths retain internal history but disappear from the current catalog.
-A one-to-one move match preserves IDs, private cache anchors, jobs, and reusable
-artifacts. Ambiguous matches remain separate. Reconciliation changes metadata,
-never source or derived files.
+Missing paths disappear from the current catalog but retain history. A unique
+one-to-one move match preserves IDs, cache anchors, jobs and reusable artifacts;
+ambiguous matches remain separate. Reconciliation changes metadata only.
 
 ## Preparation and jobs
 
-Preparation accepts a bounded ordered list of recordings and a non-empty subset
-of `front_preview`, `topdown_preview`, and `imu_series`. Each chosen output is
-resolved independently: reuse ready/active work, enqueue missing work, or report
-unavailability. Repeated requests cannot duplicate an active identity. A failed
-attempt is retried using current inputs, not its obsolete identity.
+Preparation takes a bounded ordered recording list and a non-empty subset of
+`front_preview`, `topdown_preview` and `imu_series`. Each output independently
+reuses ready/active work, queues missing work or reports unavailability. Active
+identities cannot be duplicated. Retry resolves current inputs.
 
-The catalog's aggregate state follows failed → processing → queued → ready →
-not planned. Any failed output or unavailable front-camera input makes the recording Failed.
-Ready requires a validated front preview and no active or failed output. Missing
-top-down or IMU sources are optional; available outputs can still be prepared. Each output keeps
-its detailed state. Analyzer
-can also review available output independently, including a camera-only
-recording timeline when IMU is unavailable.
+The recording state precedence is failed, processing, queued, ready, not planned.
+Any failed output or unavailable front input makes it Failed. Ready requires a
+validated front preview and no active or failed output. Top-down and IMU are
+optional; Analysis can review available output independently.
 
-A PostgreSQL advisory lock protects the single worker. Claim, insertion,
-reorder, and queued cancellation share the same stable queue order. Durable
-pause/resume/cancel requests are acknowledged at safe processing and publication
-checkpoints. Restart marks abandoned running work, including paused work,
-interrupted; it does not resume the process automatically.
+A PostgreSQL advisory lock permits one worker. Claim, insertion, reordering and
+queued cancellation share a stable queue order. Durable pause/resume/cancel
+requests take effect at safe processing and publication checkpoints. Worker
+restart marks abandoned running or paused work interrupted; retry is explicit.
+The UI exposes cancellation; pause/resume remains available through the API.
 
-During deployment, a root-owned maintenance gate rejects API mutations with
-503/Retry-After and holds new worker claims. An already running job finishes
-normally; queued jobs and original recordings are preserved. The gate remains
-closed through migration and health checks, including an incompatible-schema
-failure. See [Operations](OPERATIONS.md) for deployment and recovery.
+Elapsed and active time come from persisted timestamps. Estimates use the ten
+newest compatible artifact-backed successes, with at least two samples, excluding
+paused time. `recent_rate_v2` uses the 80th-percentile runtime per input byte plus
+15% headroom. Queue estimates refresh together when a recording's first output
+starts, then freeze across output handoffs. An older useful estimate survives
+when refreshed history has too few samples.
 
-Elapsed and active time come from stored timestamps. Estimates use the ten newest
-compatible, artifact-backed successful jobs (minimum two), excluding paused time.
-The 80th-percentile runtime per input byte plus 15% headroom replaces the former median prediction (`recent_rate_v2`).
-History is retained; ten newer compatible successes naturally replace older
-samples in the estimate window. Queue estimates refresh together when a
-recording's first output starts and freeze across subsequent output handoffs.
-A useful older estimate survives if refreshed history is insufficient. Estimates
-can still be unavailable or exceeded. The overview also groups the current
-preparation run using persisted job timestamps,
-including completed siblings and queued outputs. Older reused successes are excluded.
-The recording card sums active elapsed time and frozen estimates across this group,
-keeps its identity between output jobs, and stays visible during worker handoffs.
-If any member lacks an estimate, the total is unavailable. The UI shows elapsed / estimated time as
-an explicitly estimated percentage, capped at 99%; it says Estimate exceeded
-once elapsed time reaches the estimate. This is not measured work completion.
-The Processing UI offers cancellation, with immediate dismissal and restoration
-on request failure. Backend pause/resume controls remain compatible with existing
-jobs and API clients, but are not exposed in the UI.
+The overview groups the current recording run by persisted job timestamps,
+including completed siblings and queued outputs, excluding older reused output.
+The active card retains that identity during handoffs and sums active elapsed
+time and frozen estimates. A missing member estimate makes the total unavailable.
+The UI displays elapsed / estimated time, capped at 99%, and **Estimate exceeded**
+when elapsed reaches the estimate. This is a runtime estimate, not measured
+completion. Cancellation dismisses work immediately and restores it on failure.
 
-## Artifacts and time
+During deployment, a root-owned maintenance gate rejects mutations with
+503/Retry-After and holds new claims while active work finishes. It stays closed
+through migration and health checks, including incompatible-schema failure.
+Queued work and recordings are preserved; recovery is in [Operations](OPERATIONS.md).
 
-| Output | Current behavior |
+## Artifacts and source safety
+
+| Output | Format and identity |
 | --- | --- |
-| Front preview | `front-preview-v5`; all nonempty CDR ROS Image streams with `bgr8`/`rgb8`; one validated MP4 per supported stream |
+| Front preview | `front-preview-v5`; validated MP4 per supported raw CDR Image stream |
 | Top-down preview | `topdown-preview-v2`; AVI frames timed by CSV Unix timestamps; H.264/yuv420p MP4 |
 | IMU | `imu-series-v2`; schema-2 JSON with three angular-velocity and three linear-acceleration axes |
 
-Camera discovery uses message type, CDR serialization and positive message count.
-All eligible camera topics form one preparation job and artifact bundle, ordered
-by message count (name breaks ties). The busiest supported stream is the default;
-unsupported encodings are skipped with an explicit detail diagnostic. Each MP4
-is independently timed and validated, then the whole bundle is published together.
-Stream URLs bind the artifact identity and numeric manifest index; delivery
-checks each file's identity and never accepts a topic name as a filesystem path.
-IMU discovery uses a configured preference if valid, otherwise a unique standard
-IMU stream. Several IMUs without a preference remain unavailable rather than
-mixing coordinate frames. Topic settings are optional. Existing saved targets
-need an explicit rescan after this selection-policy update.
+Front discovery accepts nonempty CDR ROS Image streams with `bgr8`/`rgb8`
+encoding. All eligible topics form one job and bundle, ordered by message count
+then name. The busiest supported stream is the default; skipped encodings retain
+diagnostics. Each MP4 is timed and validated independently before atomic bundle
+publication. Stream URLs use artifact identity and numeric manifest index, never
+a topic name as a path. IMU selection uses a valid configured preference or one
+unique standard IMU stream; ambiguous streams are not combined.
 
-Front coverage uses measured ROS record endpoints. Valid, strictly increasing
-image-header timestamps are affinely mapped between those endpoints. Only a
-stream with every image header exactly zero uses ROS record cadence directly.
-Mixed, missing, invalid, or unordered headers fail safely. No fixed frame rate
-or interpolated frames are invented; duplicate front record times keep the
-last frame.
+Incomplete output stays in a contained job workspace. Publication follows
+validation; failed replacement preserves valid output. Files, manifest, identity
+and settings must agree. Delivery, including ranges, binds to one artifact
+identity and cannot silently return its replacement. Media and telemetry stay
+outside PostgreSQL and Git.
 
-IMU uses ROS database record time and preserves source order. Nanoseconds travel
-as decimal strings; duplicate-time lookup selects the last sample at or before
-the clock. Non-finite values are per-axis null gaps. The browser owns one
-bag-relative clock, corrects camera drift at 100 ms, and clears/hides consumers
-outside their measured coverage. Graph zoom changes the view, not the clock.
-IMU JSON is capped at 64 MiB and validated row by row; the browser parses the
-response stream and draws only a bounded set of points for the visible window,
-preserving spikes and visible null gaps. The React graph visually holds a finite
-final IMU sample through the remaining recording/camera timeline; numeric
-readouts still clear outside measured coverage, and internal gaps remain gaps.
-Dense SVG traces are memoized and kept in a separate composited SVG from the
-HTML cursor, so clock updates do not repeatedly rasterize the masked graph.
-The cursor uses fractional transforms on every animation frame; React readouts
-and camera drift checks update at up to 20 Hz during steady playback. Pointer
-seeks are coalesced to animation frames. Camera panes show buffering until the
-first frame is decoded, then retain the last frame during seeks. Each decoder
-finishes its in-flight seek before taking the latest requested position. After a
-seek completes, automatic drift correction waits 500 ms so playback can resume;
-explicit user seeks bypass that wait. An eight-second no-progress watchdog also
-recovers stalled loads and seeks while paused. Stalls and failed media loads share
-three bounded reload attempts before offering an explicit camera retry; recovery
-keeps the shared clock and clears the diagnostic without reloading the page.
+Source SQLite opens read-only and immutable. Source and derived paths never
+overlap; source symlinks are not followed. On a shared NAS dataset, the writable
+mount exposes only `Rosbag_Analyser_Cache`, which source walkers exclude before
+traversal, inventory and identity calculation. Persisted `portable-stat-v1`
+hashes tolerate CIFS device/inode differences; live reads still compare full
+device/inode/mode/size/mtime/ctime facts. Derived CIFS timestamp handling does not
+relax source checks.
 
-Video validation streams packet timestamps through ffprobe instead of collecting
-the full packet list. Probe time limits scale with output size and remain bounded.
-Worker control checks reuse its advisory-lock database session in short
-transactions. Front-camera and IMU processors fetch bounded payloads with one
-ordered SQLite query per stream. Readiness runs in the bounded catalog read pool
-so database and mount checks do not block other HTTP requests.
+Processors use bounded payload reads and one ordered SQLite query per stream.
+Video validation streams packet timestamps through ffprobe with bounded,
+size-dependent timeouts. Worker control checks reuse its advisory-lock session
+in short transactions. Readiness runs in the bounded catalog pool. Low derived
+capacity rejects new work without deleting ready output; source loss preserves
+saved catalog state. Mount, release and schema checks fail closed.
 
-Incomplete output stays in a contained job workspace. Validation precedes
-publication; failed replacement preserves valid output. Files, manifests,
-identity, and requested settings must agree before delivery. Artifact URLs bind
-to a specific identity, including range requests, and cannot silently return a
-replacement. Generated media and telemetry stay outside PostgreSQL and Git.
+## Timing and playback
 
-Persisted source hashes use `portable-stat-v1` to tolerate CIFS device/inode
-differences between scan and worker contexts. Live source checks still compare
-full device/inode/mode/size/mtime/ctime facts around reads. Derived CIFS timestamp
-finalization is handled separately; it does not relax source immutability.
+Front coverage uses ROS record endpoints. Strictly increasing valid image-header
+timestamps map affinely between those endpoints. Only streams whose headers are
+all exactly zero use ROS record cadence directly. Mixed, missing, invalid or
+unordered headers fail. Duplicate front record times keep the last frame;
+no fixed frame rate or interpolated frames are invented.
 
-## HTTP and browser
+IMU uses database record time and preserves source order. Nanoseconds are decimal
+strings; lookup selects the last sample at or before the clock, including duplicate
+times. Non-finite values are per-axis null gaps. JSON is capped at 64 MiB and
+validated row by row. The browser streams parsing and reduces visible points while
+preserving spikes and gaps; large sample bundles stay outside subscribed UI state.
 
-`/api/v1` provides saved catalog, explicit rescan, recording detail, preparation,
-processing overview/history, and job controls. Existing `/api/recordings/...`
-routes still deliver identity-bound media and IMU; their older naming does not
-make them unused. Schemas and routes in `api/` are the detailed API reference.
+One bag-relative clock drives cameras and IMU. Cameras correct drift at 100 ms
+and hide outside measured coverage; numeric IMU readouts clear outside coverage.
+The graph may visually hold a finite final sample to the recording/camera end
+without changing samples or readout coverage. Zoom changes the view, not time.
+Without IMU, the clock uses recording metadata Unix time, or relative seconds.
 
-Default browser routes serve the React shell at `/`, `/processing`, and
-`/recordings/{id}`. React uses `#/recordings`, `#/processing`, and `#/analysis/{id}`;
-its integration is described in
-[frontend architecture](../frontend/docs/architecture.md). Backend values are rendered as text and validated IDs/URLs, never arbitrary HTML. Errors are
-sanitized; absolute source paths stay server-side. Polling, accessibility, and
-media synchronization are covered by the JavaScript runtime tests.
+The dense SVG trace is memoized and composited separately from the HTML cursor.
+The cursor uses fractional transforms each animation frame; React readouts and
+camera drift checks update at up to 20 Hz. Pointer seeks are frame-coalesced.
+Cameras show buffering until a frame is decoded, then retain that frame during
+seeks. Each decoder finishes an in-flight seek before taking the latest request.
+Automatic correction waits 500 ms after seeking; explicit seeks bypass this wait.
+An eight-second no-progress watchdog works even while paused. Stalls and load
+failures share three bounded reload attempts, then offer a manual Retry control.
+Recovery retains the shared clock and clears that camera's diagnostic. Navigation
+disposes media, listeners, observers, timers and animation frames.
 
-## Storage and deployment
+## Browser and HTTP
 
-Source access is explicitly read-only, including SQLite. Source and derived
-application paths do not overlap. When both use one NAS dataset, the writable
-mount exposes only `Rosbag_Analyser_Cache`; all source walkers exclude that
-reserved top-level name before traversal, inventory, and identity calculation.
+React source lives in `frontend/`. `WorkspaceProvider` retains small session
+settings across routes; playback stops on unmount. The default service calls the
+real API. Explicit `?synthetic=1` selects in-memory fixtures and never calls it;
+the synthetic launcher serves only loopback assets without backend services.
 
-The API listens on loopback behind the site's access boundary. PostgreSQL is
-local. Low derived space rejects new work without deleting ready output;
-source loss preserves saved catalog state. Mount, release, and schema checks
-fail closed. Configuration, release procedures, and recovery belong in
-[Operations](OPERATIONS.md).
+`api-types.ts` defines contracts, `api-mapping.ts` maps domain models and
+`api-workspace.ts` owns polling and commands. Route cleanup aborts reads and
+timers. Mutations invalidate older reads and are never replayed automatically.
+Initial loading is separate from cached refresh. Preparation/retry keeps an
+empty queue loading until the request and refresh finish, including navigation;
+counts come from server results. Errors restore dismissed data and appear in
+the dismissible shell message.
+
+Processing follows all overview/list cursors with cycle detection, deduplication
+and abort/version guards. A failed page preserves the last complete snapshot.
+Successful siblings stay with failed recordings; retries submit only failed job
+IDs. History groups latest successful outputs for recordings without failures.
+
+`/api/v1` provides catalog, explicit rescan, details, preparation and job controls.
+`/api/recordings/...` delivers identity-bound media and IMU. React routes are
+`#/recordings`, `#/processing` and `#/analysis/{id}`; the server also accepts
+`/`, `/processing` and `/recordings/{id}`. API schemas live in `api/`.
+
+Backend text is rendered as text, with validated IDs and URLs. Errors are
+sanitized and absolute source paths stay server-side. The API listens on loopback
+behind the site's access boundary; PostgreSQL is local. Development and component
+conventions are in [Development](DEVELOPMENT.md).

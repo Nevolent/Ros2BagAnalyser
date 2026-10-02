@@ -1,33 +1,12 @@
-// Reuse the production parser and spike/gap-preserving reduction without changing the old UI.
-import '../../../src/rosbag_analyser/web/imu_graph.js';
+import graph, { type Parsed } from './imu-graph.js';
 import type { AnalysisBundle, Channel, Sample, Signal } from './types';
 import type { Artifact } from './api-types';
 import { request } from './http';
-interface Definition {
-  id: string;
-  component: string;
-  available: boolean;
-  minimumValue: number | null;
-  maximumValue: number | null;
-  units: string;
-}
-interface Parsed {
-  rows: { timeNs: bigint; timeSeconds: number; values: (number | null)[] }[];
-  series: Definition[];
-  coverageStart: number;
-  coverageEnd: number;
-}
 interface ImuMetadata {
   state: string;
   artifact: { data_url: string; size_bytes: string; series: unknown[] } | null;
 }
-interface Graph {
-  parseSeriesStream(body: ReadableStream<Uint8Array>, artifact: unknown): Promise<Parsed>;
-  selectSeries(parsed: Parsed, id: string): { samples: Sample[] };
-  sampleAtOrBefore(samples: Sample[], time: number): Sample | null;
-  visibleTraceSegments(samples: Sample[], start: number, end: number, width: number): Sample[][];
-}
-export const graph = (window as unknown as { ImuGraph: Graph }).ImuGraph;
+export { graph };
 export const channelNames = [
   'angular_velocity.x',
   'angular_velocity.y',

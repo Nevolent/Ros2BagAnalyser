@@ -1,6 +1,7 @@
 param(
     [string]$Distro = "Ubuntu-22.04",
-    [string]$ProjectRoot = "/home/kardo/projects/rosbag-dashboard"
+    [Parameter(Mandatory = $true)]
+    [string]$ProjectRoot
 )
 
 $ErrorActionPreference = "Stop"

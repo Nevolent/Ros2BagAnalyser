@@ -154,14 +154,23 @@ test('timeline cursor remains a continuous line during playback and scrubbing', 
   await page.clock.runFor(100);
   const plot = page.getByRole('slider', { name: 'Recording timeline' });
   const box = (await plot.boundingBox())!;
-  for (const fraction of [0.2, 0.5, 0.9]) {
+  for (const fraction of [0.2, 0.5, 0.99]) {
     await page.mouse.click(box.x + box.width * fraction, box.y + 60);
     await page.getByRole('button', { name: 'Play timeline', exact: true }).click();
     await page.clock.runFor(1000);
     const cursor = (await page.locator('.timeline-cursor').boundingBox())!;
     const readout = (await page.locator('.timeline-measurement').boundingBox())!;
-    expect(cursor.y - (readout.y + readout.height)).toBeGreaterThanOrEqual(1);
-    expect(cursor.y - (readout.y + readout.height)).toBeLessThanOrEqual(3);
+    // The readout now rests over the grid and lifts only near the cursor.
+    // Its horizontal overlap must still leave the continuous cursor clear.
+    const lifted = cursor.x >= readout.x - 10;
+    await expect(page.locator('.timeline-measurement')).toHaveAttribute(
+      'data-lifted',
+      String(lifted),
+    );
+    if (lifted) {
+      expect(cursor.y - (readout.y + readout.height)).toBeGreaterThanOrEqual(1);
+      expect(cursor.y - (readout.y + readout.height)).toBeLessThanOrEqual(3);
+    }
     const capture = PNG.sync.read(await page.screenshot());
     for (let y = Math.ceil(cursor.y) + 1; y < cursor.y + cursor.height - 1; y++) {
       const x = Math.floor(cursor.x);

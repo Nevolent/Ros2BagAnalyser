@@ -329,6 +329,89 @@ def test_migration_contains_exactly_six_v1_domain_tables(postgres_url: str) -> N
 
 
 @pytest.mark.postgres
+def test_recent_estimate_upgrade_preserves_existing_jobs_and_artifacts(
+    postgres_url: str,
+) -> None:
+    migration_root = (
+        Path(__file__).parents[2]
+        / "src"
+        / "rosbag_analyser"
+        / "persistence"
+        / "migrations"
+    )
+    with open_connection(postgres_url) as connection:
+        connection.execute("CREATE SCHEMA recent_estimate_upgrade")
+        connection.execute("SET search_path TO recent_estimate_upgrade")
+        for migration in sorted(migration_root.glob("*.sql")):
+            if migration.name < "0008":
+                connection.execute(migration.read_text(encoding="utf-8"))
+        connection.execute(
+            """
+            INSERT INTO recordings (
+                id, archive_relative_path, display_name, ros_health, source_revision,
+                cache_identity_recording_id, cache_identity_relative_path
+            ) VALUES (42, 'legacy/run', 'run', 'readable', %s, 42, 'legacy/run')
+            """,
+            ("a" * 64,),
+        )
+        for index, state in enumerate(("queued", "succeeded"), start=1):
+            connection.execute(
+                """
+                INSERT INTO jobs (
+                    recording_id, kind, cache_identity, state,
+                    started_at, finished_at, work_units, estimate_key,
+                    estimated_total_ms, estimate_method, estimate_sample_count
+                ) VALUES (
+                    42, 'front_preview', %s, %s,
+                    CASE WHEN %s = 'succeeded' THEN CURRENT_TIMESTAMP - interval '1 second' END,
+                    CASE WHEN %s = 'succeeded' THEN CURRENT_TIMESTAMP END,
+                    100, %s, 1234, 'median_rate_v1', 2
+                )
+                """,
+                (str(index) * 64, state, state, state, "b" * 64),
+            )
+        connection.execute(
+            """
+            INSERT INTO artifacts (
+                recording_id, kind, cache_identity, output_relative_path,
+                mime_type, size_bytes, coverage_start_ns, coverage_end_ns, manifest
+            ) VALUES (42, 'front_preview', %s, 'front_preview/legacy/preview.mp4',
+                      'video/mp4', 100, 0, 1000, '{}'::jsonb)
+            """,
+            ("2" * 64,),
+        )
+        jobs_before = connection.execute("SELECT * FROM jobs ORDER BY id").fetchall()
+        artifacts_before = connection.execute(
+            "SELECT * FROM artifacts ORDER BY id"
+        ).fetchall()
+        upgrade = (migration_root / "0008_recent_estimates.sql").read_text(
+            encoding="utf-8"
+        )
+        connection.execute(upgrade)
+        assert connection.execute("SELECT * FROM jobs ORDER BY id").fetchall() == jobs_before
+        assert connection.execute(
+            "SELECT * FROM artifacts ORDER BY id"
+        ).fetchall() == artifacts_before
+        connection.execute(
+            "UPDATE jobs SET estimate_method = 'recent_rate_v2' WHERE state = 'queued'"
+        )
+        refreshed = connection.execute("SELECT * FROM jobs ORDER BY id").fetchall()
+        assert [row["estimate_method"] for row in refreshed] == [
+            "recent_rate_v2", "median_rate_v1",
+        ]
+        # The migration entry point reruns the scripts; newer estimates
+        # must remain accepted on a second application as well.
+        for migration in sorted(migration_root.glob("*.sql")):
+            connection.execute(migration.read_text(encoding="utf-8"))
+        assert connection.execute("SELECT * FROM jobs ORDER BY id").fetchall() == refreshed
+        assert connection.execute(
+            "SELECT * FROM artifacts ORDER BY id"
+        ).fetchall() == artifacts_before
+        connection.execute("SET search_path TO public")
+        connection.execute("DROP SCHEMA recent_estimate_upgrade CASCADE")
+
+
+@pytest.mark.postgres
 def test_artifact_delivery_requires_current_generation_target_and_planner(
     postgres_url: str,
 ) -> None:
@@ -1756,8 +1839,25 @@ def test_claim_keeps_older_estimate_if_sample_artifacts_are_no_longer_available(
 @pytest.mark.postgres
 def test_actionable_failures_history_join_and_stable_cursor(postgres_url: str) -> None:
     catalog = CatalogRepository(postgres_url)
-    catalog.apply_snapshot(_snapshot())
-    recording_id = catalog.list_recordings()[0].id
+    snapshot = _snapshot()
+    # Pagination needs separate recordings: older successes for the same
+    # recording/output are deliberately absent from the visible history.
+    recordings = tuple(
+        replace(
+            snapshot.recordings[0],
+            archive_relative_path=name,
+            display_name=name,
+            source_revision=str(index) * 64,
+            components=tuple(
+                replace(component, relative_path=f"{name}/{component.role.value}")
+                for component in snapshot.recordings[0].components
+            ),
+        )
+        for index, name in enumerate(("run", "run-older", "run-oldest"), start=1)
+    )
+    catalog.apply_snapshot(replace(snapshot, recordings=recordings))
+    recording_ids = {item.display_name: item.id for item in catalog.list_recordings()}
+    recording_id = recording_ids["run"]
     _make_targets_available(postgres_url, recording_id)
     repository = ProcessingRepository(postgres_url)
 
@@ -1797,7 +1897,10 @@ def test_actionable_failures_history_join_and_stable_cursor(postgres_url: str) -
     now = datetime.now(timezone.utc)
     inserted_ids: list[int] = []
     with open_connection(postgres_url) as connection:
-        for index, seconds_ago in enumerate((10, 20), start=4):
+        for index, (name, seconds_ago) in enumerate(
+            (("run-older", 10), ("run-oldest", 20)), start=4,
+        ):
+            history_recording_id = recording_ids[name]
             cache_identity = f"{index:x}" * 64
             finished = now - timedelta(seconds=seconds_ago)
             started = finished - timedelta(seconds=1)
@@ -1811,7 +1914,7 @@ def test_actionable_failures_history_join_and_stable_cursor(postgres_url: str) -
                 RETURNING id
                 """,
                 (
-                    recording_id,
+                    history_recording_id,
                     cache_identity,
                     f"imu_series/{index}/series.json",
                     index * 100,
@@ -1827,7 +1930,7 @@ def test_actionable_failures_history_join_and_stable_cursor(postgres_url: str) -
                 ) VALUES (%s, 'imu_series', %s, 'succeeded', %s, %s, %s)
                 RETURNING id
                 """,
-                (recording_id, cache_identity, started, started, finished),
+                (history_recording_id, cache_identity, started, started, finished),
             ).fetchone()
             inserted_ids.append(int(row["id"]))
 
@@ -1875,8 +1978,13 @@ def test_actionable_failures_history_join_and_stable_cursor(postgres_url: str) -
         cursor=(cursor_job.finished_at, cursor_job.id),
     )
     second_ids = [item.job.id for item in second_page]
-    assert inserted_ids[-1] in second_ids
+    assert second_ids == [inserted_ids[-1]]
     assert all(item.job.finished_at < cursor_job.finished_at for item in second_page)
+    assert set(second_ids).isdisjoint(item.job.id for item in first_page)
+    current_history = repository.list_processing_jobs("history", limit=10)
+    assert [
+        item.job.id for item in current_history if item.job.kind == "imu_series"
+    ] == inserted_ids
 
 
 @pytest.mark.postgres
@@ -2477,8 +2585,18 @@ async def test_v1_nested_synthetic_operational_acceptance(
             )
             paused = await client.get("/api/v1/processing/overview")
             assert paused.json()["worker_online"] is False
-            assert paused.json()["failed_count"] == 3
-            assert paused.json()["succeeded_count"] == 2
+            assert paused.json()["failed_count"] == 1
+            assert paused.json()["succeeded_count"] == 1
+            failures = await client.get("/api/v1/processing/jobs?view=failed")
+            assert {item["kind"] for item in failures.json()["items"]} == set(
+                PROCESSING_KINDS
+            )
+            assert {
+                item["recording_id"] for item in failures.json()["items"]
+            } == {ids["failed"]}
+            history = await client.get("/api/v1/processing/jobs?view=history")
+            assert len(history.json()["items"]) == 1
+            assert history.json()["items"][0]["recording_id"] == ids["ready"]
 
             selected_ids = [
                 ids["ready"],

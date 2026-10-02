@@ -7,7 +7,16 @@ import type { WorkspaceService } from './workspace-service';
 
 /** Session-only data. Construct once per app; reloading restores the fixtures. */
 export function createDemoWorkspace(now = Date.now): WorkspaceService {
-  let snapshot: WorkspaceSnapshot = { recordings: createRecordings(), ...createProcessing(now()) };
+  let snapshot: WorkspaceSnapshot = {
+    recordings: createRecordings().map((row) => ({
+      ...row,
+      analysisIssues:
+        row.analysis === 'Failed'
+          ? ['Front-camera preview: E_VIDEO_DECODE: unsupported frame encoding bayer_rggb16.']
+          : [],
+    })),
+    ...createProcessing(now()),
+  };
   const listeners = new Set<() => void>();
   const publish = (next: WorkspaceSnapshot) => {
     snapshot = next;

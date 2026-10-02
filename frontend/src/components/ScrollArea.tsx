@@ -1,4 +1,12 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from 'react';
 import { useRememberedState } from '../app/WorkspaceProvider';
 
 export function ScrollArea({
@@ -11,7 +19,6 @@ export function ScrollArea({
   viewportClassName = '',
   contentSlot,
   scrollbarHeaderGap = 0,
-  gutter = false,
 }: {
   children: ReactNode;
   overlay?: ReactNode;
@@ -22,13 +29,16 @@ export function ScrollArea({
   viewportClassName?: string;
   contentSlot?: string;
   scrollbarHeaderGap?: number;
-  gutter?: boolean;
 }) {
   const [position, setPosition] = useRememberedState(`scroll.${label}`, { top: 0, left: 0 });
   const restore = useRef(true);
   const viewport = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const dragOffset = useRef(0);
+  const scrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [scrolling, setScrolling] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  useEffect(() => () => clearTimeout(scrollTimer.current), []);
   const [scrollbar, setScrollbar] = useState({
     overlay: false,
     top: 0,
@@ -115,7 +125,12 @@ export function ScrollArea({
       (element.scrollHeight - element.clientHeight);
   };
   return (
-    <div className={`scroll-area${gutter ? ' scroll-area-gutter' : ''} ${className}`} id={id}>
+    <div
+      className={`scroll-area ${className}`}
+      id={id}
+      data-scrolling={scrolling}
+      data-dragging={dragging}
+    >
       <div
         ref={setViewport}
         className={`scroll-viewport ${viewportClassName}${scrollbar.overlay ? ' has-overlay-scrollbar' : ''}`}
@@ -124,8 +139,21 @@ export function ScrollArea({
         aria-label={label}
         tabIndex={0}
         onScroll={() => {
+          const element = viewport.current!;
           if (!restore.current)
-            setPosition({ top: viewport.current!.scrollTop, left: viewport.current!.scrollLeft });
+            setPosition({
+              top: Math.max(
+                0,
+                Math.min(element.scrollTop, element.scrollHeight - element.clientHeight),
+              ),
+              left: Math.max(
+                0,
+                Math.min(element.scrollLeft, element.scrollWidth - element.clientWidth),
+              ),
+            });
+          setScrolling(true);
+          clearTimeout(scrollTimer.current);
+          scrollTimer.current = setTimeout(() => setScrolling(false), 800);
           updateScrollbar();
         }}
       >
@@ -151,12 +179,15 @@ export function ScrollArea({
                 ? event.clientY - thumb.top
                 : scrollbar.height / 2;
             event.currentTarget.setPointerCapture(event.pointerId);
+            setDragging(true);
             moveScrollbar(event.clientY);
           }}
           onPointerUp={(event) => {
             if (event.currentTarget.hasPointerCapture(event.pointerId))
               event.currentTarget.releasePointerCapture(event.pointerId);
           }}
+          onLostPointerCapture={() => setDragging(false)}
+          onPointerCancel={() => setDragging(false)}
           onPointerMove={(event) => {
             if (event.currentTarget.hasPointerCapture(event.pointerId))
               moveScrollbar(event.clientY);

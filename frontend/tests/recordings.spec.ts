@@ -1,5 +1,29 @@
 import { test, expect } from '@playwright/test';
 
+test('synthetic red statuses show separate source and output diagnostics', async ({ page }) => {
+  await page.goto('/?synthetic=1');
+  await page.getByRole('searchbox', { name: 'Search recordings' }).fill('bunker_night_run_03');
+  const row = page.locator('.bag-table tbody tr:visible');
+  await expect(row).toHaveCount(1);
+  const tooltip = page.getByRole('tooltip').and(page.locator('.recording-diagnostic-tooltip'));
+  await row.getByText('Damaged', { exact: true }).hover();
+  await expect(tooltip).toHaveText('E_SQLITE_INTEGRITY: source recording is damaged.');
+  await row.getByText('Failed', { exact: true }).hover();
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip).toHaveText(
+    'Top-down preview: E_IMU_SCHEMA: angular velocity field is absent.',
+  );
+  const table = (await page.locator('[data-component="recordings-table"]').boundingBox())!;
+  await page.screenshot({
+    path: test.info().outputPath('status-diagnostic.png'),
+    clip: { x: table.x, y: table.y, width: table.width, height: 220 },
+  });
+  await page
+    .locator('.bag-table-scroll')
+    .evaluate((element) => element.dispatchEvent(new Event('scroll')));
+  await expect(tooltip).toHaveCount(0);
+});
+
 test('folder totals, failed filters and empty states reflect the archive', async ({ page }) => {
   await page.goto('/?demo=1');
   await page.locator('[data-folder="bunker"]').click();

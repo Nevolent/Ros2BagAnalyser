@@ -3,6 +3,58 @@ import { test, expect } from '@playwright/test';
 const unixStart = 1771027200;
 const duration = 754.56;
 
+test('scrubbing follows the pointer before the next seek frame', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-10-01T10:00:00Z') });
+  await page.clock.pauseAt(new Date('2026-10-01T10:00:00Z'));
+  await page.goto('/?demo=1#/analysis');
+  await page.clock.runFor(100);
+  const plot = page.getByRole('slider', { name: 'Recording timeline' });
+  const box = (await plot.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + 100);
+  await page.mouse.down();
+  const pointerX = box.x + box.width * 0.8;
+  await page.mouse.move(pointerX, box.y + 100);
+  const cursor = (await page.locator('.timeline-cursor').boundingBox())!;
+  expect(Math.abs(cursor.x - pointerX)).toBeLessThan(1);
+  await page.clock.runFor(17);
+  expect(Number(await page.locator('[data-timeline-time]').textContent())).toBeCloseTo(
+    unixStart + duration * 0.8,
+    2,
+  );
+  await page.mouse.up();
+});
+
+test('right-hand value and unit lift near the playhead and settle back above the grid line', async ({
+  page,
+}) => {
+  await page.goto('/?demo=1#/analysis');
+  const plot = page.getByRole('slider', { name: 'Recording timeline' });
+  const box = (await plot.boundingBox())!;
+  const scale = page.locator('.timeline-grid text').first();
+  const measurement = page.locator('.timeline-measurement');
+  const center = () => plot.click({ position: { x: box.width / 2, y: 100 } });
+  await center();
+  await expect(measurement).toHaveCSS('transform', 'none');
+  const restingScale = (await scale.boundingBox())!;
+  const restingValue = (await measurement.boundingBox())!;
+  await page
+    .locator('.analysis-timeline')
+    .screenshot({ path: test.info().outputPath('labels-resting.png') });
+  await plot.press('End');
+  await expect
+    .poll(async () => (await measurement.boundingBox())!.y)
+    .toBeCloseTo(restingValue.y - 4, 1);
+  expect(await scale.boundingBox()).toEqual(restingScale);
+  await page
+    .locator('.analysis-timeline')
+    .screenshot({ path: test.info().outputPath('labels-near-playhead.png') });
+  await center();
+  await expect
+    .poll(async () => (await measurement.boundingBox())!.y)
+    .toBeCloseTo(restingValue.y, 1);
+  expect(await scale.boundingBox()).toEqual(restingScale);
+});
+
 for (const viewport of [
   { width: 1440, height: 900 },
   { width: 1920, height: 600 },
@@ -249,4 +301,73 @@ test('graph geometry updates before paint throughout panel dragging and collapse
     [],
   );
   await expect(plot).toHaveAttribute('aria-valuenow', '1');
+});
+
+test('Analysis owns playback shortcuts without plot focus and yields to interactive widgets', async ({
+  page,
+}) => {
+  await page.goto('/?demo=1#/analysis');
+  const plot = page.getByRole('slider', { name: 'Recording timeline' });
+  await page.keyboard.press('ArrowRight');
+  await expect(plot).toHaveAttribute('aria-valuenow', '1');
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await page.keyboard.press('ArrowRight');
+  await expect(plot).toHaveAttribute('aria-valuenow', '2');
+  await page.keyboard.press('Space');
+  await expect(page.getByRole('button', { name: 'Pause timeline', exact: true })).toBeVisible();
+  await page.keyboard.press('Space');
+  await expect(page.getByRole('button', { name: 'Play timeline', exact: true })).toBeVisible();
+  await plot.press('Home');
+  await page.getByRole('button', { name: 'Play timeline', exact: true }).focus();
+  await page.keyboard.press('Space');
+  await expect(page.getByRole('button', { name: 'Pause timeline', exact: true })).toBeVisible();
+  await page.keyboard.press('Space');
+  await plot.press('Home');
+  await page.getByRole('button', { name: 'Choose sensor graph' }).click();
+  await page.keyboard.press('ArrowRight');
+  await expect(plot).toHaveAttribute('aria-valuenow', '0');
+  await page.keyboard.press('Escape');
+  const splitter = page.getByRole('separator', { name: 'Resize recording details' });
+  await splitter.press('ArrowLeft');
+  await expect(plot).toHaveAttribute('aria-valuenow', '0');
+  await page.keyboard.press('Control+k');
+  const search = page.getByRole('combobox');
+  await search.fill('record');
+  await page.keyboard.press('Space');
+  await expect(search).toHaveValue('record ');
+  await page.keyboard.press('ArrowRight');
+  await expect(plot).toHaveAttribute('aria-valuenow', '0');
+  await page.keyboard.press('Escape');
+  await page.getByRole('link', { name: 'Processing', exact: true }).click();
+  await expect(plot).toHaveCount(0);
+  expect(
+    await page.evaluate(() => {
+      const event = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+      document.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  ).toBe(false);
+});
+
+test('playhead advances fractionally every frame between readout commits', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-09-30T10:00:00Z') });
+  await page.clock.pauseAt(new Date('2026-09-30T10:00:00Z'));
+  await page.goto('/?demo=1#/analysis');
+  await page.clock.runFor(100);
+  await page.keyboard.press('Space');
+  const positions: number[] = [];
+  for (let i = 0; i < 8; i++) {
+    await page.clock.runFor(17);
+    positions.push(
+      await page.locator('.timeline-cursor').evaluate((el) => el.getBoundingClientRect().x),
+    );
+  }
+  for (let i = 1; i < positions.length; i++) {
+    expect(positions[i]).toBeGreaterThan(positions[i - 1]);
+    expect(positions[i] - positions[i - 1]).toBeLessThan(0.1);
+  }
+  await page.keyboard.press('Space');
+  const paused = await page.locator('.timeline-cursor').getAttribute('style');
+  await page.clock.runFor(100);
+  await expect(page.locator('.timeline-cursor')).toHaveAttribute('style', paused!);
 });

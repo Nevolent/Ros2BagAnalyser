@@ -69,7 +69,7 @@ function formatReadyIn(seconds: number) {
 }
 export function ProcessingPage() {
   const service = useWorkspaceService();
-  const { queue, failures, history, active, loading, error, busy } = useWorkspace();
+  const { queue, failures, history, active, loading, queueLoading, error, busy } = useWorkspace();
   const [view, setView] = useRememberedState<View>('processing.view', 'queue');
   const [selection, setSelection] = useRememberedState('processing.selection', new Set<string>());
   const [notice, setNotice] = useState('');
@@ -255,13 +255,15 @@ export function ProcessingPage() {
             scrollRef={scroll}
             empty={
               <EmptyState data-processing-empty="" hidden={items.length > 0 || !!error}>
-                {loading
-                  ? 'Loading processing…'
-                  : view === 'queue'
-                    ? 'No queued jobs.'
-                    : view === 'failures'
-                      ? 'No failed jobs.'
-                      : 'No completed jobs yet.'}
+                {view === 'queue' && (loading || queueLoading)
+                  ? 'Loading queue…'
+                  : loading
+                    ? 'Loading processing…'
+                    : view === 'queue'
+                      ? 'No queued jobs.'
+                      : view === 'failures'
+                        ? 'No failed jobs.'
+                        : 'No completed jobs yet.'}
               </EmptyState>
             }
           >

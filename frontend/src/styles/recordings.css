@@ -4,6 +4,37 @@
   --recordings-action-height: var(--control-height);
   --recordings-action-width: 150px;
 }
+.recordings-workspace {
+  --folder-width: 304px;
+}
+.recording-status-diagnostic {
+  cursor: help;
+  border-radius: 2px;
+}
+.recording-status-diagnostic:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: 3px;
+}
+.recording-diagnostic-tooltip {
+  position: fixed;
+  z-index: 100;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 4px 16px #0003;
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.recording-diagnostic-tooltip p + p {
+  margin-top: 6px;
+}
 .recordings-actions {
   display: flex;
   align-items: center;
@@ -40,11 +71,6 @@
 .recordings-rescan button {
   width: 100%;
   background: var(--secondary);
-}
-.recordings-rescan [data-rescan-archive] span,
-.recordings-content .prepare-selected span {
-  position: relative;
-  top: 1px;
 }
 .recordings-rescan [data-scan-history] {
   display: grid;
@@ -213,6 +239,11 @@
   box-shadow: 0 4px 20px #0002;
 }
 
+@media (min-width: 601px) and (max-width: 1100px) {
+  .recordings-workspace {
+    --folder-width: 284px;
+  }
+}
 @media (max-width: 600px) {
   .recordings-actions {
     max-width: 100%;

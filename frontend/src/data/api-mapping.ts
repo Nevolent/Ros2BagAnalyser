@@ -47,6 +47,26 @@ export function recording(row: CatalogRecording): Recording {
       row.start_time_ns === null ? '' : new Date(seconds(row.start_time_ns) * 1000).toISOString(),
     duration: duration(row.duration_ns),
     size: bytes(row.total_source_size_bytes),
+    healthIssues: [
+      ...(row.diagnostic ? [`${row.diagnostic.code}: ${row.diagnostic.message}`] : []),
+      ...(row.presentation_health === 'readable' && row.duration_ns === '0'
+        ? ['Metadata reports zero duration. Message timestamps have not been verified.']
+        : []),
+    ],
+    analysisIssues: row.outputs
+      .filter(
+        (output) =>
+          output.state === 'failed' ||
+          (output.kind === 'front_preview' && output.state === 'unavailable'),
+      )
+      .map(
+        (output) =>
+          `${outputNames[output.kind]}: ${
+            output.diagnostic
+              ? `${output.diagnostic.code}: ${output.diagnostic.message}`
+              : `${labels[output.state] ?? output.state}. No diagnostic was provided.`
+          }`,
+      ),
     health:
       row.presentation_health !== 'readable'
         ? 'Damaged'

@@ -9,6 +9,8 @@ export interface Recording {
   size: string;
   health: 'Readable' | 'Damaged' | 'Review';
   analysis: RecordingStatus;
+  healthIssues?: string[];
+  analysisIssues?: string[];
 }
 export interface Folder {
   id: string;
@@ -53,6 +55,7 @@ export interface ActiveJob {
 }
 export interface WorkspaceSnapshot {
   loading?: boolean;
+  queueLoading?: boolean;
   error?: string;
   busy?: boolean;
   scanning?: boolean;

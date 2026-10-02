@@ -13,6 +13,7 @@ import { Notice } from '../../components/Notice';
 import { Workspace } from '../../components/Workspace';
 import { FolderBrowser } from './FolderBrowser';
 import { ScanControls } from './ScanControls';
+import { StatusDiagnostic } from './StatusDiagnostic';
 import { SortableHeader } from '../../components/SortableHeader';
 import { useTableSort, durationInSeconds, sizeInBytes } from '../../lib/useTableSort';
 import { formatDateTime } from '../../lib/format';
@@ -26,23 +27,48 @@ const recordingSort = {
   health: (item: Recording) => item.health,
   analysis: (item: Recording) => item.analysis,
 };
-function Status({ status }: { status: RecordingStatus | Recording['health'] }) {
+function Status({
+  status,
+  issues = [],
+}: {
+  status: RecordingStatus | Recording['health'];
+  issues?: string[];
+}) {
+  if (status === 'Failed' || status === 'Damaged' || status === 'Review')
+    return (
+      <StatusDiagnostic
+        status={status}
+        issues={
+          issues.length
+            ? issues
+            : [
+                status === 'Damaged'
+                  ? 'The source recording could not be read. No diagnostic was provided.'
+                  : status === 'Review'
+                    ? 'Recording metadata needs review. No diagnostic was provided.'
+                    : 'Processing failed. No diagnostic was provided.',
+              ]
+        }
+      />
+    );
   return (
-    <StatusBadge
-      tone={
-        status === 'Ready' || status === 'Readable'
-          ? 'success'
-          : status === 'Failed' || status === 'Damaged' || status === 'Review'
-            ? 'error'
-            : 'muted'
-      }
-    >
+    <StatusBadge tone={status === 'Ready' || status === 'Readable' ? 'success' : 'muted'}>
       {status}
     </StatusBadge>
   );
 }
 export function RecordingsPage() {
-  const { recordings, loading, error, busy } = useWorkspace();
+  const { recordings, failures, loading, error, busy } = useWorkspace();
+  const failureIssues = useMemo(
+    () =>
+      new Map(
+        failures.map((job) => [
+          job.recordingId ?? job.name,
+          job.failures?.map((failure) => `${failure.output}: ${failure.code}`) ?? [],
+        ]),
+      ),
+    [failures],
+  );
   const service = useWorkspaceService();
   const { sorted, sort, toggle } = useTableSort(recordings, recordingSort, 'recordings');
   const folders = service.folders;
@@ -272,10 +298,17 @@ export function RecordingsPage() {
                     <td className="bag-number">{recording.duration}</td>
                     <td className="bag-number">{recording.size}</td>
                     <td className="bag-health-cell">
-                      <Status status={recording.health} />
+                      <Status status={recording.health} issues={recording.healthIssues} />
                     </td>
                     <td>
-                      <Status status={recording.analysis} />
+                      <Status
+                        status={recording.analysis}
+                        issues={
+                          recording.analysisIssues?.length
+                            ? recording.analysisIssues
+                            : (failureIssues.get(recording.id) ?? failureIssues.get(recording.name))
+                        }
+                      />
                     </td>
                   </tr>
                 ))}

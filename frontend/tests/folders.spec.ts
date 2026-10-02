@@ -24,6 +24,48 @@ test('table header selects visible bags and tracks partial selection', async ({ 
 const folder = (page: import('@playwright/test').Page, id: string) =>
   page.locator(`[data-folder="${id}"]`);
 
+test('folder counts stay aligned and the edge scrollbar fades without shifting content', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 500 });
+  await page.goto('/?demo=1');
+  const panel = page.locator('.folder-card');
+  const viewport = page.getByRole('region', { name: 'Folder list' });
+  const track = panel.locator('.scrollbar-track');
+  const count = folder(page, 'bunker').locator('.folder-bag-count');
+  const before = (await count.boundingBox())!;
+  const icon = (await panel.locator('.folder-toggle svg path').boundingBox())!;
+  expect((await panel.boundingBox())!.width).toBe(304);
+  expect(Math.abs(before.x + before.width - icon.x - icon.width)).toBeLessThan(1);
+  expect(await viewport.evaluate((el) => el.clientWidth === el.parentElement!.clientWidth)).toBe(
+    true,
+  );
+  await expect(viewport).toHaveCSS('overscroll-behavior-y', 'none');
+  await expect(track).toHaveAttribute('data-visible', 'true');
+  const thumb = (await panel.locator('.scrollbar-thumb').boundingBox())!;
+  expect(thumb.x).toBeGreaterThan(before.x + before.width);
+  await expect(track).toHaveCSS('opacity', '0');
+  await viewport.hover();
+  await page.mouse.wheel(0, 300);
+  await expect.poll(() => viewport.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect(track).toHaveCSS('opacity', '1');
+  await page.getByRole('heading', { name: 'Recordings', exact: true }).hover();
+  await expect(track).toHaveCSS('opacity', '0');
+  await viewport.focus();
+  await page.keyboard.press('Control+Home');
+  await viewport.evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await expect.poll(() => viewport.evaluate((el) => el.scrollTop)).toBe(0);
+  await viewport.hover();
+  await page.mouse.wheel(0, -2000);
+  expect(await count.boundingBox()).toEqual(before);
+  await expect(track).toHaveCSS('opacity', '1');
+  await page.getByRole('searchbox', { name: 'Find a folder' }).fill('Bunker');
+  await expect(track).toHaveAttribute('data-visible', 'false');
+  expect(await count.boundingBox()).toEqual(before);
+});
+
 test('dense tree contains 30 folders and parent selection includes nested recordings', async ({
   page,
 }) => {

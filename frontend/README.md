@@ -84,8 +84,10 @@ The preview server is for local evaluation.
   Failed camera loads retry automatically before offering a camera Retry control.
   Optional missing sources use muted asset states, without duplicate error codes.
   Actual processing, validation and media errors remain visible in Recording details.
-- Tables, folders and details use `ScrollArea` for a compact scrollbar inside the
-  content; folders and details reserve a separate scrollbar lane. Keyboard scrolling stays native; horizontal overflow keeps native bars.
+- Tables, folders and details use `ScrollArea` for a compact overlay scrollbar
+  that appears on hover, focus or scrolling. Panel content stays aligned with the
+  header; scrolling stops without bouncing at its limits. Keyboard scrolling stays
+  native; horizontal overflow keeps native bars.
 
 ## Checks
 

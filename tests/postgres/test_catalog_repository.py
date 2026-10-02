@@ -1623,7 +1623,10 @@ def test_concurrent_claim_is_fifo_and_global_single_running_with_worker_probe(
 
 
 @pytest.mark.postgres
-def test_claim_freezes_bounded_compatible_median_estimate(postgres_url: str) -> None:
+@pytest.mark.parametrize("stale_total", [1, None])
+def test_claim_refreshes_compatible_estimate_then_freezes_recording_siblings(
+    postgres_url: str, stale_total: int | None,
+) -> None:
     catalog = CatalogRepository(postgres_url)
     catalog.apply_snapshot(_snapshot())
     recording_id = catalog.list_recordings()[0].id
@@ -1678,10 +1681,24 @@ def test_claim_freezes_bounded_compatible_median_estimate(postgres_url: str) -> 
         work_units=200,
         estimate_key=estimate_key,
     )
+    sibling = repository.request_job(
+        recording_id, "imu_series", "e" * 64,
+        work_units=100, estimate_key=estimate_key,
+    )
+    assert request.job is not None and sibling.job is not None
+    with open_connection(postgres_url) as connection:
+        connection.execute(
+            """
+            UPDATE jobs SET estimated_total_ms = %s, estimate_method = %s,
+                estimate_sample_count = %s WHERE state = 'queued'
+            """,
+            (stale_total, "median_rate_v1" if stale_total else "insufficient_history",
+             2 if stale_total else 0),
+        )
     claimed = repository.claim_next_job()
     assert request.job is not None and claimed is not None
-    assert claimed.estimated_total_ms == 4_000
-    assert claimed.estimate_method == "median_rate_v1"
+    assert claimed.estimated_total_ms == 6_900
+    assert claimed.estimate_method == "recent_rate_v2"
     assert claimed.estimate_sample_count == 2
     with open_connection(postgres_url) as connection:
         frozen = connection.execute(
@@ -1692,10 +1709,48 @@ def test_claim_freezes_bounded_compatible_median_estimate(postgres_url: str) -> 
             (claimed.id,),
         ).fetchone()
     assert frozen == {
-        "estimated_total_ms": 4_000,
-        "estimate_method": "median_rate_v1",
+        "estimated_total_ms": 6_900,
+        "estimate_method": "recent_rate_v2",
         "estimate_sample_count": 2,
     }
+    with open_connection(postgres_url) as connection:
+        assert connection.execute(
+            "SELECT estimated_total_ms FROM jobs WHERE id = %s", (sibling.job.id,)
+        ).fetchone()["estimated_total_ms"] == 3_450
+        # New measurements between outputs must not change the recording total.
+        connection.execute(
+            "UPDATE jobs SET finished_at = started_at + interval '1 hour' WHERE state = 'succeeded'"
+        )
+        connection.execute(
+            "UPDATE jobs SET state = 'succeeded', execution_phase = NULL, finished_at = CURRENT_TIMESTAMP WHERE id = %s", (claimed.id,)
+        )
+    next_job = repository.claim_next_job()
+    assert next_job is not None and next_job.id == sibling.job.id
+    assert next_job.estimated_total_ms == 3_450
+
+
+@pytest.mark.postgres
+def test_claim_keeps_older_estimate_if_sample_artifacts_are_no_longer_available(postgres_url: str) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    request = repository.request_job(
+        recording_id, "front_preview", "f" * 64,
+        work_units=200, estimate_key="6" * 64,
+    )
+    assert request.job is not None
+    with open_connection(postgres_url) as connection:
+        connection.execute(
+            """
+            UPDATE jobs SET estimated_total_ms = 1234, estimate_method = 'median_rate_v1',
+                estimate_sample_count = 2 WHERE id = %s
+            """, (request.job.id,),
+        )
+    claimed = repository.claim_next_job()
+    assert claimed is not None
+    assert claimed.estimated_total_ms == 1234
+    assert claimed.estimate_method == "median_rate_v1"
 
 
 @pytest.mark.postgres

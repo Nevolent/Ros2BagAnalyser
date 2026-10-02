@@ -449,6 +449,12 @@
   opacity: 0.65;
   font-variant-numeric: tabular-nums;
 }
+.timeline-measurement {
+  transition: transform 100ms ease-out;
+}
+.timeline-measurement[data-lifted='true'] {
+  transform: translateY(-4px);
+}
 .timeline-line {
   fill: none;
   stroke: var(--timeline-line);
@@ -461,8 +467,11 @@
   z-index: 1;
   width: 1px;
   pointer-events: none;
-  /* A solid HTML layer avoids moving zero-width SVG strokes in WebKit. */
+  /* Fractional, composited motion follows high-refresh displays without pixel steps. */
+  left: 0;
+  will-change: transform;
   transform: translateZ(0);
+  transition: none;
   background: color-mix(in srgb, var(--foreground) 65%, transparent);
 }
 .timeline-cursor::before {
@@ -477,7 +486,7 @@
 }
 .timeline-measurement {
   position: absolute;
-  top: -4px;
+  top: 6px;
   right: 0;
   display: flex;
   align-items: baseline;
@@ -496,9 +505,16 @@
   font-size: 10px;
   color: var(--muted-foreground);
 }
+@media (prefers-reduced-motion: reduce) {
+  .timeline-measurement {
+    transition: none;
+  }
+}
 .timeline-axis {
   display: flex;
-  flex: 0 0 24px;
+  /* Center labels between the last graph line and the card's bottom edge. */
+  flex: 0 0 calc(24px + var(--timeline-plot-bottom));
+  margin-top: calc(-1 * var(--timeline-plot-bottom));
   justify-content: space-between;
   align-items: center;
   gap: 6px;
@@ -508,10 +524,6 @@
   white-space: nowrap;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
-}
-.timeline-axis time {
-  position: relative;
-  top: -4px;
 }
 @media (max-width: 600px) {
   .analysis-workspace,
@@ -652,4 +664,9 @@
 .camera-retry:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+.timeline-channel-label {
+  font-size: 13px;
+  font-weight: 500;
 }

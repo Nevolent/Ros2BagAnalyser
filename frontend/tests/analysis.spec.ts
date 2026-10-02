@@ -163,7 +163,7 @@ test('sidebar tooltip stays visible while crossing between Recordings and the lo
   await expect(tooltip).toHaveAttribute('data-reuse-check', 'original');
 });
 
-test('recording details retain asset metadata and scroll with a separate scrollbar lane', async ({
+test('recording details stay aligned with the header while scrolling at the panel edge', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1024, height: 500 });
@@ -180,8 +180,19 @@ test('recording details retain asset metadata and scroll with a separate scrollb
   await expect(body.getByRole('heading', { name: 'Analysis outputs' })).toHaveCount(0);
   await expect(body.getByRole('heading', { name: 'Source components' })).toHaveCount(0);
   await expect(body).toHaveCSS('scrollbar-gutter', 'auto');
-  const lane = await body.evaluate((el) => el.parentElement!.clientWidth - el.clientWidth);
-  expect(lane).toBeGreaterThanOrEqual(12);
+  const geometry = await body.evaluate((el) => {
+    const panel = el.closest('.folder-card')!;
+    return {
+      lane: el.parentElement!.clientWidth - el.clientWidth,
+      valueRight: el.querySelector('dd')!.getBoundingClientRect().right,
+      iconRight: panel.querySelector('.folder-toggle svg path')!.getBoundingClientRect().right,
+      thumbLeft: panel.querySelector('.scrollbar-thumb')!.getBoundingClientRect().left,
+    };
+  });
+  expect(geometry.lane).toBe(0);
+  expect(Math.abs(geometry.valueRight - geometry.iconRight)).toBeLessThan(1);
+  expect(geometry.thumbLeft).toBeGreaterThan(geometry.valueRight);
+  await expect(body).toHaveCSS('overscroll-behavior-y', 'none');
   const before = await body.boundingBox();
   await page.addStyleTag({ content: '.recording-details-body { overflow-y:scroll; }' });
   expect(await body.boundingBox()).toEqual(before);

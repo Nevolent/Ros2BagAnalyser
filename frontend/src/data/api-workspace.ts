@@ -142,9 +142,13 @@ export function createApiWorkspace(): WorkspaceService {
   }
   async function mutate(path: string, body: unknown = {}, scanning = false): Promise<boolean> {
     if (snapshot.busy) return false;
+    const preparing = path === '/api/v1/recordings/prepare';
+    const queueLoading = preparing || path === '/api/v1/processing/jobs/retry';
+    // Keep cached rows visible, but an empty queue needs a fresh read after new work.
+    if (queueLoading) loaded.delete('processing');
     epoch++;
     actionError = '';
-    publish({ busy: true, error: '', scanning });
+    publish({ busy: true, queueLoading, error: '', scanning });
     try {
       const payload = typeof body === 'function' ? await body() : body;
       const result = await request<{
@@ -166,7 +170,6 @@ export function createApiWorkspace(): WorkspaceService {
         result.items ??
         result.recordings?.flatMap((item) => item.outputs) ??
         (result.outcome ? [{ outcome: result.outcome }] : []);
-      const preparing = path === '/api/v1/recordings/prepare';
       const prepared = items.some((item) =>
         ['queued', 'retry_queued', 'active_reused', 'ready_reused'].includes(item.outcome),
       );
@@ -209,7 +212,7 @@ export function createApiWorkspace(): WorkspaceService {
       publish({ error: actionError });
       return false;
     } finally {
-      publish({ busy: false, scanning: false });
+      publish({ busy: false, queueLoading: false, scanning: false });
     }
   }
   function selectedJobs(ids: ReadonlySet<string>, rows: Job[]) {

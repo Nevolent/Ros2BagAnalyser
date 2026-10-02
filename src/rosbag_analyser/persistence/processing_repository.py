@@ -512,6 +512,47 @@ class ProcessingRepository:
             ).fetchone()
             if queued is None:
                 return None
+            # Queue-time predictions can age while earlier recordings run.
+            # Refresh the whole recording once, before its first output starts;
+            # subsequent handoffs must keep the same progress denominator.
+            siblings = connection.execute(
+                """
+                SELECT DISTINCT ON (kind) id, state, started_at, work_units,
+                       estimate_key, estimated_total_ms
+                FROM jobs
+                WHERE recording_id = %s
+                  AND (queued_at >= %s OR finished_at >= %s)
+                ORDER BY kind, queued_at DESC, id DESC
+                """,
+                (queued["recording_id"], queued["queued_at"], queued["queued_at"]),
+            ).fetchall()
+            if not any(item["started_at"] is not None for item in siblings):
+                for sibling in siblings:
+                    if sibling["state"] != "queued":
+                        continue
+                    refreshed = _estimate_values_for_new_job(
+                        connection,
+                        _optional_int(sibling["work_units"]),
+                        _optional_str(sibling["estimate_key"]),
+                    )
+                    # Keep a useful older prediction if its source artifacts
+                    # have since been superseded and history is now insufficient.
+                    if (
+                        refreshed["estimated_total_ms"] is None
+                        and sibling["estimated_total_ms"] is not None
+                    ):
+                        continue
+                    connection.execute(
+                        """
+                        UPDATE jobs SET estimated_total_ms = %(estimated_total_ms)s,
+                            estimate_method = %(estimate_method)s,
+                            estimate_sample_count = %(estimate_sample_count)s
+                        WHERE id = %(id)s
+                        """,
+                        {"id": sibling["id"], **refreshed},
+                    )
+                    if sibling["id"] == queued["id"]:
+                        queued.update(refreshed)
             estimate_values: dict[str, object] = {
                 "estimated_total_ms": queued["estimated_total_ms"],
                 "estimate_method": queued["estimate_method"],

@@ -534,7 +534,7 @@ def _with_cumulative_queue_estimates(
                 else min(confidence, estimate.sample_count or 0)
             )
             queue_estimate = QueueEstimateView(
-                "available", cumulative, "cumulative_median_rate_v1", confidence
+                "available", cumulative, "cumulative_frozen_estimates_v2", confidence
             )
         result.append(replace(item, queue_estimate=queue_estimate))
     return tuple(result)

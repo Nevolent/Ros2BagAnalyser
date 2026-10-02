@@ -99,7 +99,11 @@ export async function analysisRecording(
   }
   bundle.mediaVersion = JSON.stringify(cameras.map(({ src, start, end }) => [src, start, end]));
   const imu = detail.outputs.find((o) => o.kind === 'imu_series');
-  bundle.message = outputMessage(imu?.state);
+  // Missing optional IMU is a normal camera-only recording, not a load error.
+  bundle.message =
+    cameras.some((camera) => camera.src) && (!imu || imu.state === 'unavailable')
+      ? ''
+      : outputMessage(imu?.state);
   if (imu?.state === 'ready' && imu.artifact) {
     try {
       artifactUrl(detail.id, 'imu_series', imu.artifact);

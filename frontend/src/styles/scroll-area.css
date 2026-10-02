@@ -10,7 +10,7 @@
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklab, var(--muted-foreground) 65%, transparent) transparent;
   scrollbar-gutter: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 .scroll-viewport:focus-visible {
   outline: 1px solid var(--ring);
@@ -31,10 +31,21 @@
   z-index: 3;
   top: 0;
   bottom: 4px;
-  right: 4px;
+  right: 2px;
   width: 4px;
-  background: var(--table-surface, var(--secondary));
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.scroll-area:hover > .scrollbar-track,
+.scroll-area:focus-within > .scrollbar-track,
+.scroll-area[data-scrolling='true'] > .scrollbar-track,
+.scroll-area[data-dragging='true'] > .scrollbar-track {
+  opacity: 1;
+}
+/* Keep row dividers clear beneath the table thumb. Panel tracks stay transparent. */
+.data-table-body > .scrollbar-track {
+  background: var(--table-surface, var(--secondary));
 }
 .scrollbar-rail {
   position: absolute;
@@ -54,7 +65,7 @@
   left: 3px;
   right: 4px;
   border-radius: 4px;
-  background: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
+  background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
 }
 .scrollbar-track:hover .scrollbar-thumb {
   background: var(--muted-foreground);
@@ -68,11 +79,13 @@
   }
 }
 
-/* Reserve a separate lane in text-heavy panels, including macOS overlay bars. */
-.scroll-area-gutter > .scroll-viewport {
-  width: calc(100% - 12px);
+@media (hover: none), (forced-colors: active) {
+  .scrollbar-track {
+    opacity: 1;
+  }
 }
-.scroll-area-gutter > .scrollbar-track {
-  right: 5px;
-  background: transparent;
+@media (prefers-reduced-motion: reduce) {
+  .scrollbar-track {
+    transition: none;
+  }
 }

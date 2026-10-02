@@ -50,7 +50,7 @@ unseen recordings missing. Scanning creates no processing jobs.
 
 Six domain tables hold state: `recordings`, `source_components`, `artifacts`,
 `jobs`, `catalog_state`, and `preparation_targets`. Migrations currently run
-through `0007_job_controls.sql`; applied migrations remain part of the upgrade
+through `0008_recent_estimates.sql`; applied migrations remain part of the upgrade
 path and must not be removed as old files.
 
 Ordinary catalog and processing reads use saved PostgreSQL projections. Each
@@ -85,9 +85,15 @@ pause/resume/cancel requests are acknowledged at safe processing and publication
 checkpoints. Restart marks abandoned running work, including paused work,
 interrupted; it does not resume the process automatically.
 
-Elapsed and active time come from stored timestamps. Estimates freeze a median
-runtime-per-input-byte prediction from at least two compatible successful jobs.
-They can be unavailable or exceeded. The overview also groups the current preparation run using persisted job timestamps,
+Elapsed and active time come from stored timestamps. Estimates use the ten newest
+compatible, artifact-backed successful jobs (minimum two), excluding paused time.
+The 80th-percentile runtime per input byte plus 15% headroom replaces the former median prediction (`recent_rate_v2`).
+History is retained; ten newer compatible successes naturally replace older
+samples in the estimate window. Queue estimates refresh together when a
+recording's first output starts and freeze across subsequent output handoffs.
+A useful older estimate survives if refreshed history is insufficient. Estimates
+can still be unavailable or exceeded. The overview also groups the current
+preparation run using persisted job timestamps,
 including completed siblings and queued outputs. Older reused successes are excluded.
 The recording card sums active elapsed time and frozen estimates across this group,
 keeps its identity between output jobs, and stays visible during worker handoffs.
@@ -124,7 +130,9 @@ preserving spikes and visible null gaps. The React graph visually holds a finite
 final IMU sample through the remaining recording/camera timeline; numeric
 readouts still clear outside measured coverage, and internal gaps remain gaps.
 Dense SVG traces are memoized and kept in a separate composited SVG from the
-HTML cursor, so clock updates do not repeatedly rasterize the masked graph. Pointer
+HTML cursor, so clock updates do not repeatedly rasterize the masked graph.
+The cursor uses fractional transforms on every animation frame; React readouts
+and camera drift checks update at up to 20 Hz during steady playback. Pointer
 seeks are coalesced to animation frames. Camera panes show buffering until the
 first frame is decoded, then retain the last frame during seeks. Each decoder
 finishes its in-flight seek before taking the latest requested position. After a

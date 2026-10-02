@@ -266,7 +266,7 @@ export function FolderBrowser({
         </button>
       </div>
       <nav className="folder-browser" aria-label="Browse folders">
-        <ScrollArea gutter label="Folder list" viewportClassName="folder-list">
+        <ScrollArea label="Folder list" viewportClassName="folder-list">
           <div role="tree" aria-label="Archive folders" data-folder-tree="" onKeyDown={onKeyDown}>
             {branch(folders)}
           </div>

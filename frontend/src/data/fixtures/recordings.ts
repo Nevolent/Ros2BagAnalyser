@@ -133,5 +133,9 @@ export function createRecordings(): Recording[] {
     }
   });
 
-  return bags;
+  return bags.map((bag) => ({
+    ...bag,
+    healthIssues:
+      bag.health === 'Damaged' ? ['E_SQLITE_INTEGRITY: source recording is damaged.'] : [],
+  }));
 }

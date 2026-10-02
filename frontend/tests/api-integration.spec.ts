@@ -1,6 +1,52 @@
 import { test, expect } from '@playwright/test';
 import { apiFixture, detail, job, diagnostic } from './api-fixture';
 
+test('red catalog statuses show their own safe diagnostics on the left and support focus and dismissal', async ({
+  page,
+}) => {
+  const api = await apiFixture(page);
+  api.catalog.recordings[0].presentation_health = 'damaged';
+  api.catalog.recordings[0].diagnostic = {
+    code: 'E_SOURCE',
+    message: '<b>Database is malformed.</b>',
+  };
+  api.catalog.recordings[0].outputs[0] = {
+    ...api.catalog.recordings[0].outputs[0],
+    state: 'failed',
+    diagnostic,
+  };
+  await page.goto('/');
+  const damaged = page.locator('.bag-table tbody').getByText('Damaged', { exact: true });
+  const failed = page.locator('.bag-table tbody').getByText('Failed', { exact: true });
+  const tooltip = page.getByRole('tooltip').and(page.locator('.recording-diagnostic-tooltip'));
+  await damaged.hover();
+  await expect(tooltip).toHaveText('E_SOURCE: <b>Database is malformed.</b>');
+  await expect(tooltip.locator('b')).toHaveCount(0);
+  const anchor = (await damaged.boundingBox())!;
+  const popup = (await tooltip.boundingBox())!;
+  expect(popup.x + popup.width).toBeLessThan(anchor.x);
+  await tooltip.hover();
+  await expect(tooltip).toBeVisible();
+  await page.getByRole('heading', { name: 'Recordings', level: 1 }).hover();
+  await expect(tooltip).toHaveCount(0);
+  await failed.focus();
+  await expect(tooltip).toHaveText(
+    `Front-camera preview: ${diagnostic.code}: ${diagnostic.message}`,
+  );
+  await expect(failed).toHaveAttribute('aria-describedby', await tooltip.getAttribute('id'));
+  await expect(tooltip.locator('script')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+  await expect(failed).toBeFocused();
+  await failed.blur();
+  const review = page.locator('.bag-table tbody').getByText('Review', { exact: true });
+  await review.hover();
+  await expect(tooltip).toContainText('Metadata reports zero duration.');
+  await page.getByRole('link', { name: 'Processing', exact: true }).click();
+  await expect(tooltip).toHaveCount(0);
+  expect(api.posts).toEqual([]);
+});
+
 test('live catalog filters, real folders, red review, selection and explicit scan', async ({
   page,
 }) => {
@@ -233,9 +279,7 @@ test('queued, processing and unavailable states use simple text with errors at t
   await expect(page.locator('.recording-details-body script')).toHaveCount(0);
 });
 
-test('damaged recording without validated outputs keeps the clock but hides data labels', async ({
-  page,
-}) => {
+test('damaged recording keeps metadata time and hides IMU readouts', async ({ page }) => {
   const api = await apiFixture(page);
   api.recording = {
     ...detail(),
@@ -247,9 +291,9 @@ test('damaged recording without validated outputs keeps the clock but hides data
   const slider = page.getByRole('slider', { name: 'Recording timeline' });
   await expect(page.getByRole('button', { name: 'Play timeline', exact: true })).toBeEnabled();
   await expect(page.locator('.timeline-state')).toHaveText('This output is unavailable.');
-  await expect(page.locator('.timeline-axis')).toHaveCount(0);
+  await expect(page.locator('.timeline-axis')).toBeVisible();
   await expect(page.locator('.timeline-measurement')).toHaveCount(0);
-  await expect(page.locator('.timeline-grid text')).toHaveCount(0);
+  await expect(page.locator('.timeline-grid text')).toHaveText('0');
   await slider.focus();
   await page.keyboard.press('End');
   await expect(slider).toHaveAttribute('aria-valuenow', '6');
@@ -555,11 +599,33 @@ test('zero-duration and camera-only recordings retain truthful controls', async 
   await page.reload();
   await expect(page.getByRole('button', { name: 'Play timeline', exact: true })).toBeEnabled();
   await expect(page.locator('[data-channel-label]')).toHaveText('Recording timeline');
-  await expect(page.locator('.timeline-axis')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Choose sensor graph' })).toHaveCount(0);
+  await expect(page.locator('.timeline-axis')).toBeVisible();
+  await expect(page.locator('[data-timeline-time]')).toHaveText('1767083100.000');
+  await expect(page.locator('.timeline-state')).toHaveCount(0);
+  const baseline = await page.locator('.timeline-line').getAttribute('d');
+  expect(baseline).toMatch(/^M0,([\d.]+)L[\d.]+,\1$/);
+  const { PNG } = await import('pngjs');
+  const line = (await page.locator('.timeline-line').boundingBox())!;
+  const capture = PNG.sync.read(
+    await page.screenshot({ path: test.info().outputPath('camera-only-timeline.png') }),
+  );
+  // A horizontal SVG path has zero-height bounds; its mask must still paint it.
+  for (const fraction of [0.2, 0.5, 0.8]) {
+    const x = Math.floor(line.x + line.width * fraction);
+    const y = Math.floor(line.y);
+    const brightness = [y - 1, y, y + 1].map((row) => capture.data[(row * capture.width + x) * 4]);
+    expect(Math.max(...brightness)).toBeGreaterThan(100);
+  }
   await expect(page.locator('.timeline-measurement')).toHaveCount(0);
   await page.getByRole('slider', { name: 'Recording timeline' }).focus();
   await page.keyboard.press('End');
   await expect(page.getByRole('slider')).toHaveAttribute('aria-valuenow', '6');
+  await expect(page.locator('[data-timeline-time]')).toHaveText('1767083106.000');
+  api.recording.start_time_ns = null;
+  await page.reload();
+  await expect(page.getByLabel('Recording seconds', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-timeline-time]')).toHaveText('0.000 s');
 });
 
 for (const width of [390, 1440]) {

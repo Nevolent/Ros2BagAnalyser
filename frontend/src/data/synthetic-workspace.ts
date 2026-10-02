@@ -148,6 +148,14 @@ function details(row: Recording, failure?: Job): AnalysisRecording {
 export function createSyntheticWorkspace(now = Date.now): WorkspaceService {
   const data = archive();
   const rows = data.recordings;
+  for (const row of rows) {
+    row.healthIssues =
+      row.health === 'Damaged'
+        ? ['E_SQLITE_INTEGRITY: source recording is damaged.']
+        : row.health === 'Review'
+          ? ['Metadata reports zero duration; message timestamps need review.']
+          : [];
+  }
   const start = now();
   const jobFor = (index: number, prefix: string): Job => ({
     id: prefix + '-' + index,

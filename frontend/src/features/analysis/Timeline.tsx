@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
   type RefObject,
@@ -59,6 +60,8 @@ export const Timeline = memo(function Timeline({
   const pendingSeek = useRef<number | null>(null);
   function scheduleSeek(time: number) {
     pendingSeek.current = time;
+    // Follow the pointer immediately; camera seeks and readouts stay frame-coalesced.
+    paintCursor(time);
     if (seekFrame.current) return;
     seekFrame.current = requestAnimationFrame(() => {
       seekFrame.current = 0;
@@ -76,6 +79,9 @@ export const Timeline = memo(function Timeline({
   const [helpOpen, setHelpOpen] = useState(false);
   const [notice, setNotice] = useState('');
   const plot = useRef<HTMLDivElement>(null);
+  const cursor = useRef<HTMLDivElement>(null);
+  const measurement = useRef<HTMLDivElement>(null);
+  const measurementLeft = useRef(Infinity);
   const menu = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const pointerDownOnTrigger = useRef(false);
@@ -106,6 +112,7 @@ export const Timeline = memo(function Timeline({
   function seek(time: number) {
     seekVersion.current++;
     update((previous) => atTime(previous, time));
+    paintCursor();
   }
   function togglePlayback() {
     if (!(duration > 0)) return;
@@ -152,20 +159,50 @@ export const Timeline = memo(function Timeline({
     observer.observe(plot.current!);
     return () => observer.disconnect();
   }, []);
+  function paintCursor(time = current.current.time) {
+    const element = cursor.current;
+    if (!element) return;
+    const { start, span } = current.current;
+    const position = clamp((time - start) / span, 0, 1) * size.width;
+    const visible = time >= start && time <= start + span;
+    plot.current?.setAttribute('aria-valuenow', String(Number(time.toFixed(3))));
+    element.style.transform = `translate3d(${position}px, 0, 0)`;
+    element.style.display = visible ? '' : 'none';
+    const lifted = String(visible && position >= measurementLeft.current);
+    if (measurement.current?.getAttribute('data-lifted') !== lifted)
+      measurement.current?.setAttribute('data-lifted', lifted);
+  }
+  useLayoutEffect(() => {
+    measurementLeft.current = size.width - (measurement.current?.offsetWidth ?? 0) - 10;
+    paintCursor(pendingSeek.current ?? current.current.time);
+  }, [state, size]);
   useEffect(() => {
     if (!state.playing) return;
     let previous = performance.now();
+    let lastReadout = previous;
     let frame = 0;
     function tick(now: number) {
       if (!current.current.playing) return;
       const elapsed = (now - previous) / 1000;
       previous = now;
-      update((value) => atTime(value, value.time + elapsed));
+      const before = current.current;
+      current.current = atTime(before, before.time + elapsed);
+      paintCursor();
+      // Keep movement at the display refresh rate; readouts and camera drift
+      // checks need far fewer React commits, especially on 120 Hz displays.
+      if (
+        now - lastReadout >= 50 ||
+        !current.current.playing ||
+        before.start !== current.current.start
+      ) {
+        lastReadout = now;
+        setState(current.current);
+      }
       if (current.current.playing) frame = requestAnimationFrame(tick);
     }
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [state.playing, duration]);
+  }, [state.playing, duration, size.width]);
   useEffect(() => {
     videos.current = Array.from(
       workspaceRef.current?.querySelectorAll<HTMLVideoElement>('.analysis-camera video') ?? [],
@@ -237,7 +274,7 @@ export const Timeline = memo(function Timeline({
         const windowStart = clamp((start + end - span) / 2, 0, duration - span);
         update({ span, start: windowStart });
         setNotice(
-          hasTelemetry
+          bundle.absoluteTime !== false
             ? `Zoomed to Unix time ${formatUnix(windowStart)} through ${formatUnix(windowStart + span)}.`
             : `Zoomed to recording position ${windowStart.toFixed(1)} through ${(windowStart + span).toFixed(1)} seconds.`,
         );
@@ -328,7 +365,7 @@ export const Timeline = memo(function Timeline({
     switch (event.key) {
       case ' ':
       case 'Enter':
-        togglePlayback();
+        if (!event.repeat) togglePlayback();
         break;
       case 'ArrowRight':
       case 'ArrowUp':
@@ -359,6 +396,37 @@ export const Timeline = memo(function Timeline({
     }
     event.preventDefault();
   }
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        interaction.current
+      )
+        return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (
+        target?.closest(
+          'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"], [role="menu"], [role="listbox"], [role="separator"]',
+        ) ||
+        (target?.closest('[role="slider"]') && !plot.current?.contains(target)) ||
+        document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')
+      )
+        return;
+      if (event.key === ' ') {
+        event.preventDefault();
+        if (!event.repeat) togglePlayback();
+      } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        event.preventDefault();
+        const direction = ['ArrowRight', 'ArrowUp'].includes(event.key) ? 1 : -1;
+        seek(current.current.time + direction * (event.shiftKey ? 10 : 1));
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [duration]);
   function menuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     let index = channelNames.findIndex(
       (name) => options.current.get(name) === document.activeElement,
@@ -424,6 +492,7 @@ export const Timeline = memo(function Timeline({
     return visible;
   }, [signal, state.start, state.span, size.width, duration]);
   const path = useMemo(() => {
+    if (!hasTelemetry) return `M0,${y(0)}L${size.width},${y(0)}`;
     if (segments)
       return segments
         .map((segment) =>
@@ -445,7 +514,7 @@ export const Timeline = memo(function Timeline({
     return timestamps
       .map((time, i) => `${i ? 'L' : 'M'}${x(time).toFixed(3)},${y(sample(time) ?? 0).toFixed(3)}`)
       .join('');
-  }, [state.start, state.span, signal, size, duration, segments]);
+  }, [state.start, state.span, signal, size, duration, segments, hasTelemetry]);
   const area = useMemo(
     () =>
       segments
@@ -481,7 +550,8 @@ export const Timeline = memo(function Timeline({
       className="cn-card analysis-timeline bg-secondary shadow-none ring-0 dark:bg-secondary/50"
       data-slot="card"
       data-component="imu-timeline"
-      aria-label="IMU timeline"
+      aria-label={hasTelemetry ? 'IMU timeline' : 'Recording timeline'}
+      style={{ '--timeline-plot-bottom': `${bottom}px` } as CSSProperties}
     >
       <div className="analysis-graph-header" data-slot="card-header">
         <div className="analysis-graph-heading">
@@ -505,103 +575,109 @@ export const Timeline = memo(function Timeline({
               )}
             </svg>
           </button>
-          <div className="timeline-channel-picker">
-            <button
-              ref={trigger}
-              className="timeline-channel-trigger"
-              type="button"
-              data-channel-trigger=""
-              aria-label="Choose sensor graph"
-              disabled={!channelNames.length}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              aria-controls="timeline-channel-menu"
-              onPointerDown={() => {
-                pointerDownOnTrigger.current = true;
-              }}
-              onClick={() => {
-                pointerDownOnTrigger.current = false;
-                setMenuOpen((open) => !open);
-                setHelpOpen(false);
-              }}
-              onKeyDown={(event) => {
-                if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
-                  event.preventDefault();
-                  setMenuOpen(true);
+          {channelNames.length > 1 ? (
+            <div className="timeline-channel-picker">
+              <button
+                ref={trigger}
+                className="timeline-channel-trigger"
+                type="button"
+                data-channel-trigger=""
+                aria-label="Choose sensor graph"
+                disabled={!channelNames.length}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-controls="timeline-channel-menu"
+                onPointerDown={() => {
+                  pointerDownOnTrigger.current = true;
+                }}
+                onClick={() => {
+                  pointerDownOnTrigger.current = false;
+                  setMenuOpen((open) => !open);
                   setHelpOpen(false);
-                }
-              }}
-            >
-              <span data-channel-label="">
-                {channelNames.length ? state.channel : 'Recording timeline'}
-              </span>
-              <svg
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="m5 6.5 3 3 3-3" />
-              </svg>
-            </button>
-            <div
-              ref={menu}
-              className="timeline-channel-menu"
-              id="timeline-channel-menu"
-              role="menu"
-              aria-label="Sensor channel"
-              hidden={!menuOpen}
-              onKeyDown={menuKeyDown}
-              onBlur={(event) => {
-                if (
-                  !pointerDownOnTrigger.current &&
-                  !event.currentTarget.contains(event.relatedTarget) &&
-                  !trigger.current?.contains(event.relatedTarget)
-                )
-                  setMenuOpen(false);
-              }}
-            >
-              {(['angular_velocity', 'linear_acceleration'] as const).map((group) => (
-                <div
-                  key={group}
-                  className="timeline-channel-group"
-                  role="group"
-                  aria-label={
-                    group === 'angular_velocity' ? 'Angular velocity' : 'Linear acceleration'
+                }}
+                onKeyDown={(event) => {
+                  if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+                    event.preventDefault();
+                    setMenuOpen(true);
+                    setHelpOpen(false);
                   }
+                }}
+              >
+                <span data-channel-label="">
+                  {channelNames.length ? state.channel : 'Recording timeline'}
+                </span>
+                <svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
                 >
-                  {channelNames
-                    .filter((name) => name.startsWith(group))
-                    .map((name) => (
-                      <button
-                        key={name}
-                        ref={(element) => {
-                          if (element) options.current.set(name, element);
-                          else options.current.delete(name);
-                        }}
-                        type="button"
-                        role="menuitemradio"
-                        aria-label={name}
-                        aria-checked={state.channel === name}
-                        data-channel={name}
-                        tabIndex={state.channel === name ? 0 : -1}
-                        onClick={() => {
-                          update({ channel: name });
-                          setMenuOpen(false);
-                          trigger.current?.focus();
-                        }}
-                      >
-                        <span>{name}</span>
-                        <span className="timeline-channel-unit">{channels[name].unit}</span>
-                      </button>
-                    ))}
-                </div>
-              ))}
+                  <path d="m5 6.5 3 3 3-3" />
+                </svg>
+              </button>
+              <div
+                ref={menu}
+                className="timeline-channel-menu"
+                id="timeline-channel-menu"
+                role="menu"
+                aria-label="Sensor channel"
+                hidden={!menuOpen}
+                onKeyDown={menuKeyDown}
+                onBlur={(event) => {
+                  if (
+                    !pointerDownOnTrigger.current &&
+                    !event.currentTarget.contains(event.relatedTarget) &&
+                    !trigger.current?.contains(event.relatedTarget)
+                  )
+                    setMenuOpen(false);
+                }}
+              >
+                {(['angular_velocity', 'linear_acceleration'] as const).map((group) => (
+                  <div
+                    key={group}
+                    className="timeline-channel-group"
+                    role="group"
+                    aria-label={
+                      group === 'angular_velocity' ? 'Angular velocity' : 'Linear acceleration'
+                    }
+                  >
+                    {channelNames
+                      .filter((name) => name.startsWith(group))
+                      .map((name) => (
+                        <button
+                          key={name}
+                          ref={(element) => {
+                            if (element) options.current.set(name, element);
+                            else options.current.delete(name);
+                          }}
+                          type="button"
+                          role="menuitemradio"
+                          aria-label={name}
+                          aria-checked={state.channel === name}
+                          data-channel={name}
+                          tabIndex={state.channel === name ? 0 : -1}
+                          onClick={() => {
+                            update({ channel: name });
+                            setMenuOpen(false);
+                            trigger.current?.focus();
+                          }}
+                        >
+                          <span>{name}</span>
+                          <span className="timeline-channel-unit">{channels[name].unit}</span>
+                        </button>
+                      ))}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          ) : (
+            <span className="timeline-channel-label" data-channel-label="">
+              {hasTelemetry ? state.channel : 'Recording timeline'}
+            </span>
+          )}
         </div>
         <div className="analysis-graph-actions">
           <button
@@ -691,11 +767,17 @@ export const Timeline = memo(function Timeline({
           hidden={!helpOpen}
         >
           <p>
-            Hold <kbd>Shift</kbd> and drag on the graph to zoom in.
+            Press <kbd>Space</kbd> to play or pause, and arrow keys to seek. Hold <kbd>Shift</kbd>{' '}
+            for ten-second steps, or drag on the graph to zoom in.
           </p>
         </div>
       </div>
       <div className="timeline-content" data-slot="card-content">
+        {bundle.message && (
+          <p className="timeline-state" role="status">
+            {bundle.message}
+          </p>
+        )}
         <div
           ref={plot}
           className={`timeline-plot${shift ? ' is-shift-ready' : ''}${selection ? ' is-selecting' : ''}${dragging ? ' is-scrubbing' : ''}`}
@@ -757,11 +839,6 @@ export const Timeline = memo(function Timeline({
           onPointerCancel={() => finishInteraction(true)}
           onLostPointerCapture={() => finishInteraction(true)}
         >
-          {bundle.message && (
-            <p className="timeline-state" role="status">
-              {bundle.message}
-            </p>
-          )}
           <svg
             className="timeline-static"
             data-timeline-trace-svg=""
@@ -780,7 +857,14 @@ export const Timeline = memo(function Timeline({
                 <stop offset="98%" stopColor="white" />
                 <stop offset="100%" stopColor="white" stopOpacity="0" />
               </linearGradient>
-              <mask id="timeline-grid-mask">
+              <mask
+                id="timeline-grid-mask"
+                maskUnits="userSpaceOnUse"
+                x="0"
+                y="0"
+                width={size.width}
+                height={size.height}
+              >
                 <rect width={size.width} height={size.height} fill="url(#timeline-edge-fade)" />
               </mask>
               <linearGradient
@@ -796,7 +880,14 @@ export const Timeline = memo(function Timeline({
                 <stop offset="97%" stopColor="white" />
                 <stop offset="100%" stopColor="white" stopOpacity="0" />
               </linearGradient>
-              <mask id="timeline-area-edge-mask">
+              <mask
+                id="timeline-area-edge-mask"
+                maskUnits="userSpaceOnUse"
+                x="0"
+                y="0"
+                width={size.width}
+                height={size.height}
+              >
                 <rect
                   width={size.width}
                   height={size.height}
@@ -806,17 +897,17 @@ export const Timeline = memo(function Timeline({
             </defs>
             <g className="timeline-grid">
               <g mask="url(#timeline-grid-mask)">
-                {(hasData ? signal.ticks : []).map((tick) => (
+                {(hasData ? signal.ticks : [0]).map((tick) => (
                   <line key={tick} x1="0" x2={size.width} y1={y(tick)} y2={y(tick)} />
                 ))}
               </g>
-              {(hasData ? signal.ticks : []).map((tick) => (
+              {(hasData ? signal.ticks : [0]).map((tick) => (
                 <text key={tick} x="9" y={y(tick) - 7}>
                   {bundle.timestamped ? Number(tick.toPrecision(4)) : tick}
                 </text>
               ))}
             </g>
-            <Trace path={path} area={area} singleSamples={singleSamples} />
+            <Trace path={path} area={hasTelemetry ? area : ''} singleSamples={singleSamples} />
           </svg>
           <svg
             data-timeline-svg=""
@@ -844,7 +935,7 @@ export const Timeline = memo(function Timeline({
                   y1={top}
                   y2={size.height - bottom}
                 />
-                {hasTelemetry && (
+                {duration > 0 && (
                   <>
                     <text
                       x={clamp(x(selectionStart) + 5, 5, Math.max(5, size.width - 89))}
@@ -867,20 +958,14 @@ export const Timeline = memo(function Timeline({
             )}
           </svg>
           <div
+            ref={cursor}
             className="timeline-cursor"
             aria-hidden="true"
-            style={{
-              left: `${Math.round(clamp(x(state.time), 0, size.width))}px`,
-              top,
-              bottom,
-              display:
-                state.time < state.start || state.time > state.start + state.span
-                  ? 'none'
-                  : undefined,
-            }}
+            style={{ top, bottom }}
           />
           {hasTelemetry && (
             <div
+              ref={measurement}
               className="timeline-measurement"
               title={
                 state.time > (signal.coverageEnd ?? Infinity)
@@ -893,8 +978,11 @@ export const Timeline = memo(function Timeline({
             </div>
           )}
         </div>
-        {hasTelemetry && (
-          <div className="timeline-axis" aria-label="Unix timestamps">
+        {duration > 0 && (
+          <div
+            className="timeline-axis"
+            aria-label={bundle.absoluteTime === false ? 'Recording seconds' : 'Unix timestamps'}
+          >
             <time
               data-timeline-time=""
               dateTime={
@@ -902,7 +990,9 @@ export const Timeline = memo(function Timeline({
                   ? undefined
                   : new Date((startUnix + state.time) * 1000).toISOString()
               }
-              title="Current Unix time"
+              title={
+                bundle.absoluteTime === false ? 'Current recording position' : 'Current Unix time'
+              }
             >
               {formatUnix(state.time)}
             </time>
@@ -915,7 +1005,9 @@ export const Timeline = memo(function Timeline({
                       (startUnix + Math.min(duration, state.start + state.span)) * 1000,
                     ).toISOString()
               }
-              title="Visible end Unix time"
+              title={
+                bundle.absoluteTime === false ? 'Visible end position' : 'Visible end Unix time'
+              }
             >
               {formatUnix(Math.min(duration, state.start + state.span))}
             </time>

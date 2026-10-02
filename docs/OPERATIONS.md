@@ -208,7 +208,7 @@ For rollback, close writes and stop services before switching releases.
 Code-only rollback requires compatibility with the current schema. Otherwise
 restore the verified database into a new target with its derived-state policy,
 update configuration, preflight and smoke-test, then reopen access. Do not
-invent down migrations; schema 0007 is not automatically safe for older code.
+invent down migrations; schema 0008 is not automatically safe for older code.
 
 ## Source checks and incidents
 

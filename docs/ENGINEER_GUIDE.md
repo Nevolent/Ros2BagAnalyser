@@ -39,7 +39,9 @@ Processing loads all queue, failure and history rows automatically. The active
 card covers the whole recording preparation, including camera and IMU outputs.
 It stays visible between outputs. Its percentage compares their combined active
 elapsed time with the combined estimated runtime, caps at 99%, and changes to Estimate exceeded when
-the estimate runs out. It is a time estimate, not measured completion.
+the estimate runs out. It is a time estimate, not measured completion. Estimates
+adapt to the ten most recent compatible successful outputs, keeping older history
+visible and allowing extra time for slower runs.
 Cancel takes effect at a safe checkpoint; the UI dismisses the job immediately
 and restores it with an error if the request fails. Worker restart
 interrupts running work; that attempt needs explicit retry. Browser refresh
@@ -47,7 +49,11 @@ preserves the queue and completed output.
 
 Folders start expanded. Folder choices, filters, sorting, selections, scrolling,
 panel settings and the last Analysis recording/channel/zoom/position survive
-switching pages during the browser session. Playback stops when leaving Analysis.
+switching pages during the browser session. In Analysis, Space plays/pauses and
+arrows seek one second (Shift: ten seconds), without needing to focus the graph.
+Text entry, menus, dialogs and resizers keep their own keyboard controls.
+Playback stops when leaving Analysis. Camera-only recordings retain Unix time
+from recording metadata and a neutral zero baseline, without an IMU selector.
 Confirmation dialogs close immediately; background request failures appear in
 a dismissible message.
 

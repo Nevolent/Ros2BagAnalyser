@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 
 
-MAX_ESTIMATE_SAMPLES = 20
+MAX_ESTIMATE_SAMPLES = 10
+ESTIMATE_METHOD = "recent_rate_v2"
 MAX_ESTIMATED_TOTAL_MS = 2**63 - 1
 
 
@@ -37,17 +38,18 @@ def estimate_total_ms(
     if len(valid) < 2:
         return FrozenEstimate(None, "insufficient_history", len(valid))
 
+    # An elapsed/estimate progress bar needs headroom: a median will be exceeded
+    # by roughly half of comparable runs. Use the nearest-rank 80th percentile
+    # with 15% headroom, retaining exact arithmetic for large byte counts.
+    # Callers supply newest first, so ten fresh successes retire older samples
+    # from prediction without deleting any processing history.
     rates = sorted(Fraction(item.runtime_ms, item.work_units) for item in valid)
-    middle = len(rates) // 2
-    if len(rates) % 2:
-        median_rate = rates[middle]
-    else:
-        median_rate = (rates[middle - 1] + rates[middle]) / 2
-    predicted = median_rate * work_units
+    rate = rates[(4 * len(rates) + 4) // 5 - 1]
+    predicted = rate * work_units * Fraction(115, 100)
     predicted_ms = (predicted.numerator + predicted.denominator - 1) // predicted.denominator
     if predicted_ms <= 0 or predicted_ms > MAX_ESTIMATED_TOTAL_MS:
         return FrozenEstimate(None, "insufficient_history", len(valid))
-    return FrozenEstimate(predicted_ms, "median_rate_v1", len(valid))
+    return FrozenEstimate(predicted_ms, ESTIMATE_METHOD, len(valid))
 
 
 __all__ = [

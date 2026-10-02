@@ -52,11 +52,8 @@
   display: none;
 }
 .timeline-state {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  pointer-events: none;
+  flex: none;
+  padding-block: 4px;
   color: var(--muted-foreground);
   font-size: 12px;
 }

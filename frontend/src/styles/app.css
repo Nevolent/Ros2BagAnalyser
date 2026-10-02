@@ -158,6 +158,8 @@ main[data-slot='sidebar-inset'] {
   width: 24px;
   height: 24px;
   margin-left: auto;
+  /* Align the visible icon edge with the panel's right-aligned values. */
+  margin-right: -6px;
   border-radius: 5px;
   color: var(--muted-foreground);
   cursor: pointer;
@@ -169,6 +171,9 @@ main[data-slot='sidebar-inset'] {
 .folder-toggle svg {
   width: 14px;
   height: 14px;
+}
+.recordings-workspace .folder-toggle {
+  margin-right: -4px;
 }
 .folder-reopen {
   display: grid;

@@ -20,7 +20,7 @@ test('red catalog statuses show their own safe diagnostics on the left and suppo
   const failed = page.locator('.bag-table tbody').getByText('Failed', { exact: true });
   const tooltip = page.getByRole('tooltip').and(page.locator('.recording-diagnostic-tooltip'));
   await damaged.hover();
-  await expect(tooltip).toHaveText('E_SOURCE: <b>Database is malformed.</b>');
+  await expect(tooltip).toHaveText('<b>Database is malformed.</b>');
   await expect(tooltip.locator('b')).toHaveCount(0);
   const anchor = (await damaged.boundingBox())!;
   const popup = (await tooltip.boundingBox())!;
@@ -30,9 +30,7 @@ test('red catalog statuses show their own safe diagnostics on the left and suppo
   await page.getByRole('heading', { name: 'Recordings', level: 1 }).hover();
   await expect(tooltip).toHaveCount(0);
   await failed.focus();
-  await expect(tooltip).toHaveText(
-    `Front-camera preview: ${diagnostic.code}: ${diagnostic.message}`,
-  );
+  await expect(tooltip).toHaveText(`Front-camera preview: ${diagnostic.message}`);
   await expect(failed).toHaveAttribute('aria-describedby', await tooltip.getAttribute('id'));
   await expect(tooltip.locator('script')).toHaveCount(0);
   await page.keyboard.press('Escape');
@@ -637,7 +635,9 @@ for (const width of [390, 1440]) {
     };
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/#/analysis/42');
-    await expect(page.locator('.recording-errors')).toContainText('synthetic_error');
+    await expect(page.locator('.recording-errors')).toContainText(
+      'A diagnostic with a long value:',
+    );
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );

@@ -1,22 +1,27 @@
+import { conciseIssues } from '../../data/diagnostics';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 /** Keep diagnostics outside the scrolling table so the left-hand popup is never clipped. */
 export function StatusDiagnostic({ status, issues }: { status: string; issues: string[] }) {
   const id = useId();
-  const target = useRef<HTMLSpanElement>(null);
+  const target = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
+  const showTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [open, setOpen] = useState(false);
   function show() {
     clearTimeout(hideTimer.current);
-    setOpen(true);
+    clearTimeout(showTimer.current);
+    showTimer.current = setTimeout(() => setOpen(true), 100);
   }
   function hide() {
+    clearTimeout(showTimer.current);
     clearTimeout(hideTimer.current);
     setOpen(false);
   }
   function leave() {
+    clearTimeout(showTimer.current);
     clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
       if (document.activeElement !== target.current) setOpen(false);
@@ -60,21 +65,33 @@ export function StatusDiagnostic({ status, issues }: { status: string; issues: s
     window.addEventListener('resize', hide, { signal });
     return () => controller.abort();
   }, [open]);
-  useEffect(() => () => clearTimeout(hideTimer.current), []);
+  useEffect(
+    () => () => {
+      clearTimeout(hideTimer.current);
+      clearTimeout(showTimer.current);
+    },
+    [],
+  );
   return (
     <>
-      <span
+      <button
+        type="button"
         ref={target}
         className="bag-status status-error recording-status-diagnostic"
         tabIndex={0}
         aria-describedby={open ? id : undefined}
         onPointerEnter={show}
         onPointerLeave={leave}
+        onClick={(event) => {
+          event.stopPropagation();
+          clearTimeout(showTimer.current);
+          setOpen((value) => !value);
+        }}
         onFocus={show}
         onBlur={leave}
       >
         {status}
-      </span>
+      </button>
       {open &&
         createPortal(
           <div
@@ -85,7 +102,7 @@ export function StatusDiagnostic({ status, issues }: { status: string; issues: s
             onPointerEnter={show}
             onPointerLeave={leave}
           >
-            {issues.map((issue, index) => (
+            {conciseIssues(issues).map((issue, index) => (
               <p key={index}>{issue}</p>
             ))}
           </div>,

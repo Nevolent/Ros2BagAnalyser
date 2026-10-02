@@ -1,6 +1,27 @@
 import type { AnalysisRecording } from '../types';
 import { analysisBundle } from './analysis';
 export const analysisRecording: AnalysisRecording = {
+  topics: [
+    {
+      name: '/camera/image_raw',
+      message_type: 'sensor_msgs/msg/Image',
+      serialization_format: 'cdr',
+      message_count: '12000',
+    },
+    {
+      name: '/imu/data',
+      message_type: 'sensor_msgs/msg/Imu',
+      serialization_format: 'cdr',
+      message_count: '80000',
+    },
+    {
+      name: '/robot/odometry',
+      message_type: 'nav_msgs/msg/Odometry',
+      serialization_format: 'cdr',
+      message_count: '20000',
+    },
+  ],
+
   name: 'bunker_testing_2025-12-30_10-25-00.bag',
   bundle: analysisBundle,
   info: [

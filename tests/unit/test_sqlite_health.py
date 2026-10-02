@@ -36,13 +36,14 @@ def test_probe_enforces_stable_readonly_connection_and_instruction_budget(
         def __init__(self, connection: sqlite3.Connection) -> None:
             self.connection = connection
 
-        def execute(self, statement: str):
+        def execute(self, statement: str, parameters=()):
             statements.append(statement)
-            return self.connection.execute(statement)
+            return self.connection.execute(statement, parameters)
 
         def set_progress_handler(self, handler, interval: int) -> None:
-            captured["progress_handler"] = handler
-            captured["progress_interval"] = interval
+            if interval == sqlite_health.SQLITE_PROGRESS_INTERVAL:
+                captured["progress_handler"] = handler
+                captured["progress_interval"] = interval
             self.connection.set_progress_handler(handler, interval)
 
         def close(self) -> None:
@@ -162,7 +163,7 @@ def test_reports_malformed_schema_probe(
     create_rosbag_database(database)
 
     class MalformedConnection:
-        def execute(self, statement: str):
+        def execute(self, statement: str, parameters=()):
             if statement == "PRAGMA query_only = ON":
                 return None
             raise sqlite3.DatabaseError("database disk image is malformed")

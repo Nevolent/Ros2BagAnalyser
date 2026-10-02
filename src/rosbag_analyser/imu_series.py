@@ -22,6 +22,7 @@ from rosbag_analyser.catalog.paths import (
     source_file_identity,
 )
 from rosbag_analyser.catalog.types import SafeDiagnostic
+from rosbag_analyser.topic_selection import select_topic
 from rosbag_analyser.persistence.processing_repository import (
     ArtifactRecord,
     IMU_SERIES_KIND,
@@ -216,14 +217,13 @@ class ImuSourceResolver:
                     "catalog_source_changed",
                     "The recording changed after its last scan. Rescan before processing.",
                 )
-            matches = [topic for topic in metadata.topics if topic.name == self.topic_name]
-            if len(matches) != 1:
+            topic = select_topic(metadata.topics, self.topic_name, IMU_MESSAGE_TYPE)
+            if topic is None:
                 return self._unavailable(
                     record,
                     "imu_topic_unavailable",
-                    "The configured IMU topic is unavailable.",
+                    "No unique IMU stream was found. Configure a preference if several IMUs are present.",
                 )
-            topic = matches[0]
             if topic.message_type != IMU_MESSAGE_TYPE:
                 return self._unavailable(
                     record,

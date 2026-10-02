@@ -519,3 +519,32 @@ async def test_database_failure_does_not_leak_private_diagnostic() -> None:
     assert response.status_code == 503
     assert "secret" not in response.text
     assert "/private/archive" not in response.text
+
+
+def test_detail_exposes_saved_topic_inventory_gaps_and_identity_bound_camera_streams():
+    from rosbag_analyser.api.v1_schemas import recording_detail_response
+    inspection = {
+        "topics": [{"name": "/unusual/image", "message_type": "sensor_msgs/msg/Image",
+                    "serialization_format": "cdr", "message_count": "9007199254740993"}],
+        "timing": {"status": "partial", "messages_checked": 2000000, "origin_ns": "1700000000000000000",
+                   "gap_limit": 24, "gaps": [{"topic": "/unusual/image", "start_ns": "10",
+                   "end_ns": "6000000010", "duration_ns": "6000000000"}]},
+    }
+    recording = replace(_recording(), scan_details=inspection)
+    artifact = _artifact()
+    manifest = dict(artifact.manifest, streams=[
+        {"topic": "/unusual/image", "timing": {"coverage_start_ns": "100", "coverage_end_ns": "200"}},
+        {"topic": "/second/image", "timing": {"coverage_start_ns": "110", "coverage_end_ns": "190"}},
+    ])
+    analysis = _analysis()
+    analysis = replace(analysis, outputs=tuple(
+        replace(output, artifact=replace(artifact, manifest=manifest))
+        if output.kind == "front_preview" else output for output in analysis.outputs))
+    response = recording_detail_response(V1RecordingDetail(
+        detail=CatalogRecordingDetail(recording, ()), folder_path="site/day",
+        presentation_health="review", analysis=analysis)).model_dump()
+    assert response["topics"] == inspection["topics"]
+    assert response["timing"] == inspection["timing"]
+    streams = response["outputs"][0]["artifact"]["streams"]
+    assert streams[1]["url"] == "/api/recordings/12/front-preview/media/90/streams/1"
+    assert streams[1]["coverage_start_ns"] == "110"

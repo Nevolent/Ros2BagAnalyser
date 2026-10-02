@@ -213,9 +213,13 @@ test('missing front input is diagnosed while optional absence has no redundant e
   await expect(
     page.locator('.recording-assets .status-muted').filter({ hasText: 'Missing' }),
   ).toHaveCount(2);
-  await expect(page.locator('.recording-errors')).toContainText('front_topic_unavailable');
-  await expect(page.locator('.recording-errors')).not.toContainText('topdown_video_unavailable');
-  await expect(page.locator('.recording-errors')).not.toContainText('imu_topic_unavailable');
+  await expect(page.locator('.recording-errors')).toContainText(
+    'No usable raw camera stream was found.',
+  );
+  await expect(page.locator('.recording-errors')).not.toContainText('No top-down video was found.');
+  await expect(page.locator('.recording-errors')).not.toContainText(
+    'No unique IMU stream was found.',
+  );
   api.recording.outputs[2] = { kind: 'imu_series', state: 'failed', diagnostic };
   await expect(page.locator('.recording-errors')).toContainText(diagnostic.message);
 });

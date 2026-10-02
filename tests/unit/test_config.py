@@ -171,20 +171,20 @@ def test_environment_requires_all_settings(tmp_path: Path) -> None:
         AppConfig.from_environment({})
 
 
-def test_environment_requires_imu_topic(tmp_path: Path) -> None:
+def test_environment_allows_sensor_discovery_without_configured_topics(tmp_path: Path) -> None:
     archive = tmp_path / "archive"
     derived = tmp_path / "derived"
     archive.mkdir()
     derived.mkdir()
 
-    with pytest.raises(ConfigurationError, match="IMU_TOPIC"):
-        AppConfig.from_environment(
-            {
-                "ROS_BAG_ANALYSER_ARCHIVE_ROOT": str(archive),
-                "ROS_BAG_ANALYSER_DERIVED_ROOT": str(derived),
-                "ROS_BAG_ANALYSER_DATABASE_URL": DATABASE_URL,
-            }
-        )
+    config = AppConfig.from_environment({
+        "ROS_BAG_ANALYSER_ARCHIVE_ROOT": str(archive),
+        "ROS_BAG_ANALYSER_DERIVED_ROOT": str(derived),
+        "ROS_BAG_ANALYSER_DATABASE_URL": DATABASE_URL,
+    })
+    assert config.imu_topic == ""
+    assert config.front_topic == ""
+
 
 
 @pytest.mark.parametrize(

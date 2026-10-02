@@ -253,10 +253,9 @@ def test_missing_or_unsupported_prerequisites_are_unavailable_without_job(
     topic["topic_metadata"]["name"] = "/different/imu"
     metadata.write_text(yaml.safe_dump(document, sort_keys=False))
     repository.source = _source(metadata, database)
-    missing_topic = service.request(11)
-    assert missing_topic.state == "unavailable"
-    assert missing_topic.diagnostic is not None
-    assert missing_topic.diagnostic.code == "imu_topic_unavailable"
+    detected_topic = service.get_state(11)
+    assert detected_topic.state == "not_requested"
+    assert detected_topic.diagnostic is None
     assert repository.request_count == 0
 
     topic["topic_metadata"]["name"] = TOPIC

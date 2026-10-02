@@ -72,6 +72,7 @@ class RecordingScanResult:
     diagnostic: SafeDiagnostic | None
     source_revision: str
     components: tuple[SourceComponentResult, ...]
+    scan_details: dict | None = None
     preparation_facts: RecordingPreparationFacts | None = field(
         default=None,
         compare=False,

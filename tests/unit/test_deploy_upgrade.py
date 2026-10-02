@@ -90,7 +90,6 @@ def upgrade_fixture(tmp_path, monkeypatch, failure=None):
     candidate, previous = tmp_path / 'git-new', tmp_path / 'git-old'
     item = deploy.Upgrade(candidate, previous, True, '/tmp/rosbag-vm-fixture')
     monkeypatch.setattr(item, 'database_settings', lambda: {})
-    monkeypatch.setattr(item, 'backup_settings', lambda: {})
     monkeypatch.setattr(item, 'jobs', lambda: [])
     monkeypatch.setattr(item, 'worker_active', lambda: True)
     monkeypatch.setattr(item, 'wait_worker_stopped', lambda: events.append(('worker-stopped',)))
@@ -118,6 +117,12 @@ def upgrade_fixture(tmp_path, monkeypatch, failure=None):
             assert marker.exists(), 'writes must remain closed through health checks'
             if failure == 'health' and 'git-new' in command[-1]:
                 raise subprocess.CalledProcessError(1, command)
+        if command[0] == 'curl':
+            release = candidate if migrated and failure != 'migration' else previous
+            return SimpleNamespace(stdout=json.dumps({
+                'status': 'ready', 'release_id': release.name,
+                'capabilities': {'worker_observation': {'state': 'online'}},
+            }), returncode=0)
         return SimpleNamespace(stdout='loaded\n', returncode=0)
     monkeypatch.setattr(deploy, 'run', command)
 
@@ -215,3 +220,65 @@ def test_backup_publisher_requires_matching_workstation_ack(tmp_path, monkeypatc
         for path in directory.iterdir():
             path.unlink()
         directory.rmdir()
+
+
+def test_backend_only_deployment_needs_no_migration_or_backup_credentials(tmp_path, monkeypatch):
+    item, events, marker = upgrade_fixture(tmp_path, monkeypatch)
+    item.migrate = False
+    monkeypatch.setattr(item, 'database_settings',
+                        lambda: (_ for _ in ()).throw(AssertionError("unused credentials")))
+    monkeypatch.setattr(item, 'wait_ready', lambda release: events.append(('healthy', release.name)))
+    item.execute()
+    assert not marker.exists()
+    assert ('verified-backup',) not in events
+    assert ('healthy', 'git-new') in events
+
+
+def test_health_requires_expected_release_and_online_worker(tmp_path, monkeypatch):
+    item = deploy.Upgrade(tmp_path / 'new', tmp_path / 'old', False, None)
+    responses = iter([
+        {'status': 'ready', 'release_id': 'old'},
+        {'status': 'ready', 'release_id': 'new', 'capabilities': {'worker_observation': {'state': 'offline'}}},
+        {'status': 'ready', 'release_id': 'new', 'capabilities': {'worker_observation': {'state': 'online'}}},
+    ])
+    checks = []
+    def command(args, **kwargs):
+        checks.append(args)
+        return SimpleNamespace(stdout=json.dumps(next(responses)))
+    monkeypatch.setattr(deploy, 'run', command)
+    monkeypatch.setattr(deploy.time, 'sleep', lambda _: None)
+    item.wait_ready(item.candidate)
+    assert len(checks) == 3
+
+
+def test_backup_uses_local_postgres_and_verifies_before_acknowledging(tmp_path, monkeypatch):
+    backup_root = tmp_path / 'backups'
+    backup_root.mkdir(mode=0o700)
+    monkeypatch.setattr(deploy, 'BACKUPS', backup_root)
+    monkeypatch.setattr(deploy, 'CONFIG', tmp_path / 'absent-config')
+    original_stat = Path.stat
+    def details(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if path == backup_root:
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=0)
+        return result
+    monkeypatch.setattr(Path, 'stat', details)
+    events = []
+    def dump(args, **kwargs):
+        assert args[:4] == ['runuser', '-u', 'postgres', '--']
+        assert '--format=custom' in args
+        kwargs['stdout'].write(b'recovery')
+        events.append('dump')
+    monkeypatch.setattr(deploy.subprocess, 'run', dump)
+    monkeypatch.setattr(deploy, 'run', lambda args, **kwargs: events.append('list'))
+    item = deploy.Upgrade(tmp_path / 'new', tmp_path / 'old', True, '/tmp/rosbag-vm-fixture')
+    monkeypatch.setattr(item, 'verify_restore', lambda dump: events.append('restore'))
+    def publish(dump, transfer):
+        assert dump.read_bytes() == b'recovery'
+        assert dump.stat().st_mode & 0o777 == 0o600
+        events.append('ack')
+        return {'sha256': 'fixture', 'size': 8}
+    monkeypatch.setattr(deploy, 'publish_backup', publish)
+    item.backup_database()
+    assert events == ['dump', 'list', 'restore', 'ack']
+    assert (item.backup / 'recovery.json').is_file()

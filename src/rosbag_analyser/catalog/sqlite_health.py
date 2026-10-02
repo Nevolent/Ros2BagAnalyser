@@ -7,6 +7,7 @@ import sqlite3
 import stat
 
 from .types import SafeDiagnostic, SourceCondition
+from .timing import inspect_timing
 
 
 SQLITE_HEADER_BYTES = 100
@@ -26,6 +27,7 @@ class SQLiteProbeResult:
     size_bytes: int | None
     mtime_ns: int | None
     revision_facts: tuple[tuple[str, int | str], ...]
+    timing: dict | None = None
 
 
 def probe_sqlite_database(path: Path) -> SQLiteProbeResult:
@@ -178,6 +180,11 @@ def _probe_schema_readonly(
                 }
                 for table_name in REQUIRED_ROS_COLUMNS
             }
+            timing = None
+            if ({row[0] for row in rows} == {"topics", "messages"}
+                    and all(required.issubset(table_columns[table])
+                            for table, required in REQUIRED_ROS_COLUMNS.items())):
+                timing = inspect_timing(connection)
         finally:
             connection.close()
     except sqlite3.DatabaseError as error:
@@ -234,6 +241,7 @@ def _probe_schema_readonly(
         )
     return SQLiteProbeResult(
         condition=SourceCondition.READABLE,
+        timing=timing,
         diagnostic=None,
         size_bytes=details.st_size,
         mtime_ns=details.st_mtime_ns,

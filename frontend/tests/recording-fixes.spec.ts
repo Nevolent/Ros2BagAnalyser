@@ -75,7 +75,7 @@ test('optional ready outputs cannot mark missing or empty front input ready', as
     .filter({ has: page.getByRole('link', { name: 'recording-42', exact: true }) });
   await expect(row).toContainText('Failed');
   await row.getByRole('link').click();
-  await expect(page.locator('.recording-errors')).toContainText('front_topic_empty');
+  await expect(page.locator('.recording-errors')).toContainText('The camera stream has no frames.');
 });
 
 test('fresh camera requests recover automatically and persistent failures offer retry', async ({

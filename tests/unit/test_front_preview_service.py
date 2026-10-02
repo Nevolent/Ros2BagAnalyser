@@ -487,7 +487,7 @@ def test_damaged_recording_is_unavailable_and_creates_no_job(tmp_path: Path) -> 
     assert repository.request_count == 0
 
 
-def test_configured_topic_must_match_metadata_exactly(tmp_path: Path) -> None:
+def test_raw_camera_is_discovered_without_matching_configured_name(tmp_path: Path) -> None:
     archive = tmp_path / "archive"
     archive.mkdir()
     metadata, database = _write_source(archive)
@@ -502,6 +502,6 @@ def test_configured_topic_must_match_metadata_exactly(tmp_path: Path) -> None:
 
     resolution = resolver.resolve(11)
 
-    assert resolution.descriptor is None
-    assert resolution.diagnostic is not None
-    assert resolution.diagnostic.code == "front_topic_unavailable"
+    assert resolution.descriptor is not None
+    assert resolution.descriptor.topic.name == TOPIC
+    assert resolution.diagnostic is None

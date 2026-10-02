@@ -101,7 +101,28 @@ export interface RecordingAsset {
   format: string;
   status: string;
 }
+export interface RecordingTopic {
+  name: string;
+  message_type: string;
+  serialization_format: string;
+  message_count: string;
+}
+export interface TimingInspection {
+  status: 'complete' | 'partial';
+  messages_checked: number;
+  origin_ns: string | null;
+  gaps: { topic: string | null; start_ns: string; end_ns: string; duration_ns: string }[];
+}
+export interface CameraStream {
+  topic: string;
+  src: string;
+  start: number;
+  end: number;
+}
 export interface AnalysisRecording {
+  topics?: RecordingTopic[] | null;
+  timing?: TimingInspection | null;
+  healthIssues?: string[];
   id?: string;
   errors?: string[];
   name: string;
@@ -121,6 +142,7 @@ export interface AnalysisRecording {
     src: string;
     alt: string;
     media?: boolean;
+    streams?: CameraStream[];
     start?: number;
     end?: number;
     message?: string;

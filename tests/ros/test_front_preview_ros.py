@@ -126,3 +126,70 @@ def test_generated_ros_images_select_the_exact_v3_timing_mode(
             for frame in container.decode(video=0)
         ]
     assert times == pytest.approx(expected_times, abs=0.000_002)
+
+
+def test_real_ros_camera_bundle_publishes_each_stream_with_its_own_timing(tmp_path):
+    from types import SimpleNamespace
+    import os
+    import shutil
+    from rosbag_analyser.artifact_store import ArtifactStore
+    from rosbag_analyser.worker import SerialWorker
+    from conftest import inventory
+
+    serialization = pytest.importorskip("rclpy.serialization")
+    sensor_messages = pytest.importorskip("sensor_msgs.msg")
+    source = tmp_path / "source"
+    source.mkdir()
+    database = source / "generated.db3"
+    topics = (
+        TopicFact("/anything/color", "sensor_msgs/msg/Image", "cdr", 3),
+        TopicFact("/second/raw", "sensor_msgs/msg/Image", "cdr", 2),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            "CREATE TABLE topics(id INTEGER PRIMARY KEY, name TEXT, type TEXT, serialization_format TEXT);"
+            "CREATE TABLE messages(id INTEGER PRIMARY KEY, topic_id INTEGER, timestamp INTEGER, data BLOB);"
+            "CREATE INDEX timestamp_idx ON messages(timestamp);")
+        for topic_id, topic in enumerate(topics, 1):
+            connection.execute("INSERT INTO topics VALUES(?,?,?,?)",
+                               (topic_id, topic.name, topic.message_type, topic.serialization_format))
+            for frame in range(topic.message_count):
+                message = sensor_messages.Image()
+                message.width, message.height, message.step = 4, 2, 12
+                message.encoding = "rgb8"
+                message.data = bytes([20, frame, 200] * 8)
+                connection.execute("INSERT INTO messages(topic_id,timestamp,data) VALUES(?,?,?)",
+                                   (topic_id, 1_000_000_000 + topic_id * 100_000_000 + frame * 100_000_000,
+                                    serialization.serialize_message(message)))
+    identity = source_file_identity(database.stat())
+    descriptor = FrontSourceDescriptor(
+        recording_id=1, archive_relative_path="generated", metadata_path=source / "metadata.yaml",
+        database_path=database, metadata_identity=identity, database_identity=identity,
+        bag_start_ns=1_000_000_000, bag_duration_ns=500_000_000,
+        topic=topics[0], topics=topics, cache_identity="a" * 64)
+    before = inventory(source)
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    store = ArtifactStore(derived, Path(shutil.which("ffmpeg")), Path(shutil.which("ffprobe")))
+    completed, failures = [], []
+    repository = SimpleNamespace(
+        complete_job=lambda *args: completed.append(args),
+        fail_job=lambda *args: failures.append(args))
+    resolver = SimpleNamespace(resolve=lambda _: SimpleNamespace(descriptor=descriptor))
+    worker = SerialWorker(repository, resolver, FrontPreviewProcessor(V0_PREVIEW_PROFILE),
+                          store, "", "test-encoder")
+    worker._run_front_job(SimpleNamespace(id=1, recording_id=1, kind="front_preview", cache_identity="a" * 64))
+    assert failures == []
+    artifact = completed[0][1]
+    assert [stream["timing"]["coverage_start_ns"] for stream in artifact.manifest["streams"]] == [
+        "100000000", "200000000"]
+    store.validate_media(artifact.output_relative_path, artifact.size_bytes, artifact.cache_identity, artifact.manifest)
+    for index, topic in enumerate(topics):
+        opened = store.open_media(artifact.output_relative_path, artifact.size_bytes, artifact.cache_identity,
+                                  artifact.manifest, stream_index=index)
+        try:
+            with av.open(os.fdopen(os.dup(opened.descriptor), "rb")) as video:
+                assert len(list(video.decode(video=0))) == topic.message_count
+        finally:
+            os.close(opened.descriptor)
+    assert inventory(source) == before

@@ -68,7 +68,7 @@ def test_plans_all_three_available_targets_from_one_scan(tmp_path: Path) -> None
     assert all(target.diagnostic is None for target in targets)
 
 
-def test_missing_configured_topic_is_unavailable_without_hiding_other_targets(
+def test_unique_imu_is_discovered_without_a_matching_configured_name(
     tmp_path: Path,
 ) -> None:
     recording = _scanned_recording(tmp_path)
@@ -78,9 +78,8 @@ def test_missing_configured_topic_is_unavailable_without_hiding_other_targets(
 
     assert by_kind["front_preview"].target_state == "available"
     assert by_kind["topdown_preview"].target_state == "available"
-    assert by_kind["imu_series"].target_state == "unavailable"
-    assert by_kind["imu_series"].diagnostic is not None
-    assert by_kind["imu_series"].diagnostic.code == "imu_topic_unavailable"
+    assert by_kind["imu_series"].target_state == "available"
+    assert by_kind["imu_series"].diagnostic is None
 
 
 def test_missing_topdown_is_optional_but_an_invalid_companion_is_not(tmp_path: Path) -> None:

@@ -123,6 +123,24 @@ class CatalogScanner:
         ros_health, diagnostic = _aggregate_ros_health(
             metadata_component, metadata, database_component
         )
+        if metadata is not None and database_probe is not None and database_probe.timing:
+            timing = database_probe.timing
+            if timing["origin_ns"] is not None:
+                offset = int(timing["origin_ns"]) - metadata.start_time_ns
+                for gap in timing["gaps"]:
+                    gap["start_ns"] = str(int(gap["start_ns"]) + offset)
+                    gap["end_ns"] = str(int(gap["end_ns"]) + offset)
+        if diagnostic is None and database_probe is not None and database_probe.timing:
+            gaps = database_probe.timing["gaps"]
+            if gaps:
+                longest = gaps[0]
+                seconds = int(longest["duration_ns"]) / 1_000_000_000
+                offset = int(longest["start_ns"]) / 1_000_000_000
+                diagnostic = SafeDiagnostic(
+                    "recording_time_gap",
+                    f"Possible missing data: a {seconds:.1f} s timestamp gap near "
+                    f"{offset:.1f} s. Review the timeline; timestamps alone do not prove data loss.",
+                )
         source_size = _complete_source_size(components)
         source_revision = _source_revision(
             relative_recording,
@@ -145,6 +163,15 @@ class CatalogScanner:
             diagnostic=diagnostic,
             source_revision=source_revision,
             components=components,
+            scan_details={
+                "topics": [
+                    {"name": topic.name, "message_type": topic.message_type,
+                     "serialization_format": topic.serialization_format,
+                     "message_count": str(topic.message_count)}
+                    for topic in metadata.topics
+                ] if metadata is not None else None,
+                "timing": database_probe.timing if database_probe is not None else None,
+            },
             preparation_facts=RecordingPreparationFacts(
                 metadata=metadata,
                 metadata_identity=metadata_identity,

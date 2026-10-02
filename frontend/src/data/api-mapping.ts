@@ -1,3 +1,4 @@
+import { diagnosticMessage } from './diagnostics';
 import type { ActiveJob, Folder, Job, Recording } from './types';
 import type { ApiJob, Catalog, CatalogRecording, Kind, Overview } from './api-types';
 export const outputNames: Record<Kind, string> = {
@@ -48,7 +49,7 @@ export function recording(row: CatalogRecording): Recording {
     duration: duration(row.duration_ns),
     size: bytes(row.total_source_size_bytes),
     healthIssues: [
-      ...(row.diagnostic ? [`${row.diagnostic.code}: ${row.diagnostic.message}`] : []),
+      ...(row.diagnostic ? [diagnosticMessage(row.diagnostic)] : []),
       ...(row.presentation_health === 'readable' && row.duration_ns === '0'
         ? ['Metadata reports zero duration. Message timestamps have not been verified.']
         : []),
@@ -63,16 +64,15 @@ export function recording(row: CatalogRecording): Recording {
         (output) =>
           `${outputNames[output.kind]}: ${
             output.diagnostic
-              ? `${output.diagnostic.code}: ${output.diagnostic.message}`
+              ? diagnosticMessage(output.diagnostic)
               : `${labels[output.state] ?? output.state}. No diagnostic was provided.`
           }`,
       ),
-    health:
-      row.presentation_health !== 'readable'
-        ? 'Damaged'
-        : row.duration_ns === '0'
-          ? 'Review'
-          : 'Readable',
+    health: !['readable', 'review'].includes(row.presentation_health)
+      ? 'Damaged'
+      : row.presentation_health === 'review' || row.duration_ns === '0'
+        ? 'Review'
+        : 'Readable',
     analysis:
       row.outputs.some((output) => output.state === 'failed') ||
       row.outputs.some(
@@ -114,7 +114,7 @@ export function jobs(rows: ApiJob[], group: boolean): Job[] {
       ? [
           {
             output: outputNames[row.kind],
-            code: `${row.diagnostic.code}: ${row.diagnostic.message}`,
+            code: diagnosticMessage(row.diagnostic),
           },
         ]
       : row.state === 'failed'

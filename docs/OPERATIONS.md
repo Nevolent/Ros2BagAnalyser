@@ -81,7 +81,7 @@ as well as their grouping target.
 ## Routine deployment
 
 ```text
-reviewed/tested commit → ./vm deploy --push → immutable release → health/smoke
+reviewed/tested, pushed commit → ./vm deploy → immutable release → health/smoke
 ```
 
 Workstation settings live in mode-0600/0400
@@ -109,9 +109,14 @@ the deployer stops API and worker, creates a protected database dump, restores
 it into a fresh disposable database, and checks the previous release's schema.
 It copies and verifies the dump on this PC under a new private
 `.vm-reports/<run>-deploy/` directory, then waits for that acknowledgement before
-running the candidate migration service. Backup/restore roles, credentials and
-the migration unit must already be configured; missing prerequisites fail safely.
-The dump transfer is bounded to 10 GiB and ten minutes.
+running the candidate migration service. The sudo deployer runs local PostgreSQL inspection, dumping and disposable restore
+as the `postgres` OS account using peer authentication; a separate backup password
+is not required. The migration account and unit are checked before interruption.
+Missing prerequisites fail before changing the running release.
+The dump transfer is bounded to 10 GiB and ten minutes. Each SSH deployment attempt
+returns a private `result.json` beside any verified backup, recording its exit
+status. Success requires the expected API release and online worker; frontend-only
+updates and recovery also verify the expected API release before reporting success.
 
 The root-owned `/run/rosbag-analyser-maintenance` gate blocks API mutations and
 new worker claims until candidate preflight, API health/smoke and service startup
@@ -217,6 +222,14 @@ up or changing boot behavior. Verify TrueNAS VM-autostart separately; an
 application update does not require a NAS-host reboot.
 
 ## Backup and recovery
+
+If deployment stopped before activation and both services are down, run
+`./vm recover` from this PC and enter the VM sudo password. It requires a free
+deployment lock and the previous release still selected, checks that release's
+schema and that no jobs are running, then restarts services and clears maintenance
+only after API readiness and worker health pass. It does not change the database,
+restore a dump or switch release pointers. A schema mismatch requires the recovery
+procedure below. Do not rerun a failed deployment just to reopen the old version.
 
 With private backup environment and `PGPASSFILE` configured, run
 `deploy/scripts/backup-database BACKUP_DIRECTORY RELEASE_ID`. Keep the verified

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
@@ -85,11 +85,18 @@ class FakeRepository:
         return self.interrupted
 
 
+@dataclass
+class FakeFrontDescriptor:
+    cache_identity: str
+    topic: object
+    topics: tuple = ()
+
 class FakeResolver:
     def __init__(self) -> None:
-        self.descriptor = SimpleNamespace(
+        self.descriptor = FakeFrontDescriptor(
             cache_identity="a" * 64,
             topic=SimpleNamespace(
+                name="/camera/image_raw",
                 message_type="sensor_msgs/msg/Image",
                 serialization_format="cdr",
             ),
@@ -717,3 +724,43 @@ def test_deployment_gate_does_not_claim_or_change_queued_jobs(tmp_path, monkeypa
     monkeypatch.setattr(worker, '_run_job', lambda job: None)
     assert worker.run_once() is True
     assert repository.job is None
+
+
+def test_all_camera_streams_are_validated_and_published_as_one_bundle(tmp_path):
+    repository = FakeRepository(_job())
+    store = FakeArtifactStore(tmp_path)
+    resolver = FakeResolver()
+    topics = tuple(SimpleNamespace(name=name, message_type="sensor_msgs/msg/Image",
+                                  serialization_format="cdr")
+                   for name in ("/busiest", "/second"))
+    resolver.descriptor = replace(resolver.descriptor, topic=topics[0], topics=topics)
+    seen = []
+    class Processor(SuccessfulProcessor):
+        def process(self, descriptor, output_path, **kwargs):
+            seen.append((descriptor.topic.name, output_path.name))
+            return super().process(descriptor, output_path, **kwargs)
+    assert _worker(repository, Processor(), store, resolver).run_once()
+    assert repository.failures == []
+    assert seen == [("/busiest", "preview.mp4"), ("/second", "stream-1.mp4")]
+    assert [stream["topic"] for stream in store.published_manifest["streams"]] == ["/busiest", "/second"]
+    assert store.published_manifest["source"]["topic"] == "/busiest"
+
+
+def test_unsupported_depth_stream_does_not_hide_supported_color_stream(tmp_path):
+    repository = FakeRepository(_job())
+    store = FakeArtifactStore(tmp_path)
+    resolver = FakeResolver()
+    topics = tuple(SimpleNamespace(name=name, message_type="sensor_msgs/msg/Image",
+                                  serialization_format="cdr")
+                   for name in ("/depth", "/color"))
+    resolver.descriptor = replace(resolver.descriptor, topic=topics[0], topics=topics)
+    class Processor(SuccessfulProcessor):
+        def process(self, descriptor, output_path, **kwargs):
+            if descriptor.topic.name == "/depth":
+                raise FrontPreviewProcessingError("front_encoding_unsupported", "Unsupported encoding")
+            return super().process(descriptor, output_path, **kwargs)
+    _worker(repository, Processor(), store, resolver).run_once()
+    assert repository.failures == []
+    assert store.published_manifest["source"]["topic"] == "/color"
+    assert store.published_manifest["streams"][0]["output"]["file_name"] == "preview.mp4"
+    assert store.published_manifest["skipped_streams"][0]["topic"] == "/depth"

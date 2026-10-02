@@ -55,6 +55,10 @@ async def request_front_preview(
 
 
 @router.api_route(
+    "/recordings/{recording_id:int}/front-preview/media/{artifact_id:int}/streams/{stream_index:int}",
+    methods=["GET", "HEAD"],
+)
+@router.api_route(
     "/recordings/{recording_id:int}/front-preview/media/{artifact_id:int}",
     methods=["GET", "HEAD"],
 )
@@ -62,10 +66,12 @@ async def get_front_preview_media(
     recording_id: Annotated[int, PathParameter(gt=0)],
     artifact_id: Annotated[int, PathParameter(gt=0)],
     request: Request,
+    stream_index: int | None = None,
 ) -> RangeFileResponse:
     resolved = await _preview_call(
         request,
-        lambda: _service(request).resolve_media(recording_id, artifact_id),
+        lambda: _service(request).resolve_media(recording_id, artifact_id, stream_index)
+        if stream_index is not None else _service(request).resolve_media(recording_id, artifact_id),
     )
     if resolved is None:
         raise HTTPException(
@@ -84,7 +90,7 @@ async def get_front_preview_media(
             executor=request.app.state.media_read_executor,
             headers={
                 "Cache-Control": "private, no-cache, must-revalidate",
-                "ETag": f'"front-preview-{artifact.id}-{artifact.cache_identity}"',
+                "ETag": f'"front-preview-{artifact.id}-{artifact.cache_identity}-{stream_index}"',
             },
         )
     except BaseException:

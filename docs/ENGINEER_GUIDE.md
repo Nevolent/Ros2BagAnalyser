@@ -24,11 +24,25 @@ optional sources do not prevent available outputs from being prepared.
 Available cameras can still be reviewed with a recording timeline when IMU is
 unavailable.
 
+Recording details has a **Topics** view with searchable names, message types and
+counts. Preparing the front camera includes every supported raw image stream.
+The busiest stream opens first; a selector beside **Front** appears when more
+than one is available. Switching cameras preserves the shared timeline.
+Top-down companion files remain separate.
+
+A **Review** health label can indicate a large timestamp gap. Hover, focus or tap
+the label for the explanation; Recording details lists gap durations and locations.
+These are signs of possible missing data, not proof of a recording failure.
+An explicit rescan refreshes the topic inventory and bounded timestamp check.
+Older prepared camera previews need preparation again after that rescan to include
+all streams.
+
 ## States
 
 | State | Meaning |
 | --- | --- |
 | Readable / Damaged | Source health; inspect the diagnostic for the exact reason |
+| Review | Large timestamp gaps or zero metadata duration need inspection |
 | Not planned | Front preview is not prepared and no output is active or failed |
 | Queued / Processing | Work is waiting or active |
 | Ready | Front preview is validated; no output is active or failed |
@@ -67,12 +81,14 @@ the timeline end; this extension is not additional IMU data. IMU axes are raw an
 
 ## Current limits and support
 
-The service processes configured ROS Image and Imu topics in supported
+The service discovers standard ROS Image and Imu topics in supported
 uncompressed, single-file ROS 2 SQLite recordings. It is not a general bag
-converter or arbitrary-topic viewer. Original recordings remain unchanged;
+converter or arbitrary-topic payload viewer. Camera previews support `rgb8` and
+`bgr8`; other encodings are listed as skipped. A unique IMU is selected automatically;
+multiple IMUs require an operator preference. Original recordings remain unchanged;
 previews and telemetry live in separate storage.
 
 Report recording/job ID, expected and actual behavior, time and timezone,
-browser and visible error code. Avoid including recordings, credentials,
+browser and visible error message. Avoid including recordings, credentials,
 private paths or raw server logs. The operator handles access, rescans,
 storage and service recovery.

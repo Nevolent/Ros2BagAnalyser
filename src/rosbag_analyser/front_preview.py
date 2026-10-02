@@ -25,6 +25,7 @@ from rosbag_analyser.catalog.paths import (
     source_file_identity,
 )
 from rosbag_analyser.catalog.types import SafeDiagnostic
+from rosbag_analyser.topic_selection import select_topic, usable_topics
 from rosbag_analyser.config import PreviewProfile
 from rosbag_analyser.persistence.processing_repository import (
     ArtifactRecord,
@@ -39,7 +40,7 @@ from rosbag_analyser.persistence.processing_repository import (
 FRONT_PREVIEW_V2_PROCESSOR_VERSION = "front-preview-v2"
 FRONT_PREVIEW_V3_PROCESSOR_VERSION = "front-preview-v3"
 FRONT_TIMING_POLICY_V2 = "capture_header_affine_to_record_span_v2"
-PROCESSOR_VERSION = "front-preview-v4"
+PROCESSOR_VERSION = "front-preview-v5"
 FRONT_TIMING_POLICY = "image_header_affine_or_all_zero_record_timestamp_v3"
 FRONT_HEADER_TIMING_POLICY = FRONT_TIMING_POLICY_V2
 FRONT_ALL_ZERO_HEADER_TIMING_POLICY = (
@@ -65,6 +66,7 @@ class FrontSourceDescriptor:
     bag_duration_ns: int
     topic: TopicFact
     cache_identity: str
+    topics: tuple[TopicFact, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,14 +159,13 @@ class FrontSourceResolver:
                     "catalog_source_changed",
                     "The recording changed after its last scan. Rescan before processing.",
                 )
-            matches = [topic for topic in metadata.topics if topic.name == self.topic_name]
-            if len(matches) != 1:
+            topic = select_topic(metadata.topics, self.topic_name, IMAGE_MESSAGE_TYPE)
+            if topic is None:
                 return self._unavailable(
                     record,
                     "front_topic_unavailable",
-                    "The configured front-camera topic is unavailable.",
+                    "No usable raw image stream was found.",
                 )
-            topic = matches[0]
             if topic.message_type != IMAGE_MESSAGE_TYPE:
                 return self._unavailable(
                     record,
@@ -211,6 +212,7 @@ class FrontSourceResolver:
                 bag_start_ns=record.start_time_ns,
                 bag_duration_ns=record.duration_ns,
                 topic=topic,
+                topics=usable_topics(metadata.topics, IMAGE_MESSAGE_TYPE),
                 cache_identity=identity,
             ),
             duration_ns=record.duration_ns,
@@ -361,7 +363,7 @@ class FrontPreviewService:
         return _display_for_job(outcome.job, descriptor.bag_duration_ns)
 
     def resolve_media(
-        self, recording_id: int, artifact_id: int
+        self, recording_id: int, artifact_id: int, stream_index: int | None = None
     ) -> tuple[OpenedMedia, ArtifactRecord] | None:
         artifact = self.repository.get_current_artifact_for_delivery(
             recording_id,
@@ -377,6 +379,7 @@ class FrontPreviewService:
                 artifact.size_bytes,
                 artifact.cache_identity,
                 artifact.manifest,
+                **({"stream_index": stream_index} if stream_index is not None else {}),
             )
         except ArtifactStoreError:
             return None

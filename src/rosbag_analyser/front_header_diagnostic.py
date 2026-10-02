@@ -198,6 +198,10 @@ def resolve_front_source(
     support_error = metadata.support_diagnostic()
     if support_error is not None:
         raise FrontHeaderDiagnosticError(support_error.code, support_error.message)
+    if not front_topic:
+        from rosbag_analyser.topic_selection import usable_topics
+        candidates = usable_topics(metadata.topics, IMAGE_MESSAGE_TYPE)
+        front_topic = candidates[0].name if candidates else ""
     topic = _front_topic(metadata.topics, front_topic)
     try:
         database_path = resolve_declared_source(

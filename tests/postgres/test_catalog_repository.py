@@ -2745,3 +2745,28 @@ def test_recording_progress_keeps_completed_siblings_across_output_handoffs(
     assert retry_job.id == retried.output.job.id
     retry_overview = repository.processing_overview(queue_limit=None)
     assert [item.job.id for item in retry_overview.recording_jobs] == [retry_job.id]
+
+
+@pytest.mark.postgres
+def test_saved_topics_and_gap_inspection_survive_scan_upserts(postgres_url):
+    from dataclasses import replace
+    from rosbag_analyser.catalog.types import SafeDiagnostic
+    snapshot = _snapshot()
+    inspection = {
+        "topics": [{"name": "/raw/image", "message_type": "sensor_msgs/msg/Image",
+                    "serialization_format": "cdr", "message_count": "42"}],
+        "timing": {"status": "complete", "messages_checked": 42, "origin_ns": "100",
+                   "gaps": [{"topic": None, "start_ns": "20", "end_ns": "6000000020",
+                             "duration_ns": "6000000000"}], "gap_limit": 24},
+    }
+    recording = replace(snapshot.recordings[0], scan_details=inspection,
+                        diagnostic=SafeDiagnostic("recording_time_gap", "Possible missing data."))
+    snapshot = replace(snapshot, recordings=(recording,))
+    repository = CatalogRepository(postgres_url)
+    repository.apply_snapshot(snapshot)
+    row = repository.list_recordings()[0]
+    assert row.ros_health == "readable"
+    assert row.diagnostic.code == "recording_time_gap"
+    assert repository.get_recording(row.id).recording.scan_details == inspection
+    repository.apply_snapshot(snapshot)
+    assert repository.get_recording(row.id).recording.scan_details == inspection

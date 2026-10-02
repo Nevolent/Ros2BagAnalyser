@@ -88,7 +88,7 @@ class CatalogRecordingResponse(BaseModel):
     storage_format: str | None
     topic_count: int | None
     ros_health: str
-    presentation_health: Literal["readable", "damaged"]
+    presentation_health: Literal["readable", "review", "damaged"]
     diagnostic: DiagnosticResponse | None
     analysis_state: AnalysisState
     outputs: list[OutputFactResponse]
@@ -110,7 +110,43 @@ class SourceComponentResponse(BaseModel):
     diagnostic: DiagnosticResponse | None
 
 
+class RecordingTopicResponse(BaseModel):
+    name: str
+    message_type: str
+    serialization_format: str
+    message_count: str
+
+
+class TimingGapResponse(BaseModel):
+    topic: str | None
+    start_ns: str
+    end_ns: str
+    duration_ns: str
+
+
+class TimingInspectionResponse(BaseModel):
+    status: Literal["complete", "partial"]
+    messages_checked: int
+    origin_ns: str | None
+    gap_limit: int
+    gaps: list[TimingGapResponse]
+
+
+class SkippedStreamResponse(DiagnosticResponse):
+    topic: str
+
+
+class CameraStreamResponse(BaseModel):
+    index: int
+    topic: str
+    url: str
+    coverage_start_ns: str
+    coverage_end_ns: str
+
+
 class ReadyArtifactResponse(BaseModel):
+    streams: list[CameraStreamResponse] = Field(default_factory=list)
+    skipped_streams: list[SkippedStreamResponse] = Field(default_factory=list)
     id: int
     mime_type: str
     size_bytes: str
@@ -126,6 +162,8 @@ class RecordingOutputResponse(OutputFactResponse):
 
 
 class RecordingDetailResponse(CatalogRecordingResponse):
+    topics: list[RecordingTopicResponse] | None = None
+    timing: TimingInspectionResponse | None = None
     metadata_version: int | None
     message_count: str | None
     source_present: bool
@@ -368,6 +406,8 @@ def recording_detail_response(detail: V1RecordingDetail) -> RecordingDetailRespo
         presentation_health=detail.presentation_health,
         diagnostic=_diagnostic(recording.diagnostic),
         analysis_state=detail.analysis.analysis_state,
+        topics=(recording.scan_details or {}).get("topics"),
+        timing=(recording.scan_details or {}).get("timing"),
         metadata_version=recording.metadata_version,
         message_count=_number_string(recording.message_count),
         source_present=recording.source_present,
@@ -558,6 +598,14 @@ def _artifact_response(
         coverage_start_ns=str(artifact.coverage_start_ns),
         coverage_end_ns=str(artifact.coverage_end_ns),
         timestamp_provenance=provenance,
+        streams=[
+            CameraStreamResponse(index=index, topic=stream["topic"],
+                                 url=f"{url}/streams/{index}",
+                                 coverage_start_ns=stream["timing"]["coverage_start_ns"],
+                                 coverage_end_ns=stream["timing"]["coverage_end_ns"])
+            for index, stream in enumerate(artifact.manifest.get("streams", []))
+        ] if artifact.kind == "front_preview" else [],
+        skipped_streams=artifact.manifest.get("skipped_streams", []),
         url=url,
     )
 

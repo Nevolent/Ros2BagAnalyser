@@ -1,3 +1,4 @@
+import { diagnosticMessage } from './diagnostics';
 import type { AnalysisRecording } from './types';
 import type { Artifact, Detail, Kind } from './api-types';
 import { bytes, duration, labels, outputNames, recording, seconds } from './api-mapping';
@@ -57,8 +58,8 @@ export async function analysisRecording(
       .map((c) => c.diagnostic),
   ]
     .filter((d) => d != null)
-    .map((d) => `${d.code}: ${d.message}`);
-  if (row.health === 'Review')
+    .map(diagnosticMessage);
+  if (detail.duration_ns === '0')
     errors.push(
       'Metadata reports zero duration. The database schema was checked, but message timestamps have not been verified.',
     );
@@ -90,6 +91,20 @@ export async function analysisRecording(
         camera.start = seconds(output.artifact.coverage_start_ns);
         camera.end = seconds(output.artifact.coverage_end_ns);
         camera.message = '';
+        if (kind === 'front_preview' && output.artifact.streams?.length) {
+          camera.streams = output.artifact.streams.map((stream, index) => {
+            if (stream.index !== index || stream.url !== `${camera.src}/streams/${index}`)
+              throw new Error('Invalid camera stream URL.');
+            const start = seconds(stream.coverage_start_ns),
+              end = seconds(stream.coverage_end_ns);
+            if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start)
+              throw new Error('Invalid camera stream coverage.');
+            bundle.duration = Math.max(bundle.duration, end);
+            return { topic: stream.topic, src: stream.url, start, end };
+          });
+        }
+        for (const skipped of output.artifact.skipped_streams ?? [])
+          errors.push(`${skipped.topic}: ${skipped.message}`);
         bundle.duration = Math.max(bundle.duration, camera.end);
       } catch (error) {
         errors.push(String(error));
@@ -127,6 +142,9 @@ export async function analysisRecording(
   return {
     id: String(detail.id),
     name: detail.name,
+    topics: detail.topics,
+    timing: detail.timing,
+    healthIssues: row.healthIssues,
     bundle,
     errors: [...new Set(errors)],
     cameras,

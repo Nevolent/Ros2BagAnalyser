@@ -33,7 +33,7 @@ CATALOG_MAX_RECORDING_ENTRIES_ENV = (
 )
 PREPARE_MAX_RECORDINGS_ENV = "ROS_BAG_ANALYSER_PREPARE_MAX_RECORDINGS"
 
-DEFAULT_FRONT_TOPIC = "/kuupkulgur_v1/sensors/front_camera/image_raw"
+DEFAULT_FRONT_TOPIC = ""
 DEFAULT_IMU_COMPONENT = "angular_velocity.z"
 SUPPORTED_IMU_COMPONENTS = (
     "angular_velocity.x",
@@ -129,7 +129,7 @@ class AppConfig:
         database_url = _required(values, DATABASE_URL_ENV)
         if deployment_enabled:
             _validate_deployment_database_url(database_url)
-        imu_topic = _required(values, IMU_TOPIC_ENV)
+        imu_topic = values.get(IMU_TOPIC_ENV, "")
         return cls.create(
             archive_value,
             derived_value,
@@ -183,7 +183,7 @@ class AppConfig:
         derived_root: str | Path,
         database_url: str,
         *,
-        imu_topic: str,
+        imu_topic: str = "",
         front_topic: str = DEFAULT_FRONT_TOPIC,
         imu_component: str = DEFAULT_IMU_COMPONENT,
         preview_profile: str = DEFAULT_PREVIEW_PROFILE,
@@ -206,8 +206,8 @@ class AppConfig:
         )
         _reject_overlapping_roots(archive, derived)
         _validate_database_url(database_url)
-        front = _validated_topic(front_topic, "front-camera")
-        imu = _validated_topic(imu_topic, "IMU")
+        front = _validated_topic(front_topic, "front-camera") if front_topic else ""
+        imu = _validated_topic(imu_topic, "IMU") if imu_topic else ""
         component = _validated_imu_component(imu_component)
         profile = _validated_preview_profile(preview_profile)
         ffmpeg = _validated_executable(

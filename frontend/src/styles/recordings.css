@@ -9,6 +9,10 @@
 }
 .recording-status-diagnostic {
   cursor: help;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
   border-radius: 2px;
 }
 .recording-status-diagnostic:focus-visible {
@@ -26,7 +30,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   background: var(--popover);
-  color: var(--popover-foreground);
+  color: var(--status-error);
+  animation: diagnostic-enter 120ms ease-out;
   box-shadow: 0 4px 16px #0003;
   font-size: 12px;
   line-height: 18px;
@@ -289,4 +294,20 @@
 
 .recordings-workspace .bag-panel-header {
   justify-content: flex-start;
+}
+
+@keyframes diagnostic-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recording-diagnostic-tooltip {
+    animation: none;
+  }
 }

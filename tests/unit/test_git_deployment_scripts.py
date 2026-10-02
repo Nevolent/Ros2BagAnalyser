@@ -49,7 +49,8 @@ def test_vm_git_deployment_preserves_immutable_release_and_refuses_sensitive_cha
     assert 'upgrade' in deployer
     assert "wait_for_local_readiness" in deployer
     assert "attempt < 30" in deployer
-    assert "the restarted API did not become ready within 30 seconds" in deployer
+    assert "expected API release did not become ready within 30 checks" in deployer
+    assert 'h.get("release_id") == sys.argv[1]' in deployer
     assert "activate-release" in deployer
     assert "build-release" in deployer
     assert "rescan" not in deployer

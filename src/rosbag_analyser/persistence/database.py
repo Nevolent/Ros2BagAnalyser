@@ -18,6 +18,7 @@ class CatalogSchemaError(RuntimeError):
 
 
 EXPECTED_CATALOG_COLUMNS = {
+    ("recordings", "scan_details", "jsonb", "YES", "NO"),
     ("recordings", "id", "bigint", "NO", "YES"),
     ("recordings", "archive_relative_path", "text", "NO", "NO"),
     ("recordings", "display_name", "text", "NO", "NO"),

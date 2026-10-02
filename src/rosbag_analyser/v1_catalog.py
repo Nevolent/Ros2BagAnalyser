@@ -74,9 +74,7 @@ class V1CatalogService:
             V1CatalogItem(
                 recording=recording,
                 folder_path=_folder_path(recording.archive_relative_path),
-                presentation_health=(
-                    "readable" if recording.ros_health == "readable" else "damaged"
-                ),
+                presentation_health=_presentation_health(recording),
                 analysis=by_id[recording.id],
             )
             for recording in recordings
@@ -111,9 +109,7 @@ class V1CatalogService:
         return V1RecordingDetail(
             detail=detail,
             folder_path=_folder_path(recording.archive_relative_path),
-            presentation_health=(
-                "readable" if recording.ros_health == "readable" else "damaged"
-            ),
+            presentation_health=_presentation_health(recording),
             analysis=analysis,
         )
 
@@ -148,3 +144,11 @@ def _folder_nodes(items: tuple[V1CatalogItem, ...]) -> tuple[FolderNode, ...]:
 
 
 __all__ = ["V1CatalogService", "V1CatalogView", "V1RecordingDetail"]
+
+
+def _presentation_health(recording: CatalogRecording) -> str:
+    if recording.ros_health != "readable":
+        return "damaged"
+    if recording.diagnostic and recording.diagnostic.code == "recording_time_gap":
+        return "review"
+    return "readable"

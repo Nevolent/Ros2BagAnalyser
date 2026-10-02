@@ -50,13 +50,24 @@ unseen recordings missing. Scanning creates no processing jobs.
 
 Six domain tables hold state: `recordings`, `source_components`, `artifacts`,
 `jobs`, `catalog_state`, and `preparation_targets`. Migrations currently run
-through `0008_recent_estimates.sql`; applied migrations remain part of the upgrade
+through `0009_recording_inspection.sql`; applied migrations remain part of the upgrade
 path and must not be removed as old files.
 
 Ordinary catalog and processing reads use saved PostgreSQL projections. Each
 successful scan stores three preparation targets per recording. A changed
 planner/configuration needs an explicit rescan; browsing does not stat or parse
 the source per row. The worker independently revalidates inputs.
+
+The scan saves topic names, types and message counts in `recordings.scan_details`
+for the detail view. It also inspects record timestamps without loading payloads,
+using the same verified, immutable SQLite descriptor. Inspection is bounded to
+two million messages, five seconds and 256 Image/IMU topics per recording.
+Gaps must be at least five seconds and twenty times the median of the first
+1,024 positive intervals, with at least twenty intervals of cadence evidence.
+Checks cover the whole bag and individual camera/IMU streams; up to 24 largest
+gaps are saved with bag-relative locations. An incomplete check is labeled
+partial. Gap evidence sets presentation health to Review without changing source
+readability or processing eligibility; timestamps alone do not prove data loss.
 
 Missing paths retain internal history but disappear from the current catalog.
 A one-to-one move match preserves IDs, private cache anchors, jobs, and reusable
@@ -114,9 +125,21 @@ jobs and API clients, but are not exposed in the UI.
 
 | Output | Current behavior |
 | --- | --- |
-| Front preview | `front-preview-v4`; standard ROS Image `bgr8`/`rgb8`; H.264/yuv420p MP4 |
+| Front preview | `front-preview-v5`; all nonempty CDR ROS Image streams with `bgr8`/`rgb8`; one validated MP4 per supported stream |
 | Top-down preview | `topdown-preview-v2`; AVI frames timed by CSV Unix timestamps; H.264/yuv420p MP4 |
 | IMU | `imu-series-v2`; schema-2 JSON with three angular-velocity and three linear-acceleration axes |
+
+Camera discovery uses message type, CDR serialization and positive message count.
+All eligible camera topics form one preparation job and artifact bundle, ordered
+by message count (name breaks ties). The busiest supported stream is the default;
+unsupported encodings are skipped with an explicit detail diagnostic. Each MP4
+is independently timed and validated, then the whole bundle is published together.
+Stream URLs bind the artifact identity and numeric manifest index; delivery
+checks each file's identity and never accepts a topic name as a filesystem path.
+IMU discovery uses a configured preference if valid, otherwise a unique standard
+IMU stream. Several IMUs without a preference remain unavailable rather than
+mixing coordinate frames. Topic settings are optional. Existing saved targets
+need an explicit rescan after this selection-policy update.
 
 Front coverage uses measured ROS record endpoints. Valid, strictly increasing
 image-header timestamps are affinely mapped between those endpoints. Only a

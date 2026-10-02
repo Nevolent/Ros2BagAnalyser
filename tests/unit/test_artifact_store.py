@@ -555,3 +555,38 @@ def test_cleanup_rejects_workspace_not_owned_by_job(tmp_path: Path) -> None:
 
     assert captured.value.code == "workspace_ownership_invalid"
     assert workspace.exists()
+
+
+def test_stream_delivery_is_bound_to_validated_manifest_and_file_identity(tmp_path):
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    store = _store(derived)
+    workspace = store.create_workspace(91)
+    identity = "e" * 64
+    main, alternate = workspace / "preview.mp4", workspace / "stream-1.mp4"
+    main.write_bytes(b"primary")
+    alternate.write_bytes(b"alternate")
+    manifest = _manifest(main, identity)
+    manifest["output"]["file_name"] = "preview.mp4"
+    other = _manifest(alternate, identity)["output"]
+    other["file_name"] = "stream-1.mp4"
+    manifest["streams"] = [{"topic": "/a", "output": manifest["output"]},
+                           {"topic": "/b", "output": other}]
+    published = store.publish(workspace, 91, identity, manifest)
+    opened = store.open_media(published.output_relative_path, published.size_bytes,
+                              identity, manifest, stream_index=1)
+    try:
+        assert os.read(opened.descriptor, 100) == b"alternate"
+    finally:
+        os.close(opened.descriptor)
+    for index in (-1, 2):
+        with pytest.raises(ArtifactStoreError, match="unavailable"):
+            store.open_media(published.output_relative_path, published.size_bytes,
+                             identity, manifest, stream_index=index)
+    final = derived / published.output_relative_path
+    alternate = final.with_name("stream-1.mp4")
+    alternate.unlink()
+    alternate.symlink_to(main)  # No follow, even for a manifest-listed file.
+    with pytest.raises(ArtifactStoreError):
+        store.validate_media(published.output_relative_path, published.size_bytes,
+                             identity, manifest)

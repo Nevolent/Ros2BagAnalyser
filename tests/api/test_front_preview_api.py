@@ -336,3 +336,24 @@ async def test_missing_recording_and_not_ready_media_are_sanitized() -> None:
     assert missing_response.json()["detail"]["code"] == "recording_not_found"
     assert media_response.status_code == 404
     assert media_response.json()["detail"]["code"] == "front_preview_not_ready"
+
+
+async def test_selected_camera_stream_keeps_range_support_and_a_distinct_etag(tmp_path):
+    media = tmp_path / "stream.mp4"
+    media.write_bytes(b"0123456789")
+    class StreamsService(FakePreviewService):
+        def resolve_media(self, recording_id, artifact_id, stream_index=None):
+            if stream_index not in (None, 0, 1):
+                return None
+            return super().resolve_media(recording_id, artifact_id)
+    service = StreamsService(PreviewDisplay(True, "ready", 2_500_000_000, artifact=_artifact()),
+                             media_path=media)
+    async with client_for(service) as client:
+        response = await client.get("/api/recordings/7/front-preview/media/3/streams/1",
+                                    headers={"Range": "bytes=2-5"})
+        primary = await client.get("/api/recordings/7/front-preview/media/3")
+        missing = await client.get("/api/recordings/7/front-preview/media/3/streams/9")
+    assert response.status_code == 206
+    assert response.content == b"2345"
+    assert response.headers["etag"] != primary.headers["etag"]
+    assert missing.status_code == 404

@@ -17,6 +17,7 @@ from rosbag_analyser.catalog.types import (
     SourceRole,
 )
 from rosbag_analyser.config import PreviewProfile
+from rosbag_analyser.topic_selection import select_topic, TOPIC_SELECTION_POLICY
 from rosbag_analyser.front_preview import (
     CDR_SERIALIZATION,
     FRONT_TIMING_POLICY,
@@ -67,6 +68,7 @@ def _front_planner_identity(
             "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
             "timing_policy": timing_policy,
             "topic": front_topic,
+            "topic_selection": TOPIC_SELECTION_POLICY,
             "message_type": IMAGE_MESSAGE_TYPE,
             "serialization": CDR_SERIALIZATION,
             "profile": profile.identity_values(),
@@ -134,6 +136,7 @@ class PreparationPlanner:
                     "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
                     "series_schema_version": SERIES_SCHEMA_VERSION,
                     "topic": imu_topic,
+                    "topic_selection": TOPIC_SELECTION_POLICY,
                     "message_type": IMU_MESSAGE_TYPE,
                     "serialization": CDR_SERIALIZATION,
                     "default_component": imu_component,
@@ -206,7 +209,7 @@ class PreparationPlanner:
         common = self._ros_prerequisite(recording, facts)
         if common is not None:
             return self._unavailable(FRONT_PREVIEW_KIND, common.code, common.message)
-        topic = _one_topic(facts.metadata, self.front_topic)
+        topic = select_topic(facts.metadata.topics, self.front_topic, IMAGE_MESSAGE_TYPE)
         diagnostic = _topic_diagnostic(
             topic,
             expected_type=IMAGE_MESSAGE_TYPE,
@@ -301,7 +304,7 @@ class PreparationPlanner:
         common = self._ros_prerequisite(recording, facts)
         if common is not None:
             return self._unavailable(IMU_SERIES_KIND, common.code, common.message)
-        topic = _one_topic(facts.metadata, self.imu_topic)
+        topic = select_topic(facts.metadata.topics, self.imu_topic, IMU_MESSAGE_TYPE)
         diagnostic = _topic_diagnostic(
             topic,
             expected_type=IMU_MESSAGE_TYPE,
@@ -393,13 +396,6 @@ class PreparationPlanner:
         )
 
 
-def _one_topic(metadata: ParsedMetadata | None, name: str) -> TopicFact | None:
-    if metadata is None:
-        return None
-    matches = [topic for topic in metadata.topics if topic.name == name]
-    return matches[0] if len(matches) == 1 else None
-
-
 def _topic_diagnostic(
     topic: TopicFact | None,
     *,
@@ -411,7 +407,11 @@ def _topic_diagnostic(
     label: str,
 ) -> SafeDiagnostic | None:
     if topic is None:
-        return SafeDiagnostic(missing_code, f"The configured {label} topic is unavailable.")
+        return SafeDiagnostic(
+            missing_code,
+            "No unique IMU stream was found. Configure a preference if several IMUs are present."
+            if label == "IMU" else "No usable raw image stream was found.",
+        )
     if topic.message_type != expected_type:
         return SafeDiagnostic(type_code, f"The configured {label} topic type is unsupported.")
     if topic.serialization_format != CDR_SERIALIZATION:

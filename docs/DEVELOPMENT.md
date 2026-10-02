@@ -55,7 +55,7 @@ The existing WSL/Windows launcher remains supported:
 
 It reads private mode-0600/0400 files from
 `~/.config/rosbag-analyser/environment` and `database.env`. The first sets
-existing separate source/derived roots and front/IMU topics; the second holds
+existing separate source/derived roots and optional sensor-topic preferences; the second holds
 `ROS_BAG_ANALYSER_DATABASE_PASSWORD` and optional database host/user/name/port.
 The launcher defaults to PostgreSQL on the Windows host and sources Humble for
 the worker. File locations can be overridden with

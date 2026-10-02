@@ -7,12 +7,10 @@ test('synthetic red statuses show separate source and output diagnostics', async
   await expect(row).toHaveCount(1);
   const tooltip = page.getByRole('tooltip').and(page.locator('.recording-diagnostic-tooltip'));
   await row.getByText('Damaged', { exact: true }).hover();
-  await expect(tooltip).toHaveText('E_SQLITE_INTEGRITY: source recording is damaged.');
+  await expect(tooltip).toHaveText('source recording is damaged.');
   await row.getByText('Failed', { exact: true }).hover();
   await expect(tooltip).toHaveCount(1);
-  await expect(tooltip).toHaveText(
-    'Top-down preview: E_IMU_SCHEMA: angular velocity field is absent.',
-  );
+  await expect(tooltip).toHaveText('Top-down preview: angular velocity field is absent.');
   const table = (await page.locator('[data-component="recordings-table"]').boundingBox())!;
   await page.screenshot({
     path: test.info().outputPath('status-diagnostic.png'),

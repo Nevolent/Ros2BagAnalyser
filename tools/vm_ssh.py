@@ -279,6 +279,17 @@ def run(settings: dict[str, str], command: list[str], payload: bytes, *,
         return subprocess.CompletedProcess(remote, result.returncode, output, errors)
 
 
+def save_deployment_result(directory: Path, returncode: int) -> None:
+    report = {'exit_code': returncode, 'succeeded': returncode == 0,
+              'backup_verified': (directory / 'backup.json').is_file()}
+    path = directory / 'result.json'
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, 'w') as output:
+        json.dump(report, output, indent=2)
+        output.write('\n')
+    print(f'Deployment {"succeeded" if returncode == 0 else "failed"}; report: {path}', flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ('ssh', 'host', 'user'):
@@ -286,18 +297,26 @@ def main() -> int:
     parser.add_argument('--deployment', action='store_true', help='Copy and acknowledge migration backups on this PC')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    backup = None
     try:
-        backup = None
         if args.deployment:
             import datetime, uuid
             identity = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
             backup = Path(__file__).resolve().parents[1] / '.vm-reports' / (identity + '-deploy')
         result = run({'SSH': args.ssh, 'HOST': args.host, 'USER': args.user},
                      args.command, sys.stdin.buffer.read(), sudo=True, capture_output=False, deployment_backup=backup)
+        if backup is not None:
+            save_deployment_result(backup, result.returncode)
         if result.stderr:
             sys.stderr.buffer.write(result.stderr)
         return result.returncode
     except (OSError, ValueError, subprocess.SubprocessError) as error:
+        if (backup is not None and backup.is_dir() and backup.resolve() == backup
+                and not (backup / 'result.json').exists()):
+            try:
+                save_deployment_result(backup, 1)
+            except OSError:
+                pass
         print(f'vm: {error}', file=sys.stderr)
         return 1
 

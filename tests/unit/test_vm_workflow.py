@@ -35,11 +35,27 @@ def test_help_needs_no_vm_and_source_selection_is_explicit():
     completed = subprocess.run([str(ROOT / "vm"), "--help"], capture_output=True, text=True)
     assert completed.returncode == 0
     assert "front-headers" in completed.stdout
+    assert "recover" in completed.stdout
     with pytest.raises(ValueError, match="Select a recording"):
         vm.make_request(vm.parser().parse_args(["topics"]))
     for value in ("../bag", "/source/bag", "a//b", "a/./b"):
         with pytest.raises(ValueError, match="archive-relative"):
             vm.make_request(vm.parser().parse_args(["topics", "--recording", value]))
+
+
+def test_recovery_uses_existing_sudo_transport_without_deployment_backup(monkeypatch):
+    monkeypatch.setattr(vm, 'connection_settings', lambda: {'HOST': 'fixture'})
+    calls = []
+
+    def run(settings, command, payload, **kwargs):
+        calls.append((settings, command, payload, kwargs))
+        return subprocess.CompletedProcess(command, 0, b'', b'')
+    monkeypatch.setattr(vm.vm_ssh, 'run', run)
+    assert vm.main(['recover']) == 0
+    assert len(calls) == 1
+    assert calls[0][1][:2] == ['python3', '-c']
+    assert 'def recover():' in calls[0][1][2]
+    assert calls[0][3] == {'sudo': True, 'capture_output': False}
 
 
 def test_local_script_arguments_and_spaces_remain_data(tmp_path):
@@ -301,3 +317,14 @@ def test_corrupt_backup_never_acknowledges_migration_or_replaces_valid_output(tm
     assert not (remote_dir / 'backup-ack.json').exists()
     assert (local_dir / 'database.dump').read_bytes() == b'previous valid copy'
     assert not list(local_dir.glob('*.partial'))
+
+
+def test_deployment_result_is_private_and_records_verified_backup(tmp_path):
+    target = tmp_path / "deployment"
+    target.mkdir(mode=0o700)
+    (target / "backup.json").write_text('{"sha256":"fixture"}')
+    vm.vm_ssh.save_deployment_result(target, 1)
+    result = target / "result.json"
+    assert json.loads(result.read_text()) == {
+        "exit_code": 1, "succeeded": False, "backup_verified": True}
+    assert result.stat().st_mode & 0o777 == 0o600

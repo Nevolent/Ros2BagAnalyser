@@ -670,3 +670,81 @@
   font-size: 13px;
   font-weight: 500;
 }
+
+.recording-details-panel,
+.recording-topics,
+.recording-details-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.recording-details-panel > .page-tabs {
+  margin: 0 var(--workspace-card-inset) 12px;
+}
+.recording-topics > .search-field {
+  margin: 0 var(--workspace-card-inset) 12px;
+}
+.recording-topics-list {
+  padding: 0 var(--workspace-card-inset) 16px;
+}
+.recording-topics-list ul,
+.recording-gap-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.recording-topics-list li,
+.recording-gap-list li {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.recording-topics-list code {
+  color: var(--foreground);
+}
+.recording-topics-list span,
+.recording-muted-state {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.recording-muted-state {
+  margin-top: 6px;
+}
+.recording-gap-list strong {
+  color: var(--status-error);
+  font-weight: 500;
+}
+.recording-assets-group h3 {
+  font-size: 12px;
+  font-weight: 500;
+}
+.camera-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+.camera-label select {
+  pointer-events: auto;
+  cursor: pointer;
+  min-width: 0;
+  max-width: 260px;
+  color: #fff;
+  background: #202020;
+  border: 1px solid #ffffff50;
+  border-radius: 4px;
+  font: inherit;
+  padding: 3px 5px;
+  text-overflow: ellipsis;
+}
+.camera-label select:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}

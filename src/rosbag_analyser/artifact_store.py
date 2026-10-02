@@ -297,6 +297,15 @@ class ArtifactStore:
         _validate_publish_manifest(
             manifest, self.artifact_kind, cache_identity, media_details
         )
+        for index, stream in enumerate(manifest.get("streams", [])):
+            filename = "preview.mp4" if index == 0 else f"stream-{index}.mp4"
+            output = stream.get("output", {})
+            path = workspace / filename
+            if output.get("file_name") != filename or path.is_symlink() or not path.is_file():
+                raise ArtifactStoreError("artifact_stream_invalid", "A generated camera stream is invalid.")
+            _validate_publish_manifest(
+                {"artifact_kind": self.artifact_kind, "cache_identity": cache_identity, "output": output},
+                self.artifact_kind, cache_identity, path.stat(follow_symlinks=False))
         manifest_path = workspace / "manifest.json"
         manifest_path.write_text(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")),
@@ -610,6 +619,10 @@ class ArtifactStore:
             expected_manifest,
         )
         os.close(opened.descriptor)
+        for index in range(1, len(expected_manifest.get("streams", []))):
+            opened = self.open_media(relative_path, expected_size, cache_identity,
+                                     expected_manifest, stream_index=index)
+            os.close(opened.descriptor)
 
     def open_media(
         self,
@@ -617,6 +630,7 @@ class ArtifactStore:
         expected_size: int,
         cache_identity: str,
         expected_manifest: dict[str, object],
+        *, stream_index: int | None = None,
     ) -> OpenedMedia:
         expected_relative = PurePosixPath(
             "rosbag-analyser",
@@ -651,12 +665,24 @@ class ArtifactStore:
                     "artifact_manifest_mismatch", "The ready preview is invalid."
                 )
 
+            selected_manifest = manifest
+            filename = "preview.mp4"
+            if stream_index is not None:
+                streams = manifest.get("streams", [])
+                if (not isinstance(stream_index, int) or stream_index < 0
+                        or stream_index >= len(streams)):
+                    raise ArtifactStoreError("artifact_stream_missing", "The camera stream is unavailable.")
+                selected_manifest = {"output": streams[stream_index]["output"]}
+                filename = "preview.mp4" if stream_index == 0 else f"stream-{stream_index}.mp4"
+                if selected_manifest["output"].get("file_name") != filename:
+                    raise ArtifactStoreError("artifact_path_invalid", "The camera stream path is invalid.")
+                expected_size = _manifest_output_size(selected_manifest)
             flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
                 os, "O_NOFOLLOW", 0
             )
             try:
                 media_descriptor = os.open(
-                    expected_relative.name,
+                    filename,
                     flags,
                     dir_fd=directory_descriptor,
                 )
@@ -670,7 +696,7 @@ class ArtifactStore:
                 if (
                     not stat.S_ISREG(details.st_mode)
                     or details.st_size != expected_size
-                    or _manifest_output_identity(manifest)
+                    or _manifest_output_identity(selected_manifest)
                     != (details.st_dev, details.st_ino, details.st_mtime_ns)
                 ):
                     raise ArtifactStoreError(

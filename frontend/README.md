@@ -58,7 +58,7 @@ The preview server is for local evaluation.
 
 - Recordings uses saved catalog data and the real folder tree. Recording names
   open `#/analysis/{id}`. Filters include Processing, Ready, Failed, and
-  Review (red for readable recordings with zero-duration metadata).
+  Review (red for large timestamp gaps or zero-duration metadata).
 - Rescan, preparation, cancellation and retry use the existing API.
   Preparation requests the three outputs where available. Missing optional outputs are
   skipped when another output can be prepared; missing front input is reported and
@@ -76,6 +76,9 @@ The preview server is for local evaluation.
 - Presentation choices persist across routes for the current browser session:
   folders, filters, selection, sorting, scrolling, panels and Analysis channel,
   zoom and time. New folders start open. Playback stops on leaving Analysis.
+- Recording details includes searchable Topics and saved timestamp-gap evidence.
+  Camera bundles default to the busiest supported stream and show a Front selector
+  only for multiple streams. Switching streams preserves the timeline.
 - Analysis uses identity-bound video and validated six-axis IMU data, one
   recording-relative clock, measured camera coverage and exact last-sample lookup.
   The finite final graph value extends visually through the timeline end; readouts

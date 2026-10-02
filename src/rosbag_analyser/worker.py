@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 import signal
 import time
@@ -142,6 +143,91 @@ class SerialWorker:
             "The requested artifact kind is unsupported.",
         )
 
+    def _process_front_stream(self, job, descriptor, workspace, filename, control):
+        output_path = workspace / filename
+        result = (
+            self.processor.process(descriptor, output_path, control=control)
+            if control is not None
+            else self.processor.process(descriptor, output_path)
+        )
+
+        validation = self.artifact_store.validate_preview(
+            output_path,
+            self.processor.profile,
+            expected_width=result.output_width,
+            expected_height=result.output_height,
+            expected_frame_count=result.encoded_frame_count,
+            measured_span_ns=result.measured_span_ns,
+            expected_media_pts_sha256=result.media_pts_sha256,
+            control=control,
+        )
+        timing_manifest = {
+            "timestamp_provenance": result.timestamp_provenance,
+            "policy": result.timing_policy,
+            "bounds": "measured",
+            "coverage_start_ns": str(result.coverage_start_ns),
+            "coverage_end_ns": str(result.coverage_end_ns),
+            "measured_span_ns": str(result.measured_span_ns),
+            "header_span_ns": str(result.header_span_ns),
+            "maximum_presentation_gap_ns": str(
+                result.maximum_presentation_gap_ns
+            ),
+            "media_timescale": self.processor.profile.media_timescale,
+            "media_pts_sha256": result.media_pts_sha256,
+        }
+        if result.timestamp_provenance == FRONT_TIMESTAMP_PROVENANCE:
+            timing_manifest.update(
+                {
+                    "affine_scale_numerator": str(result.measured_span_ns),
+                    "affine_scale_denominator": str(result.header_span_ns),
+                }
+            )
+        elif (
+            result.timestamp_provenance
+            == FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE
+        ):
+            timing_manifest["image_header_stamps"] = "all_zero"
+        else:
+            raise FrontPreviewProcessingError(
+                "front_timing_provenance_invalid",
+                "The generated preview has invalid timing provenance.",
+            )
+        manifest: dict[str, object] = {
+            "schema_version": 2,
+            "artifact_kind": FRONT_PREVIEW_KIND,
+            "cache_identity": job.cache_identity,
+            "processor_version": PROCESSOR_VERSION,
+            "encoder_identity": self.media_encoder_identity,
+            "source": {
+                "topic": descriptor.topic.name,
+                "message_type": descriptor.topic.message_type,
+                "serialization_format": descriptor.topic.serialization_format,
+            },
+            "timing": timing_manifest,
+            "profile": self.processor.profile.identity_values(),
+            "output": {
+                "file_name": filename,
+                "mime_type": self.processor.profile.mime_type,
+                "size_bytes": validation.size_bytes,
+                "file_identity": {
+                    "device_id": validation.device_id,
+                    "inode": validation.inode,
+                    "mtime_ns": validation.mtime_ns,
+                },
+                "width": validation.width,
+                "height": validation.height,
+                "codec": validation.codec,
+                "pixel_format": validation.pixel_format,
+                "duration_seconds": validation.duration_seconds,
+            },
+            "frames": {
+                "input": result.input_frame_count,
+                "encoded": result.encoded_frame_count,
+                "duplicate_record_timestamps": result.duplicate_timestamp_count,
+            },
+        }
+        return result, manifest
+
     def _run_front_job(self, job: JobRecord) -> None:
         workspace = None
         started = time.monotonic()
@@ -170,88 +256,31 @@ class SerialWorker:
                 )
 
             workspace = self.artifact_store.create_workspace(job.id)
-            output_path = workspace / "preview.mp4"
-            result = (
-                self.processor.process(descriptor, output_path, control=control)
-                if control is not None
-                else self.processor.process(descriptor, output_path)
-            )
-
-            validation = self.artifact_store.validate_preview(
-                output_path,
-                self.processor.profile,
-                expected_width=result.output_width,
-                expected_height=result.output_height,
-                expected_frame_count=result.encoded_frame_count,
-                measured_span_ns=result.measured_span_ns,
-                expected_media_pts_sha256=result.media_pts_sha256,
-                control=control,
-            )
-            timing_manifest = {
-                "timestamp_provenance": result.timestamp_provenance,
-                "policy": result.timing_policy,
-                "bounds": "measured",
-                "coverage_start_ns": str(result.coverage_start_ns),
-                "coverage_end_ns": str(result.coverage_end_ns),
-                "measured_span_ns": str(result.measured_span_ns),
-                "header_span_ns": str(result.header_span_ns),
-                "maximum_presentation_gap_ns": str(
-                    result.maximum_presentation_gap_ns
-                ),
-                "media_timescale": self.processor.profile.media_timescale,
-                "media_pts_sha256": result.media_pts_sha256,
-            }
-            if result.timestamp_provenance == FRONT_TIMESTAMP_PROVENANCE:
-                timing_manifest.update(
-                    {
-                        "affine_scale_numerator": str(result.measured_span_ns),
-                        "affine_scale_denominator": str(result.header_span_ns),
-                    }
-                )
-            elif (
-                result.timestamp_provenance
-                == FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE
-            ):
-                timing_manifest["image_header_stamps"] = "all_zero"
-            else:
+            streams = []
+            skipped = []
+            result = manifest = None
+            for topic in descriptor.topics or (descriptor.topic,):
+                filename = "preview.mp4" if not streams else f"stream-{len(streams)}.mp4"
+                try:
+                    stream_result, stream_manifest = self._process_front_stream(
+                        job, replace(descriptor, topic=topic), workspace, filename, control)
+                except FrontPreviewProcessingError as error:
+                    if error.code != "front_encoding_unsupported":
+                        raise
+                    (workspace / filename).unlink(missing_ok=True)
+                    skipped.append({"topic": topic.name, "code": error.code,
+                                    "message": "Image encoding is not supported (requires rgb8 or bgr8)."})
+                    continue
+                if result is None:
+                    result, manifest = stream_result, stream_manifest
+                streams.append({"topic": topic.name, "output": stream_manifest["output"],
+                                "timing": stream_manifest["timing"],
+                                "frames": stream_manifest["frames"]})
+            if result is None or manifest is None:
                 raise FrontPreviewProcessingError(
-                    "front_timing_provenance_invalid",
-                    "The generated preview has invalid timing provenance.",
-                )
-            manifest: dict[str, object] = {
-                "schema_version": 2,
-                "artifact_kind": FRONT_PREVIEW_KIND,
-                "cache_identity": job.cache_identity,
-                "processor_version": PROCESSOR_VERSION,
-                "encoder_identity": self.media_encoder_identity,
-                "source": {
-                    "topic": self.topic_name,
-                    "message_type": descriptor.topic.message_type,
-                    "serialization_format": descriptor.topic.serialization_format,
-                },
-                "timing": timing_manifest,
-                "profile": self.processor.profile.identity_values(),
-                "output": {
-                    "file_name": "preview.mp4",
-                    "mime_type": self.processor.profile.mime_type,
-                    "size_bytes": validation.size_bytes,
-                    "file_identity": {
-                        "device_id": validation.device_id,
-                        "inode": validation.inode,
-                        "mtime_ns": validation.mtime_ns,
-                    },
-                    "width": validation.width,
-                    "height": validation.height,
-                    "codec": validation.codec,
-                    "pixel_format": validation.pixel_format,
-                    "duration_seconds": validation.duration_seconds,
-                },
-                "frames": {
-                    "input": result.input_frame_count,
-                    "encoded": result.encoded_frame_count,
-                    "duplicate_record_timestamps": result.duplicate_timestamp_count,
-                },
-            }
+                    "front_encoding_unsupported", "No camera uses a supported raw image encoding (rgb8 or bgr8).")
+            manifest["streams"] = streams
+            manifest["skipped_streams"] = skipped
             current = self.resolver.resolve(job.recording_id)
             if (
                 current.descriptor is None

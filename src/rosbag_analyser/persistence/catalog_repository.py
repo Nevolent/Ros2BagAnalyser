@@ -59,6 +59,7 @@ class CatalogRecording:
     diagnostic: SafeDiagnostic | None
     source_present: bool
     last_seen_generation: int
+    scan_details: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -350,7 +351,7 @@ class CatalogRepository:
                            component_size.known_size_bytes
                        ) AS total_source_size_bytes,
                        recording.storage_format, recording.metadata_version,
-                       recording.message_count, recording.topic_count,
+                       recording.message_count, recording.topic_count, recording.scan_details,
                        recording.ros_health, recording.diagnostic_code,
                        recording.diagnostic_message, recording.source_present,
                        recording.last_seen_generation
@@ -400,7 +401,7 @@ class CatalogRepository:
             """
             SELECT id, display_name, start_time_ns, duration_ns,
                    total_source_size_bytes, storage_format, metadata_version,
-                   message_count, topic_count, ros_health,
+                   message_count, topic_count, ros_health, scan_details,
                    diagnostic_code, diagnostic_message, source_revision,
                    source_present, last_seen_generation,
                    cache_identity_recording_id,
@@ -423,7 +424,7 @@ class CatalogRepository:
                 INSERT INTO recordings (
                     id, archive_relative_path, display_name, start_time_ns,
                     duration_ns, total_source_size_bytes, storage_format,
-                    metadata_version, message_count, topic_count, ros_health,
+                    metadata_version, message_count, topic_count, ros_health, scan_details,
                     diagnostic_code, diagnostic_message, source_revision,
                     source_present, last_seen_generation,
                     cache_identity_recording_id,
@@ -433,7 +434,7 @@ class CatalogRepository:
                     %(archive_relative_path)s, %(display_name)s, %(start_time_ns)s,
                     %(duration_ns)s, %(total_source_size_bytes)s,
                     %(storage_format)s, %(metadata_version)s, %(message_count)s,
-                    %(topic_count)s, %(ros_health)s, %(diagnostic_code)s,
+                    %(topic_count)s, %(ros_health)s, %(scan_details)s::jsonb, %(diagnostic_code)s,
                     %(diagnostic_message)s, %(source_revision)s,
                     %(source_present)s, %(last_seen_generation)s,
                     allocated.id, %(archive_relative_path)s, %(move_fingerprint)s
@@ -447,7 +448,7 @@ class CatalogRepository:
             return _persisted_identity_from_row(row)
 
         if any(
-            existing[key] != value
+            (existing[key] != json.loads(value) if key == "scan_details" else existing[key] != value)
             for key, value in values.items()
             if key != "archive_relative_path"
         ):
@@ -462,6 +463,7 @@ class CatalogRepository:
                     metadata_version = %(metadata_version)s,
                     message_count = %(message_count)s,
                     topic_count = %(topic_count)s,
+                    scan_details = %(scan_details)s::jsonb,
                     ros_health = %(ros_health)s,
                     diagnostic_code = %(diagnostic_code)s,
                     diagnostic_message = %(diagnostic_message)s,
@@ -1006,6 +1008,7 @@ def _recording_values(
         "metadata_version": recording.metadata_version,
         "message_count": recording.message_count,
         "topic_count": recording.topic_count,
+        "scan_details": json.dumps(recording.scan_details),
         "ros_health": recording.ros_health.value,
         "diagnostic_code": _diagnostic_code(recording.diagnostic),
         "diagnostic_message": _diagnostic_message(recording.diagnostic),
@@ -1047,6 +1050,7 @@ def _recording_from_row(row: dict[str, object]) -> CatalogRecording:
         diagnostic=_diagnostic_from_row(row),
         source_present=bool(row["source_present"]),
         last_seen_generation=int(row["last_seen_generation"]),
+        scan_details=row.get("scan_details"),
     )
 
 

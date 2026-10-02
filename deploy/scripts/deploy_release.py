@@ -23,6 +23,7 @@ API = 'rosbag-analyser-api.service'
 WORKER = 'rosbag-analyser-worker.service'
 DATABASE = 'postgresql://rosbag_analyser_migration@/rosbag_analyser?host=/run/postgresql'
 BACKUP_DATABASE = 'postgresql://rosbag_analyser_backup@/rosbag_analyser?host=/run/postgresql'
+ADMIN_DATABASE = 'postgresql:///rosbag_analyser?host=/run/postgresql'
 
 
 def run(command, *, env=None, capture=False, stdin=None, timeout=120):
@@ -178,10 +179,15 @@ class Upgrade:
                     PGPASSFILE=credential(CONFIG / 'migration.pgpass'))
 
     def jobs(self):
-        import psycopg
-        with psycopg.connect(DATABASE, passfile=self.database_env['PGPASSFILE'],
-                             options='-c statement_timeout=10000 -c default_transaction_read_only=on') as connection:
-            return connection.execute("SELECT control_state FROM jobs WHERE state = 'running'").fetchall()
+        # The root deployer uses local peer auth for inspection, independent of
+        # runtime/backup passwords. Never alter roles or private configuration.
+        result = run(['runuser', '-u', 'postgres', '--', 'psql', '--no-psqlrc',
+                      '--tuples-only', '--no-align', '--set=ON_ERROR_STOP=1',
+                      '--dbname=' + ADMIN_DATABASE,
+                      '--command=' + "SET statement_timeout = '10s'; SET default_transaction_read_only = on; "
+                      "SELECT COALESCE(json_agg(control_state), '[]') FROM jobs WHERE state = 'running'"],
+                     capture=True)
+        return [(state,) for state in json.loads(result.stdout.strip().splitlines()[-1])]
 
     def worker_active(self):
         state = run(['systemctl', 'show', WORKER, '--property=ActiveState', '--value'],
@@ -198,18 +204,9 @@ class Upgrade:
             time.sleep(1)
 
     def validate_schema(self, release):
-        run([release / 'venv/bin/python', '-c',
-             'import os; from rosbag_analyser.persistence.database import validate_catalog_schema; '
-             "validate_catalog_schema(os.environ['ROS_BAG_ANALYSER_DATABASE_URL'])"],
-            env=self.database_env, capture=True)
-
-    def backup_settings(self):
-        settings = private_environment(CONFIG / 'backup.env')
-        if settings.get('ROS_BAG_ANALYSER_DATABASE_URL') != BACKUP_DATABASE:
-            raise ValueError('The backup database target is invalid.')
-        passfile = Path(settings.get('PGPASSFILE', str(CONFIG / 'backup.pgpass')))
-        return dict(os.environ, ROS_BAG_ANALYSER_DATABASE_URL=BACKUP_DATABASE,
-                    PGPASSFILE=credential(passfile))
+        run(['runuser', '-u', 'postgres', '--', release / 'venv/bin/python', '-c',
+             'import sys; from rosbag_analyser.persistence.database import validate_catalog_schema; '
+             'validate_catalog_schema(sys.argv[1])', ADMIN_DATABASE], capture=True)
 
     def backup_database(self):
         BACKUPS.mkdir(mode=0o700, exist_ok=True)
@@ -218,12 +215,19 @@ class Upgrade:
         directory = BACKUPS / f"deploy-{self.candidate.name}-{uuid.uuid4().hex[:12]}"
         directory.mkdir(mode=0o700)
         self.backup = directory
-        run([self.previous / 'deploy/scripts/backup-database', directory, self.previous.name],
-            env=self.backup_settings(), timeout=600)
-        dumps = list(directory.glob('*.dump'))
-        if len(dumps) != 1 or not dumps[0].is_file() or dumps[0].is_symlink():
-            raise ValueError('The database backup was not published correctly.')
-        dump = dumps[0]
+        dump = directory / 'catalog.dump'
+        temporary = directory / 'catalog.dump.partial'
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        # stdout is a file, not a terminal: credentials and backup bytes never
+        # enter the SSH log. The source recordings are not part of this dump.
+        with os.fdopen(descriptor, 'wb') as destination:
+            subprocess.run(['runuser', '-u', 'postgres', '--', 'pg_dump',
+                            '--format=custom', '--dbname=' + ADMIN_DATABASE],
+                           stdout=destination, check=True, timeout=600)
+            destination.flush()
+            os.fsync(destination.fileno())
+        run(['pg_restore', '--list', temporary], capture=True)
+        temporary.rename(dump)
         # Preserve the private configuration beside the dump, never in Git or logs.
         for name in ('application.env', 'migration.env', 'backup.env', 'runtime.pgpass', 'migration.pgpass', 'backup.pgpass'):
             source = CONFIG / name
@@ -255,14 +259,18 @@ class Upgrade:
         finally:
             run(['runuser', '-u', 'postgres', '--', 'dropdb', '--host=/run/postgresql', restore_name])
 
-    def wait_ready(self):
+    def wait_ready(self, release):
         for attempt in range(30):
             try:
-                run(['curl', '--fail', '--silent', '--max-time', '5',
+                response = run(['curl', '--fail', '--silent', '--max-time', '5',
                      'http://127.0.0.1:8000/health/ready'], capture=True, timeout=10)
-                return
-            except subprocess.SubprocessError:
-                time.sleep(1)
+                health = json.loads(response.stdout)
+                if (health.get('status') == 'ready' and health.get('release_id') == release.name
+                        and health.get('capabilities', {}).get('worker_observation', {}).get('state') == 'online'):
+                    return
+            except (subprocess.SubprocessError, ValueError):
+                pass
+            time.sleep(1)
         raise RuntimeError('The restarted API did not become ready within 30 checks.')
 
     def activate(self, release):
@@ -272,7 +280,7 @@ class Upgrade:
         # Readiness includes the worker's PostgreSQL advisory lock. Starting
         # it under the maintenance gate keeps it online without claiming jobs.
         run(['systemctl', 'start', WORKER])
-        self.wait_ready()
+        self.wait_ready(release)
         run([release / 'deploy/scripts/smoke-check'])
 
     def recover(self):
@@ -291,6 +299,8 @@ class Upgrade:
                     return
             run(['systemctl', 'start', API])
             run(['systemctl', 'start', WORKER])
+            self.wait_ready(self.previous)
+            run(['systemctl', 'is-active', '--quiet', API, WORKER])
             MAINTENANCE.unlink()
             print('The original release reopened; no active processor was interrupted.', file=sys.stderr)
             return
@@ -311,7 +321,6 @@ class Upgrade:
         print('The previous compatible release was restored; no database restore was needed.', file=sys.stderr)
 
     def execute(self):
-        self.database_env = self.database_settings()
         self.validate_schema(self.previous)
         initial_jobs = self.jobs()
         if any(row[0] in ('paused', 'pause_requested') for row in initial_jobs):
@@ -322,7 +331,12 @@ class Upgrade:
         if self.migrate:
             if self.transfer is None:
                 raise ValueError('Migration requires the workstation backup transfer channel; use ./vm deploy.')
-            self.backup_settings()
+            self.database_env = self.database_settings()
+            # Check the migration role before stopping either application service.
+            run([self.candidate / 'venv/bin/python', '-c',
+                 'import os, psycopg; '
+                 'psycopg.connect(os.environ["ROS_BAG_ANALYSER_DATABASE_URL"], connect_timeout=5).close()'],
+                env=self.database_env, capture=True)
             for command in ('pg_dump', 'pg_restore', 'createdb', 'dropdb', 'runuser'):
                 if shutil.which(command) is None:
                     raise ValueError(f'Required backup/restore tool is unavailable: {command}')

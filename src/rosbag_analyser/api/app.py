@@ -28,6 +28,7 @@ from rosbag_analyser.front_preview import (
 )
 from rosbag_analyser.imu_series import ImuSeriesService, ImuSourceResolver
 from rosbag_analyser.health import ApplicationHealthService, HealthService
+from rosbag_analyser.maintenance import deployment_in_progress
 from rosbag_analyser.persistence.database import validate_catalog_schema
 from rosbag_analyser.persistence.catalog_repository import CatalogRepository
 from rosbag_analyser.persistence.processing_repository import ProcessingRepository
@@ -279,7 +280,17 @@ def create_app(
 
     @application.middleware("http")
     async def security_headers(request: Request, call_next):
-        response = await call_next(request)
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and deployment_in_progress():
+            response = JSONResponse(
+                status_code=503,
+                content={"detail": {
+                    "code": "deployment_in_progress",
+                    "message": "The application is being updated. Please retry shortly.",
+                }},
+                headers={"Retry-After": "30"},
+            )
+        else:
+            response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; "

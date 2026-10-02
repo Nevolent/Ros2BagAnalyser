@@ -701,3 +701,19 @@ def test_idle_worker_reports_no_work(tmp_path: Path) -> None:
     assert not _worker(
         repository, SuccessfulProcessor(), FakeArtifactStore(tmp_path)
     ).run_once()
+
+
+def test_deployment_gate_does_not_claim_or_change_queued_jobs(tmp_path, monkeypatch):
+    from rosbag_analyser import maintenance
+    marker = tmp_path / 'maintenance'
+    marker.touch()
+    monkeypatch.setattr(maintenance, 'MAINTENANCE_FILE', marker)
+    repository = FakeRepository(_job())
+    worker = SerialWorker(repository, None, None, None, '/camera', 'synthetic')
+    assert worker.run_once() is False
+    assert repository.job is not None
+    assert repository.completed == [] and repository.failures == []
+    marker.unlink()
+    monkeypatch.setattr(worker, '_run_job', lambda job: None)
+    assert worker.run_once() is True
+    assert repository.job is None

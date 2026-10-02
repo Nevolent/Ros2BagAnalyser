@@ -18,7 +18,7 @@ second connection setup or diagnostic installation is required.
 | `release-contract.json` | Platform, schema and processor identities |
 | `systemd/`, `nginx/`, `firewall/` | Service, access and mount templates |
 | `scripts/build-wheelhouse`, `build-release`, `install-release`, `activate-release` | Checksummed immutable releases |
-| `scripts/deploy-from-git` | VM side of routine Git deployment |
+| `scripts/deploy-from-git`, `deploy_release.py` | Staging, backups, migration and activation for Git deployments |
 | `scripts/validate-site`, `validate-proxy`, `validate-firewall` | Configuration validation |
 | `scripts/drain-worker`, `run-service`, `smoke-check` | Service lifecycle and saved-state checks |
 | `scripts/backup-database`, `restore-disposable-database`, `collect-support-bundle` | Recovery and support |

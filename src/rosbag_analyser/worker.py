@@ -35,6 +35,7 @@ from rosbag_analyser.imu_series import (
     ImuSourceResolver,
 )
 from rosbag_analyser.job_control import JobCanceled, JobControlToken
+from rosbag_analyser.maintenance import deployment_in_progress
 from rosbag_analyser.persistence.database import open_connection
 from rosbag_analyser.persistence.processing_repository import (
     ArtifactWrite,
@@ -107,6 +108,8 @@ class SerialWorker:
         return interrupted
 
     def run_once(self) -> bool:
+        if deployment_in_progress():
+            return False
         if self.admission_check is not None:
             diagnostic = self.admission_check()
             if diagnostic is not None:

@@ -37,14 +37,16 @@ def test_vm_git_deployment_preserves_immutable_release_and_refuses_sensitive_cha
     assert "status --porcelain" in deployer
     assert "git -C \"$repository_root\" pull --ff-only origin \"$branch\"" in deployer
     assert "the VM resolved a different revision" in deployer
-    assert "persistence/migrations" in deployer
-    assert "runtime-requirements.in" in deployer
-    assert "deploy/systemd" in deployer
-    assert "deploy/scripts/*" in deployer
-    assert '"$current_link/deploy/scripts/drain-worker"' in deployer
+    planner = (ROOT / 'deploy/scripts/deploy_release.py').read_text()
+    assert 'persistence/migrations' in planner
+    assert "runtime-requirements.in" in planner
+    assert "deploy/systemd" in planner
+    assert "deploy/scripts/" in planner
+    assert 'deploy_release.py' in deployer
+    assert 'flock --nonblock' in deployer
     assert 'realpath -e -- "$current_link/wheelhouse"' in deployer
     assert "systemctl restart rosbag-analyser-api.service" in deployer
-    assert "systemctl restart rosbag-analyser-worker.service" in deployer
+    assert 'upgrade' in deployer
     assert "wait_for_local_readiness" in deployer
     assert "attempt < 30" in deployer
     assert "the restarted API did not become ready within 30 seconds" in deployer
@@ -63,31 +65,6 @@ def test_git_deployment_help_needs_no_private_settings() -> None:
     )
 
     assert "Usage: ./deploy-vm" in result.stdout
-
-
-def test_deployment_change_classification_allows_operator_tools_only() -> None:
-    deployer = (ROOT / "deploy/scripts/deploy-from-git").read_text()
-    classification = deployer.split('restart_mode="none"', 1)[1].split(
-        '\n[[ "$requires_controlled_release"', 1
-    )[0]
-    for path, blocked in (
-        ("deploy/scripts/audit-recording-topics", "false"),
-        ("deploy/scripts/topic_audit.py", "false"),
-        ("deploy/scripts/deploy-from-git", "false"),
-        ("deploy/scripts/install-release", "true"),
-        ("deploy/scripts/activate-release", "true"),
-        ("deploy/systemd/example.service", "true"),
-        ("deploy/nginx/example.conf", "true"),
-        ("deploy/runtime-requirements.in", "true"),
-        ("src/rosbag_analyser/persistence/migrations/0008.sql", "true"),
-    ):
-        result = subprocess.run(
-            ["bash", "-c", 'restart_mode="none"; changed_paths=("$1");'
-             + classification + '\nprintf "%s" "$requires_controlled_release"',
-             "classification-test", path],
-            check=True, capture_output=True, text=True,
-        )
-        assert result.stdout == blocked, path
 
 
 def test_deployment_private_and_generated_files_are_ignored() -> None:

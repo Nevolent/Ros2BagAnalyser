@@ -18,7 +18,8 @@ Usage: ./deploy-vm [--check]
 
 Deploy the committed, pushed branch to the configured VM. Local documentation,
 tests and diagnostic scripts do not block deployment. Uncommitted application
-changes, migrations, dependencies and infrastructure changes need attention.
+changes must be committed first. Application migrations and dependencies upgrade
+automatically; site infrastructure changes need a separate site upgrade.
 Use ./vm deploy --push to push the commit first, or ./vm run for diagnostics.
 --check validates local settings, branch and changes without network access.
 EOF
@@ -56,7 +57,7 @@ require_deployable_worktree() {
   )
   for changed_path in "${changed_paths[@]}"; do
     case "$changed_path" in
-      README.md|docs/*|AGENTS.md|tests/*|jetbrains/*|tools/*|vm|scripts/*|support/*|.gitignore)
+      README.md|docs/*|AGENTS.md|tests/*|frontend/tests/*|frontend/docs/*|frontend/README.md|frontend/playwright.config.ts|jetbrains/*|tools/*|vm|scripts/*|support/*|.gitignore)
         ;;
       *)
         fail "uncommitted runtime change: $changed_path; commit or stash it first"
@@ -119,6 +120,6 @@ readonly remote_revision="$(
 
 echo "Deploying $local_revision from origin/$deploy_branch to $deploy_user@$deploy_host"
 exec python3 "$project_root/tools/vm_ssh.py" \
-  --ssh "$ssh_program" --host "$deploy_host" --user "$deploy_user" \
+  --ssh "$ssh_program" --host "$deploy_host" --user "$deploy_user" --deployment \
   bash -s -- "$deploy_branch" "$local_revision" \
   < <(git -C "$project_root" show "$local_revision:deploy/scripts/deploy-from-git")

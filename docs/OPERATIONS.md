@@ -96,17 +96,41 @@ The committed deployment script is sent over SSH, so updating the deployment
 tool itself does not require manually copying it onto the VM first. Application
 code still comes from the exact pushed revision in the dedicated VM checkout.
 
-The VM fast-forwards its dedicated checkout and builds using the active checked
-wheelhouse. Frontend changes restart API only; other application changes drain
-the worker and restart both. Documentation/tests alone update the checkout
-without activating a release. Standalone topic-audit tools and the Git deployer
-are also allowed by the routine classifier.
+The VM fast-forwards its dedicated checkout, validates the exact pushed revision,
+and stages an immutable release before interrupting services. Frontend changes
+restart API only. Other application changes close API writes and let the current
+worker job finish before switching; queued work remains saved. New dependencies
+build a checked wheelhouse automatically on the existing platform.
+Documentation/tests alone update the checkout without activating a release.
 
-Other deployment scripts, dependencies, migrations, service/proxy/firewall
-and configuration templates use the planned procedure below. The classifier in
-`deploy/scripts/deploy-from-git` is authoritative. It never scans or prepares.
-If health/smoke fails after activation, inspect the active pointer and services;
-the routine deployer does not automatically roll back.
+Appended database migrations also use this same command. Existing migrations
+must remain unchanged and new numbers must be consecutive. Before migrating,
+the deployer stops API and worker, creates a protected database dump, restores
+it into a fresh disposable database, and checks the previous release's schema.
+It copies and verifies the dump on this PC under a new private
+`.vm-reports/<run>-deploy/` directory, then waits for that acknowledgement before
+running the candidate migration service. Backup/restore roles, credentials and
+the migration unit must already be configured; missing prerequisites fail safely.
+The dump transfer is bounded to 10 GiB and ten minutes.
+
+The root-owned `/run/rosbag-analyser-maintenance` gate blocks API mutations and
+new worker claims until candidate preflight, API health/smoke and service startup
+pass. Reads and media stay available once the candidate API has started. The API
+is unavailable while the old worker drains and the database is backed up/migrated.
+Paused jobs require resume/cancel in Processing before deployment; drain waits
+up to one hour without force-killing a processor. Deployments are serialized by
+an exclusive VM lock. No recording scan or preparation is performed.
+
+On failure, a compatible previous release is reopened automatically. If the old
+release cannot validate the changed schema, services stay stopped with the
+maintenance gate, dump and recovery configuration preserved under
+`/var/backups/rosbag-analyser/deploy-<release>-<run>/`. The error identifies this
+recovery directory; use the recovery procedure below rather than inventing a
+reverse migration. An incomplete maintenance gate blocks another deployment.
+
+OS/ROS/Python platform changes and service, proxy, firewall or private site
+configuration templates require the planned site-upgrade procedure below. The
+ordinary command does not change access policy or install OS packages.
 
 ## Run a diagnostic and get the result back
 
@@ -172,7 +196,7 @@ Use `validate-site`, `validate-firewall`, `validate-proxy`, `nginx -t` and
 systemd validation before applying configuration. Source stays read-only;
 API and database remain local behind the access boundary.
 
-For an upgrade:
+For a site upgrade or manual recovery (application migrations are automated above):
 
 1. Record active release/schema and rollback compatibility; stage and validate
    the candidate and available capacity.

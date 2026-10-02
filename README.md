@@ -51,7 +51,7 @@ Python releases serve the same tested React build without Node on the VM.
 
 ```bash
 ./vm status                  # Bring service/release facts back to this PC
-./vm deploy --push           # Push an existing commit and deploy it
+./vm deploy --push           # Push and deploy, including application migrations
 ./vm run tools/diagnostics/runtime_info.py
 ```
 

@@ -85,6 +85,12 @@ pause/resume/cancel requests are acknowledged at safe processing and publication
 checkpoints. Restart marks abandoned running work, including paused work,
 interrupted; it does not resume the process automatically.
 
+During deployment, a root-owned maintenance gate rejects API mutations with
+503/Retry-After and holds new worker claims. An already running job finishes
+normally; queued jobs and original recordings are preserved. The gate remains
+closed through migration and health checks, including an incompatible-schema
+failure. See [Operations](OPERATIONS.md) for deployment and recovery.
+
 Elapsed and active time come from stored timestamps. Estimates use the ten newest
 compatible, artifact-backed successful jobs (minimum two), excluding paused time.
 The 80th-percentile runtime per input byte plus 15% headroom replaces the former median prediction (`recent_rate_v2`).

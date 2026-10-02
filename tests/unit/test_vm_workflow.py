@@ -229,7 +229,7 @@ def test_journal_failure_is_not_reported_as_success(monkeypatch):
 
 
 @pytest.mark.parametrize("path,allowed", [("tools/check.py", True), ("jetbrains/styles.css", True),
-                                          ("tests/unit/test_vm_workflow.py", True),
+                                          ("tests/unit/test_vm_workflow.py", True), ("frontend/tests/clock.spec.ts", True),
                                           ("src/rosbag_analyser/worker.py", False),
                                           ("deploy/environment.example", False)])
 def test_deploy_guard_ignores_local_tooling_but_protects_runtime(tmp_path, path, allowed):
@@ -248,3 +248,56 @@ def test_deploy_uses_committed_bootstrap():
     launcher = (ROOT / "deploy-vm").read_text()
     assert 'git -C "$project_root" show "$local_revision:deploy/scripts/deploy-from-git"' in launcher
     assert 'bash -s -- "$deploy_branch" "$local_revision"' in launcher
+
+
+@pytest.mark.parametrize('interactive', [False, True])
+def test_deployment_backup_is_verified_off_vm_before_upgrade_can_continue(tmp_path, monkeypatch, interactive):
+    fake_ssh = tmp_path / 'ssh'
+    fake_ssh.write_text("#!/usr/bin/env python3\nimport subprocess,sys\nsys.exit(subprocess.call(sys.argv[-1],shell=True))\n")
+    fake_ssh.chmod(0o755)
+    sudo = tmp_path / 'sudo'
+    sudo.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execvp(sys.argv[2],sys.argv[2:])\n")
+    sudo.chmod(0o755)
+    monkeypatch.setenv('PATH', str(tmp_path) + ':' + os.environ['PATH'])
+    monkeypatch.setattr(ssh_transport, 'terminal', lambda: open(os.devnull, 'r+b') if interactive else None)
+    source = ROOT / 'deploy/scripts/deploy_release.py'
+    script = (
+        "import importlib.util,os,tempfile\nfrom pathlib import Path\n"
+        f"spec=importlib.util.spec_from_file_location('upgrade',{str(source)!r})\n"
+        "module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)\n"
+        "with tempfile.TemporaryDirectory() as temporary:\n"
+        "    dump=Path(temporary)/'original.dump';dump.write_bytes(b'recovery fixture'*100000)\n"
+        "    module.publish_backup(dump,Path(os.environ['ROS_BAG_ANALYSER_DEPLOY_TRANSFER_DIRECTORY']),timeout=15)\n"
+        "    print('migration allowed')\n"
+    )
+    target = tmp_path / 'report'
+    result = ssh_transport.run({'SSH': str(fake_ssh), 'USER': 'operator', 'HOST': 'local.test'},
+                               [sys.executable, '-c', script], b'', sudo=True, timeout=25,
+                               deployment_backup=target)
+    assert result.returncode == 0, result.stderr
+    assert b'migration allowed' in result.stdout
+    assert (target / 'database.dump').read_bytes() == b'recovery fixture'*100000
+    assert target.stat().st_mode & 0o777 == 0o700
+    assert (target / 'database.dump').stat().st_mode & 0o777 == 0o600
+    assert (target / 'backup.json').stat().st_mode & 0o777 == 0o600
+
+
+def test_corrupt_backup_never_acknowledges_migration_or_replaces_valid_output(tmp_path):
+    fake_ssh = tmp_path / 'ssh'
+    fake_ssh.write_text("#!/usr/bin/env python3\nimport subprocess,sys\nsys.exit(subprocess.call(sys.argv[-1],shell=True))\n")
+    fake_ssh.chmod(0o755)
+    remote_dir = tmp_path / 'transfer'
+    remote_dir.mkdir(mode=0o700)
+    (remote_dir / 'backup.dump').write_bytes(b'corrupt data')
+    (remote_dir / 'backup.dump').chmod(0o600)
+    local_dir = tmp_path / 'local'
+    local_dir.mkdir(mode=0o700)
+    (local_dir / 'database.dump').write_bytes(b'previous valid copy')
+    import hashlib
+    identity = {'size': len(b'corrupt data'), 'sha256': hashlib.sha256(b'correct data').hexdigest()}
+    with pytest.raises(ValueError, match='checksum'):
+        ssh_transport.receive_backup({'SSH': str(fake_ssh), 'USER': 'operator', 'HOST': 'local.test'},
+                                     str(remote_dir), local_dir, identity)
+    assert not (remote_dir / 'backup-ack.json').exists()
+    assert (local_dir / 'database.dump').read_bytes() == b'previous valid copy'
+    assert not list(local_dir.glob('*.partial'))

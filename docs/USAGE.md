@@ -1,8 +1,5 @@
 # Usage
 
-Open the address supplied by your operator. No ROS commands or direct storage
-access are needed.
-
 ## Review a recording
 
 1. In **Recordings**, browse folders or search the saved catalog.
@@ -11,8 +8,7 @@ access are needed.
 3. In **Processing**, follow the queue, cancel or reorder waiting work, and
    retry failures. One output runs at a time.
 4. Open a recording in **Analysis**. Play, pause or seek on the shared timeline;
-   select an IMU axis and zoom the graph. Use the **Front** selector when a
-   recording has several supported cameras.
+   select an IMU axis and zoom the graph.
 
 Space plays or pauses; arrow keys seek one second, or ten seconds with Shift.
 Playback stops when leaving Analysis. Filters, panel settings and the last

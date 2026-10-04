@@ -1,7 +1,7 @@
 # ROS 2 Bag Analyser
 
 Browse ROS 2 recordings, prepare camera previews and IMU data, and review them
-on a shared timeline. The web interface is called **Tech Trace**.
+on a shared timeline. The web interface is called **Tectrace**.
 
 Original recordings stay read-only. PostgreSQL stores the catalog and job queue;
 a serial worker writes validated previews and telemetry to separate storage.

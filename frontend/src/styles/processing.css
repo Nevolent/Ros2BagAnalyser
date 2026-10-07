@@ -38,7 +38,7 @@
   flex: none;
   align-items: center;
   gap: 0;
-  margin-right: -6px;
+  margin-right: -2px;
 }
 .processing-actions button {
   width: 26px;
@@ -161,6 +161,9 @@
 }
 .processing-table-panel .bag-panel-header {
   font-weight: 400;
+}
+.processing-table-panel .page-tab-count > span {
+  transform: none;
 }
 .processing-bulk-actions {
   display: flex;

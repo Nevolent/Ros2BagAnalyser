@@ -292,7 +292,7 @@ test('damaged recording keeps metadata time and hides IMU readouts', async ({ pa
   await expect(page.locator('.timeline-state')).toHaveText('This output is unavailable.');
   await expect(page.locator('.timeline-axis')).toBeVisible();
   await expect(page.locator('.timeline-measurement')).toHaveCount(0);
-  await expect(page.locator('.timeline-grid text')).toHaveText('0');
+  await expect(page.locator('.timeline-grid text')).toHaveCount(0);
   await slider.focus();
   await page.keyboard.press('End');
   await expect(slider).toHaveAttribute('aria-valuenow', '6');
@@ -614,6 +614,37 @@ test('zero-duration and camera-only recordings retain truthful controls', async 
     expect(Math.max(...brightness)).toBeGreaterThan(100);
   }
   await expect(page.locator('.timeline-measurement')).toHaveCount(0);
+  await expect(page.locator('.timeline-grid text')).toHaveCount(0);
+  await expect(page.locator('.timeline-grid line')).toHaveCount(0);
+  const plot = page.getByRole('slider', { name: 'Recording timeline' });
+  const plotBox = (await plot.boundingBox())!;
+  expect(line.y + line.height / 2 - plotBox.y).toBeCloseTo(26, 1);
+  await expect(page.locator('.timeline-static path[fill="url(#timeline-fill)"]')).toHaveAttribute(
+    'd',
+    /Z$/,
+  );
+  await expect(page.locator('[data-channel-label]')).toHaveCSS(
+    'color',
+    await page
+      .getByRole('button', { name: 'Play timeline', exact: true })
+      .evaluate((el) => getComputedStyle(el).color),
+  );
+  // Unprepared output text stays centered inside the graph while seeking still works.
+  api.recording.outputs[2] = { kind: 'imu_series', state: 'not_requested', diagnostic: null };
+  await page.reload();
+  const message = page.locator('.timeline-state');
+  await expect(message).toHaveText('This output has not been prepared.');
+  const messageBox = (await message.boundingBox())!;
+  const emptyPlotBox = (await plot.boundingBox())!;
+  expect(
+    Math.abs(messageBox.x + messageBox.width / 2 - emptyPlotBox.x - emptyPlotBox.width / 2),
+  ).toBeLessThan(1);
+  expect(
+    Math.abs(
+      messageBox.y + messageBox.height / 2 - emptyPlotBox.y - 26 - (emptyPlotBox.height - 36) / 2,
+    ),
+  ).toBeLessThan(1);
+  await page.screenshot({ path: test.info().outputPath('unprepared-timeline.png') });
   await page.getByRole('slider', { name: 'Recording timeline' }).focus();
   await page.keyboard.press('End');
   await expect(page.getByRole('slider')).toHaveAttribute('aria-valuenow', '6');

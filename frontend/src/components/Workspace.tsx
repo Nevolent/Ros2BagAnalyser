@@ -180,10 +180,12 @@ export function SidePanel({
   title,
   children,
   selectedFolder,
+  heading,
 }: {
   title: string;
   children: ReactNode;
   selectedFolder?: string;
+  heading?: ReactNode;
 }) {
   const { collapsed, setCollapsed, side, toggle } = useWorkspacePanel();
   const control = (
@@ -236,12 +238,13 @@ export function SidePanel({
       className="cn-card folder-card bg-secondary shadow-none ring-0 dark:bg-secondary/50"
       data-slot="card"
       id="folder-panel"
-      aria-labelledby="folder-heading"
+      aria-labelledby={heading ? undefined : 'folder-heading'}
+      aria-label={heading ? title : undefined}
       data-selected-folder={selectedFolder}
       inert={collapsed}
     >
       <div className="folder-heading">
-        <h2 id="folder-heading">{title}</h2>
+        {heading ? <div id="folder-heading">{heading}</div> : <h2 id="folder-heading">{title}</h2>}
         {side === 'left' ? <div className="folder-heading-actions">{control}</div> : control}
       </div>
       {children}

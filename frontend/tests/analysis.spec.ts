@@ -203,9 +203,7 @@ test('recording details stay aligned with the header while scrolling at the pane
     el.scrollTop = el.scrollHeight;
   });
   await expect(body.getByText('data_0.db3', { exact: true })).toBeInViewport();
-  await expect(
-    page.getByRole('heading', { name: 'Recording details', exact: true }),
-  ).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'Details', exact: true })).toBeInViewport();
   await page.getByRole('button', { name: 'Collapse recording details' }).click();
   await expect(page.getByRole('button', { name: 'Expand recording details' })).toBeFocused();
   await page.getByRole('button', { name: 'Expand recording details' }).click();

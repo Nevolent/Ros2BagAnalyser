@@ -2,7 +2,7 @@ import { syntheticVideo } from './media-fixture';
 import { test, expect } from '@playwright/test';
 import { apiFixture } from './api-fixture';
 
-test('topics are searchable, scrollable and safe text; details retain gap evidence', async ({
+test('sidebar tabs lead the panel; all topics are scrollable, safe and truncated', async ({
   page,
 }) => {
   const api = await apiFixture(page);
@@ -33,24 +33,34 @@ test('topics are searchable, scrollable and safe text; details retain gap eviden
   await page.keyboard.press('Escape');
   await expect(page.getByRole('tooltip')).toHaveCount(0);
   await page.goto('/#/analysis/42');
-  await expect(page.getByRole('region', { name: 'Timestamp inspection' })).toContainText(
-    '15.1 s gap',
-  );
+  await expect(page.getByRole('heading', { name: 'Recording details' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Timestamp inspection' })).toHaveCount(0);
+  await expect(page.getByText('Rescan to check timestamps.')).toHaveCount(0);
+  const health = page.getByRole('button', { name: 'Review', exact: true });
+  await health.focus();
+  await expect(page.getByRole('tooltip')).toContainText('15.1 s timestamp gap');
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Topics', exact: true }).click();
-  await expect(page.getByRole('searchbox', { name: 'Search topics' })).toBeVisible();
+  await expect(page.getByRole('searchbox', { name: 'Search topics' })).toHaveCount(0);
+  await expect(page.locator('.folder-heading .page-tab-count')).toHaveCount(0);
+  await expect(page.locator('.folder-heading')).toContainText('Details');
+  await expect(page.locator('.folder-heading')).toContainText('Topics');
   const list = page.getByRole('region', { name: 'Recording topics' });
   await expect(list.getByRole('listitem')).toHaveCount(180);
   const viewport = page.locator('.recording-topics-list');
   expect(await viewport.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
-  await page.getByRole('searchbox', { name: 'Search topics' }).fill('Image');
-  await expect(list.getByRole('listitem')).toHaveCount(1);
   await expect(list).toContainText('/camera/<script>topic</script>');
   expect(await list.locator('script').count()).toBe(0);
+  const splitter = page.getByRole('separator', { name: 'Resize recording details' });
+  await splitter.focus();
+  await page.keyboard.press('ArrowRight');
+  const topic = list.locator('code').last();
+  await expect(topic).toHaveCSS('white-space', 'nowrap');
+  await expect(topic).toHaveCSS('text-overflow', 'ellipsis');
+  await expect(topic).toHaveAttribute('title', '/camera/<script>topic</script>');
   await page.screenshot({ path: test.info().outputPath('topics.png') });
-  await page.getByRole('searchbox', { name: 'Search topics' }).fill('no-match');
-  await expect(list).toContainText('No matching topics.');
   await page.getByRole('button', { name: 'Details', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Timestamp inspection' })).toContainText('0:04.9');
+  await expect(page.getByRole('region', { name: 'Timestamp inspection' })).toHaveCount(0);
 });
 
 test('camera selector changes identity and coverage without resetting the timeline', async ({

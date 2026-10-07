@@ -492,7 +492,7 @@ export const Timeline = memo(function Timeline({
     return visible;
   }, [signal, state.start, state.span, size.width, duration]);
   const path = useMemo(() => {
-    if (!hasTelemetry) return `M0,${y(0)}L${size.width},${y(0)}`;
+    if (!hasTelemetry) return `M0,${top}L${size.width},${top}`;
     if (segments)
       return segments
         .map((segment) =>
@@ -517,17 +517,21 @@ export const Timeline = memo(function Timeline({
   }, [state.start, state.span, signal, size, duration, segments, hasTelemetry]);
   const area = useMemo(
     () =>
-      segments
-        ? segments
-            .map((segment) => {
-              const line = segment
-                .map((sample, i) => `${i ? 'L' : 'M'}${x(sample.timeSeconds)},${y(sample.value!)}`)
-                .join('');
-              return `${line}L${x(segment.at(-1)!.timeSeconds)},${size.height - bottom}L${x(segment[0].timeSeconds)},${size.height - bottom}Z`;
-            })
-            .join('')
-        : `${path}L${size.width},${size.height - bottom}L0,${size.height - bottom}Z`,
-    [segments, path, size, state.start, state.span, signal],
+      !hasTelemetry
+        ? `${path}L${size.width},${size.height - bottom}L0,${size.height - bottom}Z`
+        : segments
+          ? segments
+              .map((segment) => {
+                const line = segment
+                  .map(
+                    (sample, i) => `${i ? 'L' : 'M'}${x(sample.timeSeconds)},${y(sample.value!)}`,
+                  )
+                  .join('');
+                return `${line}L${x(segment.at(-1)!.timeSeconds)},${size.height - bottom}L${x(segment[0].timeSeconds)},${size.height - bottom}Z`;
+              })
+              .join('')
+          : `${path}L${size.width},${size.height - bottom}L0,${size.height - bottom}Z`,
+    [segments, path, size, state.start, state.span, signal, hasTelemetry],
   );
   const value = sample(state.time);
   const singleSamples = useMemo(() => {
@@ -773,11 +777,6 @@ export const Timeline = memo(function Timeline({
         </div>
       </div>
       <div className="timeline-content" data-slot="card-content">
-        {bundle.message && (
-          <p className="timeline-state" role="status">
-            {bundle.message}
-          </p>
-        )}
         <div
           ref={plot}
           className={`timeline-plot${shift ? ' is-shift-ready' : ''}${selection ? ' is-selecting' : ''}${dragging ? ' is-scrubbing' : ''}`}
@@ -839,6 +838,11 @@ export const Timeline = memo(function Timeline({
           onPointerCancel={() => finishInteraction(true)}
           onLostPointerCapture={() => finishInteraction(true)}
         >
+          {bundle.message && !hasTelemetry && (
+            <p className="timeline-state" role="status">
+              {bundle.message}
+            </p>
+          )}
           <svg
             className="timeline-static"
             data-timeline-trace-svg=""
@@ -897,17 +901,17 @@ export const Timeline = memo(function Timeline({
             </defs>
             <g className="timeline-grid">
               <g mask="url(#timeline-grid-mask)">
-                {(hasData ? signal.ticks : [0]).map((tick) => (
+                {(hasData ? signal.ticks : []).map((tick) => (
                   <line key={tick} x1="0" x2={size.width} y1={y(tick)} y2={y(tick)} />
                 ))}
               </g>
-              {(hasData ? signal.ticks : [0]).map((tick) => (
+              {(hasData ? signal.ticks : []).map((tick) => (
                 <text key={tick} x="9" y={y(tick) - 7}>
                   {bundle.timestamped ? Number(tick.toPrecision(4)) : tick}
                 </text>
               ))}
             </g>
-            <Trace path={path} area={hasTelemetry ? area : ''} singleSamples={singleSamples} />
+            <Trace path={path} area={area} singleSamples={singleSamples} />
           </svg>
           <svg
             data-timeline-svg=""

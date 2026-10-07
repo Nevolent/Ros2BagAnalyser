@@ -36,7 +36,8 @@ test('folder counts stay aligned and the edge scrollbar fades without shifting c
   const before = (await count.boundingBox())!;
   const icon = (await panel.locator('.folder-toggle svg path').boundingBox())!;
   expect((await panel.boundingBox())!.width).toBe(304);
-  expect(Math.abs(before.x + before.width - icon.x - icon.width)).toBeLessThan(1);
+  const search = (await panel.locator('.folder-search-wrap').boundingBox())!;
+  expect(Math.abs(search.x + search.width - icon.x - icon.width)).toBeLessThan(1);
   expect(await viewport.evaluate((el) => el.clientWidth === el.parentElement!.clientWidth)).toBe(
     true,
   );

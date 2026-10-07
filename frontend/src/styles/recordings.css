@@ -15,6 +15,20 @@
   font: inherit;
   border-radius: 2px;
 }
+.recordings-workspace td:has(> .recording-status-diagnostic) {
+  position: relative;
+}
+.recordings-workspace td > .recording-status-diagnostic {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0 10px;
+  text-align: left;
+}
+.recordings-workspace .bag-health-cell > .recording-status-diagnostic {
+  padding-left: 22px;
+}
 .recording-status-diagnostic:focus-visible {
   outline: 1px solid var(--ring);
   outline-offset: 3px;

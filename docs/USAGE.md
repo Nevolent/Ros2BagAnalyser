@@ -26,9 +26,9 @@ analysis position persist while switching pages during the browser session.
 | Failed | Front input is unavailable or an output failed |
 | Worker offline | Saved jobs are waiting for the worker |
 
-Hover or focus a red status for its diagnostic. Recording details includes
-topics, message counts and any timestamp-gap evidence; gaps alone do not prove
-data loss. The operator can refresh this information with an explicit rescan.
+Hover or focus a red status for its diagnostic. Analysis has Details and Topics
+views. Timestamp gaps appear in the graph and in Review health diagnostics;
+gaps alone do not prove data loss. An explicit rescan refreshes this information.
 
 The processing percentage compares elapsed time with an estimate, capped at
 99%. **Estimate exceeded** means processing has taken longer than predicted.

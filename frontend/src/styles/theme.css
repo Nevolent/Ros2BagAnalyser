@@ -39,7 +39,7 @@
   --radius-control: 8px;
   --radius-dialog: 12px;
   --status-success: var(--color-emerald-500);
-  --status-error: #b42332;
+  --status-error: var(--color-red-500);
   --action-emphasis-bg: #fff;
   --action-emphasis-fg: #111;
   --action-emphasis-hover: #e8e8e8;
@@ -79,7 +79,6 @@
 }
 
 .dark {
-  --status-error: #ff8585;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);

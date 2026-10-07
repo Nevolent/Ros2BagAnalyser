@@ -208,3 +208,32 @@ test('large preparation lists stay usable on a phone and Escape preserves select
   await expect(page.getByRole('button', { name: 'Prepare Selected' })).toBeFocused();
   await expect(page.locator('.bag-table tbody .bag-checkbox:checked')).toHaveCount(211);
 });
+
+test('row edges retain diagnostic hover and checkbox selection targets', async ({ page }) => {
+  await page.goto('/?demo=1');
+  await page.getByRole('searchbox', { name: 'Search recordings' }).fill('bunker');
+  await page.getByRole('button', { name: 'Filter by analysis' }).click();
+  await page.getByRole('menuitemradio', { name: 'Failed', exact: true }).click();
+  const rows = page.locator('.bag-table tbody tr:visible');
+  expect(await rows.count()).toBeGreaterThan(1);
+  const tooltip = page.getByRole('tooltip').and(page.locator('.recording-diagnostic-tooltip'));
+  for (const row of [rows.nth(0), rows.nth(1)]) {
+    const failed = row.getByRole('button', { name: 'Failed', exact: true });
+    const cell = (await row.locator('td').last().boundingBox())!;
+    const control = (await failed.boundingBox())!;
+    expect(control.y).toBeCloseTo(cell.y, 0);
+    expect(control.height).toBeGreaterThanOrEqual(cell.height - 1);
+    for (const y of [cell.y + 2, cell.y + cell.height - 2]) {
+      await page.mouse.move(control.x + control.width / 2, y);
+      await expect(tooltip).toBeVisible();
+      await expect(failed).toHaveAttribute('aria-describedby', await tooltip.getAttribute('id'));
+    }
+    const selection = (await row.locator('.bag-select-cell').boundingBox())!;
+    const checkbox = row.getByRole('checkbox');
+    await page.mouse.click(selection.x + selection.width / 2, selection.y + 2);
+    await expect(checkbox).toBeChecked();
+    await page.mouse.click(selection.x + selection.width / 2, selection.y + selection.height - 2);
+    await expect(checkbox).not.toBeChecked();
+  }
+  await expect(page.getByRole('heading', { name: 'Recordings', level: 1 })).toBeVisible();
+});

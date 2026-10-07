@@ -667,8 +667,19 @@
 }
 
 .timeline-channel-label {
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  height: 24px;
+  margin-left: -2px;
+  padding: 0 2px 0 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 16.5px;
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .recording-details-panel,
@@ -680,30 +691,34 @@
   min-height: 0;
   min-width: 0;
 }
-.recording-details-panel > .page-tabs {
-  margin: 0 var(--workspace-card-inset) 12px;
+.analysis-workspace .folder-heading > #folder-heading {
+  min-width: 0;
 }
-.recording-topics > .search-field {
-  margin: 0 var(--workspace-card-inset) 12px;
+.recording-details-panel {
+  padding-top: 4px;
 }
 .recording-topics-list {
   padding: 0 var(--workspace-card-inset) 16px;
 }
-.recording-topics-list ul,
-.recording-gap-list {
+.recording-topics-list ul {
   list-style: none;
   padding: 0;
   margin: 0;
 }
-.recording-topics-list li,
-.recording-gap-list li {
+.recording-topics-list li {
   display: grid;
   gap: 4px;
   padding: 10px 0;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
   line-height: 18px;
-  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.recording-topics-list li > *,
+.recording-errors p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .recording-topics-list code {
   color: var(--foreground);
@@ -715,14 +730,6 @@
 }
 .recording-muted-state {
   margin-top: 6px;
-}
-.recording-gap-list strong {
-  color: var(--status-error);
-  font-weight: 500;
-}
-.recording-assets-group h3 {
-  font-size: 12px;
-  font-weight: 500;
 }
 .camera-label {
   display: flex;

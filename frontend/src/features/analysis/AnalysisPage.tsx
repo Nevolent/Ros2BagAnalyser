@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Page } from '../../components/Page';
-import { SidePanel, Workspace } from '../../components/Workspace';
+import { Workspace } from '../../components/Workspace';
 import { useRememberedState, useWorkspace, useWorkspaceService } from '../../app/WorkspaceProvider';
 import { useRecordingId } from '../../app/useRoute';
 import type { AnalysisRecording } from '../../data/types';
@@ -170,19 +170,17 @@ export function AnalysisPage() {
               <Camera key={`${id}-${camera.id}-${camera.src}`} camera={camera} onError={onError} />
             ))}
           </div>
-          <SidePanel title="Recording details">
-            <RecordingDetails
-              key={recording.id ?? recording.name}
-              recording={{
-                ...recording,
-                errors: [
-                  ...(recording.errors ?? []),
-                  ...Object.values(mediaErrors).filter(Boolean),
-                  ...(analysisError ? [analysisError] : []),
-                ],
-              }}
-            />
-          </SidePanel>
+          <RecordingDetails
+            key={`details-${recording.id ?? recording.name}`}
+            recording={{
+              ...recording,
+              errors: [
+                ...(recording.errors ?? []),
+                ...Object.values(mediaErrors).filter(Boolean),
+                ...(analysisError ? [analysisError] : []),
+              ],
+            }}
+          />
           <Timeline
             key={recording.id ?? recording.name}
             recordingKey={recording.id ?? recording.name}

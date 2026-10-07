@@ -52,8 +52,13 @@
   display: none;
 }
 .timeline-state {
-  flex: none;
-  padding-block: 4px;
+  position: absolute;
+  inset: 26px 0 10px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  padding: 16px;
+  pointer-events: none;
   color: var(--muted-foreground);
   font-size: 12px;
 }

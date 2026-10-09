@@ -1,3 +1,4 @@
+import { selectImuChannel } from './analysis-controls';
 import { test, expect } from '@playwright/test';
 
 test('timeline plays, pauses and scrubs', async ({ page }) => {
@@ -24,7 +25,7 @@ test('timeline plays, pauses and scrubs', async ({ page }) => {
   await page.mouse.down();
   await page.mouse.move(bounds.x + bounds.width * 0.6, bounds.y + 80);
   await page.mouse.up();
-  expect(Number(await slider.getAttribute('aria-valuenow'))).toBeCloseTo(754.56 * 0.6, 0);
+  expect(Number(await slider.getAttribute('aria-valuenow'))).toBeCloseTo(75 * 0.6, 0);
   await expect(page.locator('[data-camera-time]')).toHaveCount(0);
   await expect(page.locator('.chart-tooltip')).toHaveCount(0);
 });
@@ -38,16 +39,18 @@ test('channel menu, zoom and help work with mouse and keyboard', async ({ page }
   const currentTime = await slider.getAttribute('aria-valuenow');
   const initialPath = await page.locator('.timeline-line').getAttribute('d');
   const channel = page.getByRole('button', { name: 'Choose sensor graph' });
-  await channel.click();
-  await page.getByRole('menuitemradio', { name: 'angular_velocity.x', exact: true }).click();
-  await expect(page.locator('[data-channel-label]')).toHaveText('angular_velocity.x');
+  await selectImuChannel(page, 'angular_velocity.x');
+  await expect(page.locator('[data-channel-label]')).toHaveText('Angular velocity');
   await expect(slider).toHaveAttribute('aria-valuenow', currentTime!);
   expect(await page.locator('.timeline-line').getAttribute('d')).not.toBe(initialPath);
-  await expect(page.locator('.timeline-grid text')).toHaveText(['2', '1', '0', '-1', '-2']);
+  const ticks = (await page.locator('.timeline-grid text').allTextContents()).map(Number);
+  expect(Math.min(...ticks)).toBeLessThan(-1);
+  expect(Math.max(...ticks)).toBeGreaterThan(1);
+  expect(Math.max(...ticks) - Math.min(...ticks)).toBeLessThan(8);
   await channel.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
-  await expect(page.locator('[data-channel-label]')).toHaveText('angular_velocity.y');
+  await expect(page.locator('[data-channel-label]')).toHaveText('Linear acceleration');
   await expect(channel).toBeFocused();
   await channel.click();
   await channel.click();
@@ -75,11 +78,11 @@ test('playback stops at the end, can restart, and is disposed when leaving Analy
   await page.clock.install();
   const slider = page.getByRole('slider', { name: 'Recording timeline' });
   await slider.press('End');
-  await expect(slider).toHaveAttribute('aria-valuenow', '754.56');
+  await expect(slider).toHaveAttribute('aria-valuenow', '75');
   await slider.press('ArrowLeft');
   await slider.press('Space');
   await page.clock.runFor(1200);
-  await expect(slider).toHaveAttribute('aria-valuenow', '754.56');
+  await expect(slider).toHaveAttribute('aria-valuenow', '75');
   await expect(page.getByRole('button', { name: 'Play timeline', exact: true })).toBeVisible();
   await slider.press('Space');
   await page.clock.runFor(500);

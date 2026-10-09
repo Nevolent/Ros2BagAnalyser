@@ -148,7 +148,9 @@ export function RecordingDetails({ recording }: { recording: AnalysisRecording }
                     <>
                       <p>{recording.aiDescription.description}</p>
                       {recording.aiDescription.bunker && (
-                        <StatusBadge tone="muted">Bunker</StatusBadge>
+                        <div className="recording-description-tags">
+                          <span className="recording-description-tag">Bunker</span>
+                        </div>
                       )}
                     </>
                   ) : (

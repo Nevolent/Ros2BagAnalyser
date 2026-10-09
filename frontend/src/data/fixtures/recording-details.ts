@@ -33,7 +33,7 @@ export const analysisRecording: AnalysisRecording = {
     },
     {
       label: 'Duration',
-      value: '12:34.560',
+      value: '01:15.000',
       kind: 'text',
     },
     {

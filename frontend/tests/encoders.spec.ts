@@ -89,7 +89,7 @@ test('six wheel traces use recorded values, last duplicates, per-wheel gaps and 
   await setup(page);
   await page.goto('/#/analysis/42');
   await page.getByRole('button', { name: 'Choose sensor graph' }).click();
-  await page.getByRole('menuitemradio', { name: 'Encoders · six wheels' }).click();
+  await page.getByRole('menuitemradio', { name: 'Encoders', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Encoder timeline' })).toBeVisible();
   await expect(page.locator('[data-encoder-trace]')).toHaveCount(6);
   await expect(page.getByRole('group', { name: 'Wheel encoder readings' })).toBeVisible();
@@ -110,13 +110,18 @@ test('six wheel traces use recorded values, last duplicates, per-wheel gaps and 
   await plot.press('End');
   for (const wheel of ['FL', 'FR', 'ML', 'MR', 'RL', 'RR'])
     await expect(reading(wheel)).toHaveText('—');
-  await page.getByRole('button', { name: 'Choose sensor graph' }).click();
-  await page.getByRole('menuitemradio', { name: 'Front left (FL)', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Choose sensor graph' })).toBeFocused();
+  for (const wheel of ['FR', 'ML', 'MR', 'RL', 'RR'])
+    await page.getByRole('checkbox', { name: `${wheel} wheel` }).uncheck();
+  await expect(page.locator('[data-encoder-trace]')).toHaveCount(1);
+  await expect(page.locator('[data-encoder-value]')).toHaveCount(1);
+  await expect(page.locator('[data-encoder-trace]')).toHaveAttribute(
+    'data-encoder-trace',
+    'encoder.FL',
+  );
   await expect(page.locator('[data-timeline-unit]')).toHaveText('RPM');
   await plot.press('Home');
   await plot.press('ArrowRight');
-  await expect(page.locator('[data-timeline-value]')).toHaveText('1.000');
+  await expect(reading('FL')).toHaveText('1.000');
 });
 
 test('encoder artifact mismatch keeps the prepared IMU graph usable', async ({ page }) => {
@@ -128,7 +133,7 @@ test('encoder artifact mismatch keeps the prepared IMU graph usable', async ({ p
     'Encoder artifact identity changed',
   );
   await page.getByRole('button', { name: 'Choose sensor graph' }).click();
-  await expect(page.getByRole('menuitemradio', { name: 'Encoders · six wheels' })).toHaveCount(0);
+  await expect(page.getByRole('menuitemradio', { name: 'Encoders', exact: true })).toBeDisabled();
 });
 
 test('six wheels remain usable on a small viewport with reduced motion and without IMU', async ({
@@ -142,7 +147,7 @@ test('six wheels remain usable on a small viewport with reduced motion and witho
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/#/analysis/42');
   await page.getByRole('button', { name: 'Choose sensor graph' }).click();
-  await page.getByRole('menuitemradio', { name: 'Encoders · six wheels' }).click();
+  await page.getByRole('menuitemradio', { name: 'Encoders', exact: true }).click();
   await expect(page.locator('[data-encoder-trace]')).toHaveCount(6);
   const legend = page.getByRole('group', { name: 'Wheel encoder readings' });
   await expect(legend).toBeVisible();
@@ -150,5 +155,82 @@ test('six wheels remain usable on a small viewport with reduced motion and witho
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  const scale = (await page.locator('.timeline-grid text').first().boundingBox())!;
+  expect(scale.y).toBeGreaterThanOrEqual(bounds!.y + bounds!.height);
   await page.screenshot({ path: 'artifacts/encoder-mobile.png', fullPage: true });
+});
+
+test('encoder checkboxes combine solid colored traces and keep readings above the grid', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto('/#/analysis/42');
+  const picker = page.getByRole('button', { name: 'Choose sensor graph' });
+  await picker.click();
+  await page.getByRole('menuitemradio', { name: 'Encoders', exact: true }).click();
+  await expect(page.locator('[data-channel-label]')).toHaveText('Encoders');
+  await expect(
+    page.getByRole('group', { name: 'Encoder wheels' }).getByRole('checkbox'),
+  ).toHaveCount(6);
+  const colors = await page
+    .locator('[data-encoder-trace] path')
+    .evaluateAll((paths) => paths.map((path) => getComputedStyle(path).stroke));
+  expect(new Set(colors).size).toBe(6);
+  for (const [index, wheel] of ['FL', 'FR', 'ML', 'MR', 'RL', 'RR'].entries()) {
+    const checkbox = page.getByRole('checkbox', { name: `${wheel} wheel` });
+    await expect(checkbox).toBeChecked();
+    await expect(checkbox).toHaveClass('bag-checkbox');
+    await expect(page.locator(`[data-encoder-value="encoder.${wheel}"]`)).toHaveCSS(
+      'color',
+      colors[index],
+    );
+    await expect(page.locator(`[data-encoder-trace="encoder.${wheel}"] path`)).toHaveCSS(
+      'stroke-dasharray',
+      'none',
+    );
+    await expect(page.locator(`[data-encoder-trace="encoder.${wheel}"] path`)).toHaveCSS(
+      'stroke-width',
+      '1.2px',
+    );
+  }
+  const plot = page.getByRole('slider');
+  await plot.press('ArrowRight');
+  const positions = () =>
+    page.locator('[data-encoder-value]').evaluateAll((items) =>
+      items.map((el) => {
+        const box = el.getBoundingClientRect();
+        return { x: box.x, width: box.width };
+      }),
+    );
+  const before = await positions();
+  await plot.press('ArrowRight');
+  expect(await positions()).toEqual(before);
+  for (const wheel of ['ML', 'MR', 'RL', 'RR'])
+    await page.getByRole('checkbox', { name: `${wheel} wheel` }).uncheck();
+  await expect(page.locator('[data-encoder-trace]')).toHaveCount(2);
+  await expect(page.locator('[data-encoder-value]')).toHaveCount(2);
+  await expect(page.locator('.timeline-reading-label')).toHaveText(['FL', 'FR']);
+  const box = (await plot.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 3, box.y + 80);
+  await expect(page.locator('.chart-tooltip strong')).toHaveText(['19.000', '5.000']);
+  await expect(plot).toHaveAttribute('aria-valuenow', '2');
+  await page.mouse.move(0, 0);
+  const readings = page.getByRole('group', { name: 'Wheel encoder readings' });
+  expect(
+    await readings.evaluate((el) => el.parentElement?.hasAttribute('data-timeline-plot')),
+  ).toBe(true);
+  await page
+    .locator('.analysis-timeline')
+    .screenshot({ path: test.info().outputPath('encoder-controls.png') });
+  await picker.click();
+  await page.getByRole('menuitemradio', { name: 'Angular velocity', exact: true }).click();
+  await picker.click();
+  await page.getByRole('menuitemradio', { name: 'Encoders', exact: true }).click();
+  await expect(page.locator('[data-encoder-trace]')).toHaveCount(2);
+  for (const wheel of ['FL', 'FR'])
+    await page.getByRole('checkbox', { name: `${wheel} wheel` }).uncheck();
+  await expect(
+    page.locator('[data-encoder-trace], [data-encoder-value], .timeline-grid text'),
+  ).toHaveCount(0);
+  await expect(page.locator('.timeline-grid line')).toHaveCount(5);
 });

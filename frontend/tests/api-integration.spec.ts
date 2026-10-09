@@ -734,7 +734,13 @@ test('an open queued recording adopts newly available coverage and IMU channels'
     row[3] = null;
   });
   api.recording = detail();
-  await expect(page.locator('[data-channel-label]')).toHaveText('angular_velocity.x');
+  await expect(page.locator('[data-channel-label]')).toHaveText('Angular velocity');
+  await expect(page.locator('[data-axis-trace]')).toHaveAttribute(
+    'data-axis-trace',
+    'angular_velocity.x',
+  );
+  await expect(page.getByRole('checkbox', { name: 'X axis' })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Z axis' })).toBeDisabled();
   await expect(page.locator('[data-timeline-end]')).toHaveText('1767083106.000');
   await expect(page.getByRole('button', { name: 'Play timeline', exact: true })).toBeEnabled();
 });

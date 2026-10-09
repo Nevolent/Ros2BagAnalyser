@@ -150,7 +150,7 @@ test('timeline cursor remains a continuous line during playback and scrubbing', 
   await page.clock.runFor(100);
   const plot = page.getByRole('slider', { name: 'Recording timeline' });
   const box = (await plot.boundingBox())!;
-  for (const fraction of [0.2, 0.5, 0.99]) {
+  for (const fraction of [0.2, 0.5, 0.98]) {
     await page.mouse.click(box.x + box.width * fraction, box.y + 60);
     await page.getByRole('button', { name: 'Play timeline', exact: true }).click();
     await page.clock.runFor(1000);
@@ -165,7 +165,7 @@ test('timeline cursor remains a continuous line during playback and scrubbing', 
     );
     if (lifted) {
       expect(cursor.y - (readout.y + readout.height)).toBeGreaterThanOrEqual(1);
-      expect(cursor.y - (readout.y + readout.height)).toBeLessThanOrEqual(3);
+      expect(readout.y - box.y).toBeCloseTo(2, 1);
     }
     const capture = PNG.sync.read(await page.screenshot());
     for (let y = Math.ceil(cursor.y) + 1; y < cursor.y + cursor.height - 1; y++) {

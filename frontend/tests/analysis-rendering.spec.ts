@@ -1,3 +1,4 @@
+import { selectImuChannel } from './analysis-controls';
 import { test, expect } from '@playwright/test';
 import { apiFixture } from './api-fixture';
 
@@ -23,7 +24,7 @@ test('dense traces stay painted while playback and scrubbing update the cursor',
     series.non_finite_sample_count = '0';
   }
   await page.goto('/#/analysis/42');
-  await expect(page.locator('[data-channel-label]')).toHaveText('angular_velocity.z');
+  await expect(page.locator('[data-channel-label]')).toHaveText('Angular velocity');
 
   // DOM memoization alone does not prevent expensive browser rasterization.
   // Inspect the actual compositor layer rather than relying on machine-specific FPS.
@@ -44,8 +45,7 @@ test('dense traces stay painted while playback and scrubbing update the cursor',
   const plot = page.getByRole('slider', { name: 'Recording timeline' });
   const box = (await plot.boundingBox())!;
   for (const channel of metadata.series.map((series) => series.component)) {
-    await page.getByRole('button', { name: 'Choose sensor graph' }).click();
-    await page.getByRole('menuitemradio', { name: channel, exact: true }).click();
+    await selectImuChannel(page, channel);
     const cursor = page.locator('.timeline-cursor');
     const initialCursor = await cursor.getAttribute('style');
     await page.getByRole('button', { name: 'Play timeline', exact: true }).click();

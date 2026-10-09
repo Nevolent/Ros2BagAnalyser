@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 const unixStart = 1771027200;
-const duration = 754.56;
+const duration = 75;
 
 test('scrubbing follows the pointer before the next seek frame', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-10-01T10:00:00Z') });
@@ -178,31 +178,32 @@ test('Shift selection cancels cleanly and ignores tiny drags', async ({ page }) 
   await expect(page.locator('[data-timeline-time]')).toHaveText('1771027201.000');
 });
 
-test('all six channels update units and keep the clock, with keyboard access across groups', async ({
-  page,
-}) => {
+test('IMU modes preserve selected axes and the clock, with keyboard access', async ({ page }) => {
   await page.goto('/?demo=1#/analysis');
   const trigger = page.getByRole('button', { name: 'Choose sensor graph' });
+  await expect(page.getByRole('checkbox', { name: 'Z axis' })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'X axis' })).not.toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Y axis' })).not.toBeChecked();
+  await page.getByRole('checkbox', { name: 'X axis' }).check();
   await trigger.click();
-  await expect(page.getByRole('menuitemradio')).toHaveCount(13);
-  await expect(
-    page.getByRole('group', { name: 'Angular velocity' }).getByRole('menuitemradio'),
-  ).toHaveCount(3);
-  await expect(
-    page.getByRole('group', { name: 'Linear acceleration' }).getByRole('menuitemradio'),
-  ).toHaveCount(3);
-  await expect(
-    page.getByRole('group', { name: 'Wheel encoders' }).getByRole('menuitemradio'),
-  ).toHaveCount(7);
-  await page.getByRole('menuitemradio', { name: 'linear_acceleration.z', exact: true }).click();
+  const menu = page.getByRole('menu', { name: 'Sensor channel' });
+  await expect(menu.getByRole('menuitemradio')).toHaveText([
+    'Angular velocityrad/s',
+    'Linear accelerationm/s²',
+    'EncodersRPM',
+  ]);
+  await page.getByRole('menuitemradio', { name: 'Linear acceleration', exact: true }).click();
   await expect(page.locator('[data-timeline-unit]')).toHaveText('m/s²');
   await expect(page.locator('[data-timeline-time]')).toHaveText('1771027200.000');
-  expect(Number(await page.locator('[data-timeline-value]').textContent())).toBeGreaterThan(9);
+  expect(Number(await page.locator('[data-axis-value=z]').textContent())).toBeGreaterThan(9);
+  await expect(page.locator('[data-axis-trace]')).toHaveCount(2);
+  await expect(page.getByRole('checkbox', { name: 'X axis' })).toBeChecked();
   await trigger.press('ArrowDown');
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('Enter');
-  await expect(page.locator('[data-channel-label]')).toHaveText('angular_velocity.z');
+  await expect(page.locator('[data-channel-label]')).toHaveText('Angular velocity');
   await expect(page.locator('[data-timeline-unit]')).toHaveText('rad/s');
+  await expect(trigger).toBeFocused();
 });
 
 test('zoom buttons stay anchored inside a Shift-selected range when playback is outside it', async ({
@@ -268,7 +269,7 @@ test('graph geometry updates before paint throughout panel dragging and collapse
             Math.abs(viewBox.height - box.height),
             Math.abs(trace.viewBox.baseVal.height - box.height),
           ),
-          cursorError: Math.abs(cursorX - Math.round(box.width / 754.56)),
+          cursorError: Math.abs(cursorX - Math.round(box.width / 75)),
           cameraError: Math.abs(cameras.height - expectedCameraHeight),
         });
       });
@@ -365,6 +366,8 @@ test('playhead advances fractionally every frame between readout commits', async
   await page.goto('/?demo=1#/analysis');
   await page.clock.runFor(100);
   await page.keyboard.press('Space');
+  const box = (await page.getByRole('slider').boundingBox())!;
+  const pixelsPerFrame = (box.width * 0.016) / duration;
   const positions: number[] = [];
   for (let i = 0; i < 8; i++) {
     await page.clock.runFor(17);
@@ -374,7 +377,7 @@ test('playhead advances fractionally every frame between readout commits', async
   }
   for (let i = 1; i < positions.length; i++) {
     expect(positions[i]).toBeGreaterThan(positions[i - 1]);
-    expect(positions[i] - positions[i - 1]).toBeLessThan(0.1);
+    expect(positions[i] - positions[i - 1]).toBeCloseTo(pixelsPerFrame, 2);
   }
   await page.keyboard.press('Space');
   const paused = await page.locator('.timeline-cursor').getAttribute('style');

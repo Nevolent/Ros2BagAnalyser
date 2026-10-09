@@ -1,3 +1,4 @@
+import { selectImuChannel } from './analysis-controls';
 import { syntheticVideo } from './media-fixture';
 import { test, expect } from '@playwright/test';
 import { apiFixture, job, diagnostic } from './api-fixture';
@@ -44,7 +45,7 @@ test('analysis remembers channel, time, zoom and details while stopping hidden p
 }) => {
   await page.goto('/?demo=1#/analysis');
   await page.getByRole('button', { name: 'Choose sensor graph' }).click();
-  await page.getByRole('menuitemradio', { name: 'linear_acceleration.z', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Linear acceleration', exact: true }).click();
   const plot = page.getByRole('slider');
   await plot.press('ArrowRight');
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
@@ -52,7 +53,7 @@ test('analysis remembers channel, time, zoom and details while stopping hidden p
   await page.getByRole('button', { name: 'Collapse recording details' }).click();
   await page.getByRole('link', { name: 'Processing', exact: true }).click();
   await page.getByRole('link', { name: 'Analysis', exact: true }).click();
-  await expect(page.locator('[data-channel-label]')).toHaveText('linear_acceleration.z');
+  await expect(page.locator('[data-channel-label]')).toHaveText('Linear acceleration');
   await expect(plot).toHaveAttribute('aria-valuenow', '1');
   await expect(page.locator('[data-timeline-end]')).toHaveText(end!);
   await expect(page.getByRole('button', { name: 'Expand recording details' })).toBeVisible();
@@ -304,7 +305,7 @@ test('dense six-axis telemetry scrubs with decoded cameras without rebuilding th
   await page.goto('/#/analysis/42');
   const plot = page.getByRole('slider');
   const camera = page.locator('.analysis-camera-front video');
-  await expect(page.locator('[data-channel-label]')).toHaveText('angular_velocity.z');
+  await expect(page.locator('[data-channel-label]')).toHaveText('Angular velocity');
   await expect
     .poll(() => camera.evaluate((el: HTMLVideoElement) => el.readyState))
     .toBeGreaterThanOrEqual(2);
@@ -316,8 +317,7 @@ test('dense six-axis telemetry scrubs with decoded cameras without rebuilding th
     'linear_acceleration.y',
     'linear_acceleration.z',
   ]) {
-    await page.getByRole('button', { name: 'Choose sensor graph' }).click();
-    await page.getByRole('menuitemradio', { name, exact: true }).click();
+    await selectImuChannel(page, name);
   }
   const box = (await plot.boundingBox())!;
   expect(await page.locator('[data-timeline-single-sample]').count()).toBeLessThanOrEqual(

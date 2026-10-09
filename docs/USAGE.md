@@ -6,13 +6,19 @@
 2. Select recordings and choose **Prepare Selected**, then confirm. This prepares
    available camera previews, AI descriptions, IMU and wheel encoder data, reusing compatible output.
    **Go to Processing** is selected by default; clear it to stay in Recordings.
-   Filter **Partially prepared**, select all, then prepare to fill missing descriptions
-   without regenerating compatible previews or telemetry.
+   Filter **Partially prepared**, select all, then prepare to fill missing or outdated
+   outputs without regenerating compatible previews or telemetry.
 3. In **Processing**, follow the queue, cancel or reorder waiting work, and
    retry failures. One output runs at a time.
 4. Open a recording in **Analysis**. Play, pause or seek on the shared timeline;
-   select an IMU axis, an individual wheel or **Encoders · six wheels**, and zoom
-   the graph. The six-wheel view shares an RPM axis and shows each wheel at the cursor.
+   choose **Angular velocity**, **Linear acceleration** or **Encoders** in the graph
+   menu. Combine X/Y/Z axes or FL/FR/ML/MR/RL/RR wheels with the adjacent checkboxes,
+   and zoom the graph. Encoders share one RPM axis.
+
+Hover shows the timestamp and selected values without seeking. Fixed readouts
+above the graph show only selected axes or wheels; labels, traces and values share
+their colors. The vertical scale fits the selected data in the visible time window.
+With every checkbox cleared, the dotted grid and timeline remain without values.
 
 Space plays or pauses; arrow keys seek one second, or ten seconds with Shift.
 When multiple colour-camera previews are prepared, use the dropdown beside
@@ -28,10 +34,10 @@ analysis position persist while switching pages during the browser session.
 | --- | --- |
 | Readable / Damaged | Source health; inspect the diagnostic for details |
 | Review | Timestamp gaps or zero metadata duration need inspection |
-| Not planned | No front preview is ready and no output is active or failed |
+| Not planned | No output is ready and no output is active or failed |
 | Queued / Processing | Work is waiting or running |
-| Ready | Front preview and AI description are validated, with no active or failed output |
-| Partially prepared | Front preview is ready but its AI description is missing |
+| Ready | Front preview, AI description and all other available outputs are validated, with no active or failed output |
+| Partially prepared | Some outputs are ready; others need preparation, including changed processing or newly supported sensors |
 | Failed | Front input is unavailable or an output failed |
 | Worker offline | Saved jobs are waiting for the worker |
 

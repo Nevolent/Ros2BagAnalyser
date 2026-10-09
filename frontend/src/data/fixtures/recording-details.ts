@@ -56,11 +56,6 @@ export const analysisRecording: AnalysisRecording = {
       value: '12',
       kind: 'text',
     },
-    {
-      label: 'ROS database',
-      value: 'Readable',
-      kind: 'status',
-    },
   ],
   outputs: [
     {

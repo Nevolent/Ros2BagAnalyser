@@ -56,7 +56,7 @@ def _scanned_recording(tmp_path: Path):
     return CatalogScanner(archive).scan().recordings[0]
 
 
-def test_plans_all_three_available_targets_from_one_scan(tmp_path: Path) -> None:
+def test_plans_all_four_available_targets_from_one_scan(tmp_path: Path) -> None:
     recording = _scanned_recording(tmp_path)
 
     targets = _planner().plan_recording(11, recording)
@@ -103,8 +103,8 @@ def test_missing_topdown_is_optional_but_an_invalid_companion_is_not(tmp_path: P
         ),
     )
 
-    missing_target = _planner().plan_recording(11, missing)[1]
-    invalid_target = _planner().plan_recording(11, invalid)[1]
+    missing_target = next(t for t in _planner().plan_recording(11, missing) if t.kind == "topdown_preview")
+    invalid_target = next(t for t in _planner().plan_recording(11, invalid) if t.kind == "topdown_preview")
 
     assert missing_target.diagnostic is not None
     assert missing_target.diagnostic.code == "topdown_video_unavailable"

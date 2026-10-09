@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 import logging
+import os
 import signal
 import time
 from collections.abc import Callable
 
+from rosbag_analyser.ai_description import DESCRIPTION_POLICY, description_cache_identity
+from rosbag_analyser.preparation_planner import _front_planner_identity
+from rosbag_analyser.processors.ai_description import DescriptionProcessor, DescriptionProcessingError
 from rosbag_analyser.artifact_store import (
     ArtifactStore,
     ArtifactStoreError,
@@ -41,6 +45,7 @@ from rosbag_analyser.persistence.database import open_connection
 from rosbag_analyser.persistence.processing_repository import (
     ArtifactWrite,
     FRONT_PREVIEW_KIND,
+    AI_DESCRIPTION_KIND,
     IMU_SERIES_KIND,
     JobRecord,
     ProcessingRepository,
@@ -86,6 +91,8 @@ class SerialWorker:
         imu_resolver: ImuSourceResolver | None = None,
         imu_processor: ImuSeriesProcessor | None = None,
         imu_artifact_store: ArtifactStore | None = None,
+        description_processor: DescriptionProcessor | None = None,
+        description_artifact_store: ArtifactStore | None = None,
         admission_check: Callable[[], SafeDiagnostic | None] | None = None,
     ) -> None:
         self.repository = repository
@@ -100,6 +107,8 @@ class SerialWorker:
         self.imu_resolver = imu_resolver
         self.imu_processor = imu_processor
         self.imu_artifact_store = imu_artifact_store
+        self.description_processor = description_processor
+        self.description_artifact_store = description_artifact_store
         self.admission_check = admission_check
         self._paused_code: str | None = None
 
@@ -128,6 +137,9 @@ class SerialWorker:
         return True
 
     def _run_job(self, job: JobRecord) -> None:
+        if job.kind == AI_DESCRIPTION_KIND:
+            self._run_description_job(job)
+            return
         if job.kind == FRONT_PREVIEW_KIND:
             self._run_front_job(job)
             return
@@ -142,6 +154,84 @@ class SerialWorker:
             "artifact_kind_unsupported",
             "The requested artifact kind is unsupported.",
         )
+
+    def _description_front(self, job):
+        outputs = self.repository.get_current_outputs((job.recording_id,))
+        front = next((item.artifact for item in outputs
+                      if item.target.kind == FRONT_PREVIEW_KIND
+                      and item.target.target_state == "available"
+                      and item.artifact is not None), None)
+        if front is None or description_cache_identity(front.cache_identity) != job.cache_identity:
+            raise DescriptionProcessingError("ai_front_preview_unavailable", "A matching prepared front preview is required for the AI description.")
+        current = self.repository.get_current_artifact_for_delivery(
+            job.recording_id, FRONT_PREVIEW_KIND, front.id,
+            _front_planner_identity(front_topic=self.topic_name, profile=self.processor.profile,
+                                    encoder_identity=self.media_encoder_identity),
+        )
+        if current is None:
+            raise DescriptionProcessingError("ai_front_preview_changed", "The front preview changed. Prepare this recording again.")
+        return current
+
+    def _run_description_job(self, job: JobRecord) -> None:
+        workspace = None
+        opened = None
+        store = self.description_artifact_store
+        control = self._control_token(job)
+        try:
+            if control is not None:
+                control.checkpoint("setup", force=True)
+            if store is None or self.description_processor is None:
+                raise DescriptionProcessingError("ai_model_unavailable", "AI description processing is unavailable.")
+            front = self._description_front(job)
+            opened = self.artifact_store.open_media(front.output_relative_path, front.size_bytes,
+                                                   front.cache_identity, front.manifest)
+            workspace = store.create_workspace(job.id)
+            path = workspace / "description.json"
+            result = self.description_processor.process(opened.descriptor, path, control=control)
+            details = path.stat(follow_symlinks=False)
+            manifest = {
+                "schema_version": 1, "artifact_kind": AI_DESCRIPTION_KIND,
+                "cache_identity": job.cache_identity, "processor_version": DESCRIPTION_POLICY,
+                "front_preview_identity": front.cache_identity,
+                "result": result,
+                "output": {"file_name": "description.json", "mime_type": "application/json",
+                           "size_bytes": details.st_size,
+                           "file_identity": {"device_id": details.st_dev, "inode": details.st_ino,
+                                             "mtime_ns": details.st_mtime_ns}},
+            }
+            current = self._description_front(job)
+            if current.id != front.id or current.manifest != front.manifest:
+                raise DescriptionProcessingError("ai_front_preview_changed", "The front preview changed during description generation. Retry preparation.")
+            self.artifact_store.validate_media(current.output_relative_path, current.size_bytes,
+                                               current.cache_identity, current.manifest)
+            if control is not None:
+                control.publishing_gate()
+            published = store.publish_description(workspace, job.id, job.cache_identity,
+                                                  manifest, replace_conflicting=True)
+            self.repository.complete_job(job.id, ArtifactWrite(
+                recording_id=job.recording_id, kind=job.kind, cache_identity=job.cache_identity,
+                output_relative_path=published.output_relative_path, mime_type="application/json",
+                size_bytes=published.size_bytes, coverage_start_ns=front.coverage_start_ns,
+                coverage_end_ns=front.coverage_end_ns, manifest=manifest,
+            ))
+            logger.info("AI description job %s succeeded.", job.id)
+        except JobCanceled:
+            workspace = self._finish_cancellation(job, workspace, store)
+        except (DescriptionProcessingError, ArtifactStoreError) as error:
+            self.repository.fail_job(job.id, error.code, error.safe_message)
+            logger.warning("AI description job %s failed with code %s.", job.id, error.code)
+        except Exception:
+            self.repository.fail_job(job.id, "ai_description_processing_failed",
+                                     "AI description generation failed unexpectedly. Retry it.")
+            logger.exception("AI description job %s failed unexpectedly.", job.id)
+        finally:
+            if opened is not None:
+                os.close(opened.descriptor)
+            if workspace is not None and workspace.exists() and store is not None:
+                try:
+                    store.clean_workspace(workspace, job.id)
+                except ArtifactStoreError:
+                    logger.exception("Owned workspace cleanup failed for AI description job %s.", job.id)
 
     def _process_front_stream(self, job, descriptor, workspace, filename, control):
         output_path = workspace / filename
@@ -781,6 +871,10 @@ def create_worker(
         imu_resolver=imu_resolver,
         imu_processor=ImuSeriesProcessor(),
         imu_artifact_store=imu_artifact_store,
+        description_processor=DescriptionProcessor(config.description_python, config.description_model_root,
+                                                   config.ffmpeg_path, config.ffprobe_path),
+        description_artifact_store=ArtifactStore(config.derived_root, config.ffmpeg_path,
+                                                config.ffprobe_path, AI_DESCRIPTION_KIND),
         admission_check=admission_check,
     )
 

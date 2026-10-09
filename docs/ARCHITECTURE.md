@@ -39,10 +39,10 @@ last successful catalog or mark unseen recordings missing. Scanning creates no j
 
 Six tables hold domain state: `recordings`, `source_components`, `artifacts`,
 `jobs`, `catalog_state` and `preparation_targets`. Applied SQL migrations,
-currently through `0009_recording_inspection.sql`, remain part of the upgrade path.
+currently through `0010_ai_description.sql`, remain part of the upgrade path.
 
 Catalog and processing reads use saved projections, without source access per row.
-Each successful scan saves three preparation targets per recording. Planner or
+Each successful scan saves four preparation targets per recording. Planner or
 configuration changes require an explicit rescan; the worker revalidates inputs.
 
 The scan saves topic names, types and counts in `recordings.scan_details`.
@@ -62,14 +62,28 @@ ambiguous matches remain separate. Reconciliation changes metadata only.
 ## Preparation and jobs
 
 Preparation takes a bounded ordered recording list and a non-empty subset of
-`front_preview`, `topdown_preview` and `imu_series`. Each output independently
-reuses ready/active work, queues missing work or reports unavailability. Active
+`front_preview`, `ai_description`, `topdown_preview` and `imu_series`. Each output
+independently reuses ready/active work, queues missing work or reports unavailability. Active
 identities cannot be duplicated. Retry resolves current inputs.
 
-The recording state precedence is failed, processing, queued, ready, not planned.
+The recording state precedence is failed, processing, queued, ready, partially
+prepared, not planned.
 Any failed output or unavailable front input makes it Failed. Ready requires a
-validated front preview and no active or failed output. Top-down and IMU are
-optional; Analysis can review available output independently.
+validated front preview and AI description, with no active or failed output.
+A ready front preview without a ready description is Partially prepared. Top-down
+and IMU are optional; Analysis can review available output independently.
+
+AI descriptions are separate jobs after the front preview. They read its default
+stream through a validated, held file descriptor and sample 12 chronological frames
+at a maximum side of 640 pixels. Offline Qwen3-VL-2B-Instruct runs in a separately
+provisioned Python environment with the experiment's exact prompt and formatter;
+all three visual cues (gravel-like terrain, dark curtains, artificial lighting)
+are required for the bunker tag. Validated JSON is published atomically and exposed
+only in recording details. Inference errors leave camera/IMU artifacts intact.
+Migration 0010 derives missing description targets from saved front targets without
+scanning sources or creating jobs. Prepare Selected reuses compatible artifacts;
+a reordered description waits for active front work. Cancellation terminates
+inference and decoders; pause holds them at a checkpoint before publication.
 
 A PostgreSQL advisory lock permits one worker. Claim, insertion, reordering and
 queued cancellation share a stable queue order. Durable pause/resume/cancel
@@ -103,6 +117,7 @@ Queued work and recordings are preserved; recovery is in [Operations](OPERATIONS
 | --- | --- |
 | Front preview | `front-preview-v5`; validated MP4 per supported raw CDR Image stream |
 | Top-down preview | `topdown-preview-v2`; AVI frames timed by CSV Unix timestamps; H.264/yuv420p MP4 |
+| AI description | `ai-description-v1`; bounded JSON with the short description and bunker boolean, tied to front identity and fixed model/prompt/sampling policy |
 | IMU | `imu-series-v2`; schema-2 JSON with three angular-velocity and three linear-acceleration axes |
 
 Front discovery accepts nonempty CDR ROS Image streams with `bgr8`/`rgb8`

@@ -3,11 +3,13 @@ import type { ActiveJob, Folder, Job, Recording } from './types';
 import type { ApiJob, Catalog, CatalogRecording, Kind, Overview } from './api-types';
 export const outputNames: Record<Kind, string> = {
   front_preview: 'Front-camera preview',
+  ai_description: 'AI description',
   topdown_preview: 'Top-down preview',
   imu_series: 'IMU data bundle',
 };
 export const labels: Record<string, string> = {
   ready: 'Ready',
+  partially_prepared: 'Partially prepared',
   failed: 'Failed',
   queued: 'Queued',
   processing: 'Processing',
@@ -84,7 +86,11 @@ export function recording(row: CatalogRecording): Recording {
           : row.outputs.some(
                 (output) => output.kind === 'front_preview' && output.state === 'ready',
               )
-            ? 'Ready'
+            ? row.outputs.some(
+                (output) => output.kind === 'ai_description' && output.state === 'ready',
+              )
+              ? 'Ready'
+              : 'Partially prepared'
             : 'Not planned',
   };
 }

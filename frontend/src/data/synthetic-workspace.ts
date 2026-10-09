@@ -96,13 +96,27 @@ function updateRecording(
 }
 
 function details(row: Recording, failure?: Job): AnalysisRecording {
-  const ready = row.analysis === 'Ready';
+  const ready = row.analysis === 'Ready' || row.analysis === 'Partially prepared';
   const status = row.analysis;
   const issue = failure?.failures?.map((item) => item.code) ?? [];
   return {
     ...visualRecording,
     id: row.id,
     name: row.name,
+    aiDescription:
+      row.analysis === 'Ready'
+        ? {
+            description:
+              'A synthetic indoor test area with blocks. No other robots, people, or active movement are visible.',
+            bunker: true,
+          }
+        : null,
+    descriptionState:
+      row.analysis === 'Ready'
+        ? 'ready'
+        : row.analysis === 'Partially prepared'
+          ? 'not_requested'
+          : row.analysis.toLowerCase(),
     bundle: visualRecording.bundle,
     errors: [
       ...(row.health === 'Damaged' ? ['E_SQLITE_INTEGRITY: source recording is damaged.'] : []),
@@ -119,7 +133,6 @@ function details(row: Recording, failure?: Job): AnalysisRecording {
       if (field.label === 'Messages')
         return { ...field, value: String(1300 + row.name.length * 137) };
       if (field.label === 'Topics') return { ...field, value: String(7 + (row.name.length % 14)) };
-      if (field.label === 'ROS database') return { ...field, value: row.health };
       return field;
     }),
     outputs: visualRecording.outputs.map((output) => {
@@ -128,7 +141,9 @@ function details(row: Recording, failure?: Job): AnalysisRecording {
         failure &&
         !failure.failures?.some((item) => item.output === output.name)
           ? 'Ready'
-          : status;
+          : status === 'Partially prepared'
+            ? 'Ready'
+            : status;
       return {
         ...output,
         status: outputStatus,

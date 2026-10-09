@@ -60,11 +60,13 @@ PLANNER_IDENTITIES = {
     "front_preview": "1" * 64,
     "topdown_preview": "2" * 64,
     "imu_series": "3" * 64,
+    "ai_description": "4" * 64,
 }
 TARGET_IDENTITIES = {
     "front_preview": "a" * 64,
     "topdown_preview": "b" * 64,
     "imu_series": "c" * 64,
+    "ai_description": "d" * 64,
 }
 
 
@@ -231,7 +233,7 @@ def _insert_current_artifact_history(
             """,
             (recording_id,),
         ).fetchall()
-        assert len(targets) == 3
+        assert len(targets) == 4
         for target in targets:
             kind = str(target["kind"])
             cache_identity = str(target["cache_identity"])
@@ -276,7 +278,7 @@ def _make_targets_available(
     *,
     target_identities: dict[str, str] | None = None,
 ) -> None:
-    identities = TARGET_IDENTITIES if target_identities is None else target_identities
+    identities = {**TARGET_IDENTITIES, **(target_identities or {})}
     with open_connection(postgres_url) as connection:
         generation = connection.execute(
             "SELECT successful_generation FROM catalog_state WHERE singleton = TRUE"
@@ -298,7 +300,7 @@ def _make_targets_available(
                     generation,
                     PLANNER_IDENTITIES[kind],
                     identities[kind],
-                    index * 100,
+                    {"front_preview": 100, "topdown_preview": 200, "imu_series": 300, "ai_description": 400}[kind],
                     recording_id,
                     kind,
                 ),
@@ -907,12 +909,21 @@ async def test_catalog_reads_complete_while_serial_worker_job_is_processing(
     processor_started = threading.Event()
     release_processor = threading.Event()
 
+    from dataclasses import dataclass
+
+    @dataclass
+    class Descriptor:
+        cache_identity: str
+        topic: object
+        topics: tuple = ()
+
     class BlockingResolver:
         def resolve(self, selected_recording_id: int):
             assert selected_recording_id == recording_id
             return SimpleNamespace(
-                descriptor=SimpleNamespace(
+                descriptor=Descriptor(
                     cache_identity=cache_identity,
+                    topics=(),
                     topic=SimpleNamespace(
                         message_type="sensor_msgs/msg/Image",
                         serialization_format="cdr",
@@ -1174,7 +1185,7 @@ def test_generation_missing_and_reappearing_preserves_identity_and_history(
     assert reappeared.ros_health == "readable"
     assert reappeared.last_seen_generation == 3
     assert job_count == 1
-    assert targets == {"count": 3, "minimum": 3, "maximum": 3}
+    assert targets == {"count": 4, "minimum": 3, "maximum": 3}
 
 
 @pytest.mark.postgres
@@ -1352,7 +1363,7 @@ def test_physical_parent_move_preserves_ready_targets_and_history(
     assert source.identity_recording_id == original.id
     assert source.identity_relative_path == "run"
     assert {str(row["kind"]): str(row["cache_identity"]) for row in targets} == identities
-    assert current_ready == 3
+    assert current_ready == 4
     assert job_recording_ids == [{"recording_id": original.id}]
 
 
@@ -1427,7 +1438,7 @@ def test_rescan_repairs_one_unambiguous_pre_feature_split_without_file_rewrite(
     assert {str(row["kind"]): str(row["cache_identity"]) for row in targets} == identities
     assert artifact_owners == [{"recording_id": split_current_id}]
     assert job_owners == [{"recording_id": split_current_id}]
-    assert matching_ready == 3
+    assert matching_ready == 4
 
 
 @pytest.mark.postgres
@@ -1493,12 +1504,13 @@ def test_prepare_outputs_independently_and_remains_concurrently_idempotent(
     assert [item.state for item in independent.outputs] == [
         "queued",
         "queued",
+        "queued",
         "unavailable",
     ]
     with open_connection(postgres_url) as connection:
         assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
             "count"
-        ] == 2
+        ] == 3
         connection.execute("DELETE FROM jobs")
 
     _make_targets_available(postgres_url, recording_id)
@@ -1519,12 +1531,12 @@ def test_prepare_outputs_independently_and_remains_concurrently_idempotent(
             "SELECT id, kind FROM jobs ORDER BY id"
         ).fetchall()
     assert [row["kind"] for row in jobs] == list(PROCESSING_KINDS)
-    assert len(jobs) == 3
+    assert len(jobs) == 4
     outcomes = [
         [item.outcome for item in result.outputs] for result in (first, second)
     ]
     assert sorted(outcomes) == sorted(
-        [["queued", "queued", "queued"], ["active_reused"] * 3]
+        [["queued"] * 4, ["active_reused"] * 4]
     )
 
 
@@ -1564,13 +1576,14 @@ def test_prepare_output_scheduling_failure_does_not_rollback_siblings(
         assert [item.outcome for item in scheduled.outputs] == [
             "queued",
             "queued",
+            "queued",
             "request_failed",
         ]
-        assert scheduled.outputs[2].diagnostic_code == "preparation_schedule_failed"
+        assert scheduled.outputs[3].diagnostic_code == "preparation_schedule_failed"
         with open_connection(postgres_url) as connection:
             assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
                 "count"
-            ] == 2
+            ] == 3
     finally:
         with open_connection(postgres_url) as connection:
             connection.execute("DROP TRIGGER reject_synthetic_imu_job ON jobs")
@@ -1580,12 +1593,13 @@ def test_prepare_output_scheduling_failure_does_not_rollback_siblings(
     assert [item.outcome for item in repeated.outputs] == [
         "active_reused",
         "active_reused",
+        "active_reused",
         "queued",
     ]
     with open_connection(postgres_url) as connection:
         assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
             "count"
-        ] == 3
+        ] == 4
 
 
 @pytest.mark.postgres
@@ -1607,17 +1621,17 @@ def test_capacity_admission_creates_no_stale_jobs(
         ),
     )
 
-    assert [output.outcome for output in paused.outputs] == ["unavailable"] * 3
+    assert [output.outcome for output in paused.outputs] == ["unavailable"] * 4
     assert [output.diagnostic_code for output in paused.outputs] == [
         "derived_space_low"
-    ] * 3
+    ] * 4
     with open_connection(postgres_url) as connection:
         assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
             "count"
         ] == 0
 
     resumed = repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
-    assert [output.outcome for output in resumed.outputs] == ["queued"] * 3
+    assert [output.outcome for output in resumed.outputs] == ["queued"] * 4
 
 
 @pytest.mark.postgres
@@ -1671,7 +1685,7 @@ def test_concurrent_claim_is_fifo_and_global_single_running_with_worker_probe(
     repository = ProcessingRepository(postgres_url)
     schedule = repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
     queued_ids = [item.job.id for item in schedule.outputs if item.job is not None]
-    assert len(queued_ids) == 3
+    assert len(queued_ids) == 4
     start = threading.Barrier(2)
 
     def claim():
@@ -1691,7 +1705,7 @@ def test_concurrent_claim_is_fifo_and_global_single_running_with_worker_probe(
     overview = repository.processing_overview(queue_limit=10)
     assert overview.running_count == 1
     assert [item.job.id for item in overview.queue] == queued_ids[1:]
-    assert [item.queue_position for item in overview.queue] == [1, 2]
+    assert [item.queue_position for item in overview.queue] == [1, 2, 3]
     assert repository.worker_online(WORKER_LOCK_NAME) is False
     assert repository.worker_online(WORKER_LOCK_NAME) is False
 
@@ -2066,7 +2080,7 @@ def test_queue_insert_claim_and_reorder_share_one_order(
     repository = ProcessingRepository(postgres_url)
     initial = [
         repository.request_job(recording_id, kind, character * 64).job
-        for kind, character in zip(PROCESSING_KINDS, "abc", strict=True)
+        for kind, character in zip(("front_preview", "topdown_preview", "imu_series"), "abc", strict=True)
     ]
     assert all(job is not None for job in initial)
     initial_jobs = [job for job in initial if job is not None]
@@ -2352,7 +2366,7 @@ def test_maximum_synthetic_catalog_bulk_queries_and_response_are_bounded(
     processing_ms = int((perf_counter() - processing_started) * 1000)
 
     assert len(view.recordings) == 5000
-    assert sum(len(item.analysis.outputs) for item in view.recordings) == 15000
+    assert sum(len(item.analysis.outputs) for item in view.recordings) == 20000
     assert len(encoded.encode("utf-8")) < 8 * 1024 * 1024
     assert overview.running_count == 1
     assert overview.queued_count == 1000
@@ -2420,6 +2434,9 @@ async def test_v1_nested_synthetic_operational_acceptance(
 
     class SyntheticArtifactStore:
         def validate_media(self, *args) -> None:
+            return None
+
+        def validate_description_artifact(self, *args):
             return None
 
         def validate_series_artifact(self, *args) -> None:
@@ -2613,14 +2630,15 @@ async def test_v1_nested_synthetic_operational_acceptance(
             assert [item["recording_id"] for item in prepared_rows] == selected_ids
             assert [item["outcome"] for item in prepared_rows[0]["outputs"]] == [
                 "ready_reused"
-            ] * 3
+            ] * 4
             assert [item["outcome"] for item in prepared_rows[1]["outputs"]] == [
                 "queued"
-            ] * 3
+            ] * 4
             assert [item["outcome"] for item in prepared_rows[2]["outputs"]] == [
                 "retry_queued"
-            ] * 3
+            ] * 4
             assert [item["outcome"] for item in prepared_rows[3]["outputs"]] == [
+                "queued",
                 "queued",
                 "unavailable",
                 "queued",
@@ -2641,7 +2659,7 @@ async def test_v1_nested_synthetic_operational_acceptance(
 
             queue = await client.get("/api/v1/processing/jobs?view=queued&limit=20")
             assert [item["queue_position"] for item in queue.json()["items"]] == list(
-                range(1, 9)
+                range(1, 12)
             )
             running = processing_repository.claim_next_job()
             assert running is not None
@@ -2735,16 +2753,124 @@ def test_recording_progress_keeps_completed_siblings_across_output_handoffs(
     assert second.id == ids[1]
     after = repository.processing_overview(queue_limit=None)
     assert {item.job.id for item in after.recording_jobs} == set(ids)
-    assert sum(item.job.estimated_total_ms for item in after.recording_jobs) == 30000
+    assert sum(item.job.estimated_total_ms for item in after.recording_jobs) == 40000
+
     repository.fail_job(second.id, "synthetic_failure", "Synthetic test failure.")
     third = repository.claim_next_job()
     repository.fail_job(third.id, "synthetic_failure", "Synthetic test failure.")
+    fourth = repository.claim_next_job()
+    repository.fail_job(fourth.id, "synthetic_failure", "Synthetic test failure.")
     # A later retry must not inherit elapsed time or estimates from the older run.
     retried = repository.retry_failed_job(first.id, PLANNER_IDENTITIES)
     retry_job = repository.claim_next_job()
     assert retry_job.id == retried.output.job.id
     retry_overview = repository.processing_overview(queue_limit=None)
     assert [item.job.id for item in retry_overview.recording_jobs] == [retry_job.id]
+
+
+@pytest.mark.postgres
+def test_description_upgrade_prepares_only_missing_work_and_keeps_preview(postgres_url, tmp_path):
+    from rosbag_analyser.ai_description import description_cache_identity
+    from rosbag_analyser.artifact_store import ArtifactStore
+    from rosbag_analyser.api.v1_schemas import recording_detail_response
+    from conftest import inventory
+
+    archive = tmp_path / "source"
+    archive.mkdir()
+    create_recording(archive, "run", include_video=False, include_csv=False)
+    source_before = inventory(archive)
+    planner = PreparationPlanner(front_topic="/camera/image_raw", imu_topic="",
+                                 imu_component="angular_velocity.z", profile=V0_PREVIEW_PROFILE,
+                                 encoder_identity="synthetic-encoder")
+    catalog = CatalogRepository(postgres_url, planner)
+    catalog.apply_snapshot(CatalogScanner(archive).scan())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    front_target = next(item.target for item in repository.get_current_outputs((recording_id,))
+                        if item.target.kind == "front_preview")
+    derived = tmp_path / "derived"
+    derived.mkdir()
+    front_store = ArtifactStore(derived, Path("ffmpeg"), Path("ffprobe"))
+    description_store = ArtifactStore(derived, Path("ffmpeg"), Path("ffprobe"), "ai_description")
+    requested = repository.request_job(recording_id, "front_preview", front_target.cache_identity)
+    front_job = repository.claim_next_job()
+    assert front_job.id == requested.job.id
+    workspace = front_store.create_workspace(front_job.id)
+    path = workspace / "preview.mp4"
+    path.write_bytes(b"synthetic prepared preview")
+    details = path.stat()
+    manifest = {"artifact_kind": "front_preview", "cache_identity": front_job.cache_identity,
+                "output": {"file_name": "preview.mp4", "size_bytes": details.st_size,
+                           "file_identity": {"device_id": details.st_dev, "inode": details.st_ino,
+                                             "mtime_ns": details.st_mtime_ns}}}
+    published = front_store.publish(workspace, front_job.id, front_job.cache_identity, manifest)
+    repository.enter_publishing(front_job.id)
+    front = repository.complete_job(front_job.id, ArtifactWrite(
+        recording_id, "front_preview", front_job.cache_identity, published.output_relative_path,
+        "video/mp4", published.size_bytes, 0, 100, manifest))
+    before = inventory(derived)
+
+    # Simulate the saved pre-feature catalog, then upgrade without a rescan.
+    with open_connection(postgres_url) as connection:
+        connection.execute("DELETE FROM preparation_targets WHERE kind = 'ai_description'")
+    apply_catalog_migration(postgres_url)
+    migrated = next(item.target for item in repository.get_current_outputs((recording_id,))
+                    if item.target.kind == "ai_description")
+    assert migrated.cache_identity == description_cache_identity(front.cache_identity)
+    assert migrated.scan_generation == 1
+    service = PreparationService(catalog, repository, planner,
+                                 {"front_preview": front_store, "ai_description": description_store})
+    assert service.states_for_recordings((recording_id,))[0].analysis_state == "partially_prepared"
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: service.prepare_selected((recording_id,)), range(2)))
+    for result in results:
+        by_kind = {output.kind: output for output in result.recordings[0].outputs}
+        assert by_kind["front_preview"].outcome == "ready_reused"
+        assert by_kind["ai_description"].outcome in {"queued", "active_reused"}
+    assert inventory(derived) == before
+    with open_connection(postgres_url) as connection:
+        jobs = connection.execute("SELECT kind, state FROM jobs ORDER BY id").fetchall()
+    assert jobs == [{"kind": "front_preview", "state": "succeeded"},
+                    {"kind": "ai_description", "state": "queued"}]
+
+    class Inference:
+        def process(self, descriptor, output_path, *, control):
+            assert os.pread(descriptor, 100, 0) == b"synthetic prepared preview"
+            control.checkpoint("processing", force=True)
+            result = {"description": "An indoor area. No other robots, people, or active movement are visible.", "bunker": True}
+            output_path.write_text(json.dumps(result))
+            return result
+
+    worker = SerialWorker(repository, None, SimpleNamespace(profile=V0_PREVIEW_PROFILE),
+                          front_store, "/camera/image_raw", "synthetic-encoder",
+                          description_processor=Inference(), description_artifact_store=description_store)
+    assert worker.run_once()
+    assert service.states_for_recordings((recording_id,))[0].analysis_state == "ready"
+    detail = recording_detail_response(V1CatalogService(catalog, service, max_recordings=10).get_recording(recording_id))
+    assert detail.ai_description.bunker is True
+    assert detail.ai_description.description.startswith("An indoor area.")
+    assert next(output for output in detail.outputs if output.kind == "ai_description").artifact is None
+    front_store.validate_media(front.output_relative_path, front.size_bytes, front.cache_identity, front.manifest)
+    assert inventory(archive) == source_before
+
+
+@pytest.mark.postgres
+def test_reordered_description_waits_for_its_front_job(postgres_url):
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    _make_targets_available(postgres_url, recording_id)
+    repository = ProcessingRepository(postgres_url)
+    schedule = repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
+    ids = {output.kind: output.job.id for output in schedule.outputs}
+    with open_connection(postgres_url) as connection:
+        connection.execute("UPDATE jobs SET queue_order = 100 + id")
+        connection.execute("UPDATE jobs SET queue_order = 1 WHERE id = %s", (ids["ai_description"],))
+        connection.execute("UPDATE jobs SET queue_order = 2 WHERE id = %s", (ids["front_preview"],))
+    front = repository.claim_next_job()
+    assert front.id == ids["front_preview"]
+    repository.fail_job(front.id, "synthetic_failure", "Synthetic failure.")
+    assert repository.claim_next_job().id == ids["ai_description"]
 
 
 @pytest.mark.postgres

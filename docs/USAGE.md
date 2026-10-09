@@ -4,7 +4,10 @@
 
 1. In **Recordings**, browse folders or search the saved catalog.
 2. Select recordings and choose **Prepare Selected**, then confirm. This prepares
-   available camera previews and IMU data, reusing compatible output.
+   available camera previews, AI descriptions and IMU data, reusing compatible output.
+   **Go to Processing** is selected by default; clear it to stay in Recordings.
+   Filter **Partially prepared**, select all, then prepare to fill missing descriptions
+   without regenerating compatible previews or telemetry.
 3. In **Processing**, follow the queue, cancel or reorder waiting work, and
    retry failures. One output runs at a time.
 4. Open a recording in **Analysis**. Play, pause or seek on the shared timeline;
@@ -22,13 +25,17 @@ analysis position persist while switching pages during the browser session.
 | Review | Timestamp gaps or zero metadata duration need inspection |
 | Not planned | No front preview is ready and no output is active or failed |
 | Queued / Processing | Work is waiting or running |
-| Ready | Front preview is validated, with no active or failed output |
+| Ready | Front preview and AI description are validated, with no active or failed output |
+| Partially prepared | Front preview is ready but its AI description is missing |
 | Failed | Front input is unavailable or an output failed |
 | Worker offline | Saved jobs are waiting for the worker |
 
 Hover or focus a red status for its diagnostic. Analysis has Details and Topics
-views. Timestamp gaps appear in the graph and in Review health diagnostics;
-gaps alone do not prove data loss. An explicit rescan refreshes this information.
+views. Details shows the short AI description after the source components, with a
+**Bunker** tag only when the model identifies all required visual cues. Diagnostics
+appear below the description. The description uses
+sampled frames and may miss events between them. Timestamp gaps appear in the
+graph and in Review health diagnostics; gaps alone do not prove data loss. An explicit rescan refreshes this information.
 
 The processing percentage compares elapsed time with an estimate, capped at
 99%. **Estimate exceeded** means processing has taken longer than predicted.

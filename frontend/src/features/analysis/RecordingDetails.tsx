@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { outputMessage } from '../../data/analysis-adapter';
 import { Tabs } from '../../components/Tabs';
 import { SidePanel } from '../../components/Workspace';
 import { StatusDiagnostic } from '../recordings/StatusDiagnostic';
@@ -138,6 +139,25 @@ export function RecordingDetails({ recording }: { recording: AnalysisRecording }
                 </section>
                 <section className="recording-assets-group" aria-label="Source components">
                   <Assets items={recording.sources} />
+                </section>
+                <section
+                  className="recording-assets-group recording-description"
+                  aria-label="AI description"
+                >
+                  {recording.aiDescription ? (
+                    <>
+                      <p>{recording.aiDescription.description}</p>
+                      {recording.aiDescription.bunker && (
+                        <StatusBadge tone="muted">Bunker</StatusBadge>
+                      )}
+                    </>
+                  ) : (
+                    <p className="recording-muted-state">
+                      {recording.descriptionState === 'not_requested' || !recording.descriptionState
+                        ? 'AI description not prepared.'
+                        : `AI description: ${outputMessage(recording.descriptionState)}`}
+                    </p>
+                  )}
                 </section>
                 {!!errors.length && (
                   <section className="recording-errors" aria-label="Recording errors">

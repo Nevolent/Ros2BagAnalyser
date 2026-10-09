@@ -27,11 +27,13 @@ from rosbag_analyser.processing_view import (
 from rosbag_analyser.v1_catalog import V1CatalogView, V1RecordingDetail
 
 
-OutputKind = Literal["front_preview", "topdown_preview", "imu_series"]
+OutputKind = Literal["front_preview", "topdown_preview", "imu_series", "ai_description"]
 OutputState = Literal[
     "unavailable", "ready", "processing", "queued", "failed", "not_requested"
 ]
-AnalysisState = Literal["not_planned", "queued", "processing", "ready", "failed"]
+AnalysisState = Literal[
+    "not_planned", "queued", "processing", "ready", "partially_prepared", "failed"
+]
 
 
 class DiagnosticResponse(BaseModel):
@@ -161,7 +163,13 @@ class RecordingOutputResponse(OutputFactResponse):
     artifact: ReadyArtifactResponse | None
 
 
+class DescriptionResponse(BaseModel):
+    description: str
+    bunker: bool
+
+
 class RecordingDetailResponse(CatalogRecordingResponse):
+    ai_description: DescriptionResponse | None = None
     topics: list[RecordingTopicResponse] | None = None
     timing: TimingInspectionResponse | None = None
     metadata_version: int | None
@@ -188,11 +196,12 @@ class PrepareSelectedRequest(BaseModel):
     output_kinds: list[OutputKind] = Field(
         default_factory=lambda: [
             "front_preview",
+            "ai_description",
             "topdown_preview",
             "imu_series",
         ],
         min_length=1,
-        max_length=3,
+        max_length=4,
     )
 
     @field_validator("recording_ids")
@@ -411,6 +420,13 @@ def recording_detail_response(detail: V1RecordingDetail) -> RecordingDetailRespo
         metadata_version=recording.metadata_version,
         message_count=_number_string(recording.message_count),
         source_present=recording.source_present,
+        ai_description=next(
+            (DescriptionResponse(**output.artifact.manifest["result"])
+             for output in detail.analysis.outputs
+             if output.kind == "ai_description" and output.state == "ready"
+             and output.artifact is not None),
+            None,
+        ),
         components=[_component(item) for item in detail.detail.components],
         outputs=[
             RecordingOutputResponse(
@@ -418,7 +434,7 @@ def recording_detail_response(detail: V1RecordingDetail) -> RecordingDetailRespo
                 job_id=output.job_id,
                 artifact=(
                     None
-                    if output.artifact is None
+                    if output.artifact is None or output.kind == "ai_description"
                     else _artifact_response(recording.id, output.artifact)
                 ),
             )

@@ -21,6 +21,15 @@ The local launcher reads mode-0600/0400 private files:
 - `~/.config/rosbag-analyser/database.env`: database password and optional
   host, user, database name and port.
 
+The local service wrapper reuses `experiments/qwen3-vl/.venv` and its downloaded
+model when present. Run that experiment's `setup.sh` to provision it. Elsewhere,
+configure `ROS_BAG_ANALYSER_DESCRIPTION_PYTHON` (the model environment's Python)
+and `ROS_BAG_ANALYSER_DESCRIPTION_MODEL_ROOT` (the pinned model directory).
+The API/ROS environment needs no Torch or Transformers; missing inference setup
+fails only description jobs and preserves prepared media. Inference is offline.
+Keep model weights and generated descriptions outside Git. Model settings take
+effect after a local service restart; migrate before using the new output kind.
+
 The default database host is the Windows host. Override file locations with
 `ROS_BAG_ANALYSER_SETTINGS_FILE` and `ROS_BAG_ANALYSER_DATABASE_SECRET_FILE`.
 Keep these files out of Git.

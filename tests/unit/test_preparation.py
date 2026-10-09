@@ -30,6 +30,9 @@ class ValidStore:
     def validate_media(self, *args) -> None:
         return None
 
+    def validate_description_artifact(self, *args) -> None:
+        return None
+
     def validate_series_artifact(self, *args) -> None:
         return None
 
@@ -106,6 +109,7 @@ def test_per_output_precedence_starts_with_unavailable() -> None:
         "unavailable",
         "unavailable",
         "unavailable",
+        "unavailable",
     ]
     assert analysis.analysis_state == "failed"
 
@@ -151,12 +155,15 @@ def test_aggregate_precedence_is_failed_processing_queued_ready_not_planned() ->
     group["front_preview"] = CurrentOutputRecord(
         _target("front_preview"), artifact=_artifact("front_preview")
     )
+    partial = service._analysis_for_group(7, group, GENERATION)
+    group["ai_description"] = CurrentOutputRecord(_target("ai_description"), artifact=_artifact("ai_description"))
     ready = service._analysis_for_group(7, group, GENERATION)
 
     assert failed.analysis_state == "failed"
     assert processing.analysis_state == "processing"
     assert queued.analysis_state == "queued"
     assert not_planned.analysis_state == "not_planned"
+    assert partial.analysis_state == "partially_prepared"
     assert ready.analysis_state == "ready"
 
 
@@ -183,10 +190,12 @@ def test_missing_topdown_companion_is_optional_for_aggregate_readiness() -> None
         )
     )
 
+    group["ai_description"] = CurrentOutputRecord(_target("ai_description"), artifact=_artifact("ai_description"))
+
     analysis = _service()._analysis_for_group(7, group, GENERATION)
 
     assert analysis.analysis_state == "ready"
-    assert analysis.outputs[1].state == "unavailable"
+    assert next(item for item in analysis.outputs if item.kind == "topdown_preview").state == "unavailable"
 
 
 def test_ready_output_survives_other_unavailable_sources() -> None:
@@ -201,6 +210,8 @@ def test_ready_output_survives_other_unavailable_sources() -> None:
             _target("imu_series"), artifact=_artifact("imu_series")
         ),
     }
+
+    group["ai_description"] = CurrentOutputRecord(_target("ai_description"), artifact=_artifact("ai_description"))
 
     analysis = _service()._analysis_for_group(7, group, GENERATION)
 
@@ -275,6 +286,7 @@ def test_low_space_admission_returns_unavailable_without_scheduling_work() -> No
     assert repository.diagnostic.code == "derived_space_low"
     assert not result.has_active_work
     assert [output.outcome for output in result.recordings[0].outputs] == [
+        "unavailable",
         "unavailable",
         "unavailable",
         "unavailable",

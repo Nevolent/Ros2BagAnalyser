@@ -52,7 +52,9 @@ function Status({
       />
     );
   return (
-    <StatusBadge tone={status === 'Ready' || status === 'Readable' ? 'success' : 'muted'}>
+    <StatusBadge
+      tone={['Ready', 'Readable', 'Partially prepared'].includes(status) ? 'success' : 'muted'}
+    >
       {status}
     </StatusBadge>
   );
@@ -85,10 +87,7 @@ export function RecordingsPage() {
     });
   }, [recordings]);
   const [prepare, setPrepare] = useState(false);
-  const [goToProcessing, setGoToProcessing] = useRememberedState(
-    'recordings.goToProcessing',
-    false,
-  );
+  const [goToProcessing, setGoToProcessing] = useState(true);
   const [notice, setNotice] = useState('');
   const dismissNotice = useCallback(() => setNotice(''), []);
   const visible = useMemo(() => {
@@ -130,7 +129,10 @@ export function RecordingsPage() {
             data-prepare-selected=""
             disabled={busy}
             hidden={!selected.length}
-            onClick={() => setPrepare(true)}
+            onClick={() => {
+              setGoToProcessing(true);
+              setPrepare(true);
+            }}
           >
             <span>Prepare Selected</span>
           </Button>
@@ -176,7 +178,14 @@ export function RecordingsPage() {
             <FilterMenu
               name="analysis"
               label="Analysis"
-              options={['Ready', 'Not planned', 'Failed', 'Queued', 'Processing']}
+              options={[
+                'Ready',
+                'Partially prepared',
+                'Not planned',
+                'Failed',
+                'Queued',
+                'Processing',
+              ]}
               value={analysis}
               onChange={setAnalysis}
             />

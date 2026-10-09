@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_SERIES_ARTIFACT_BYTES = 64 * 1024 * 1024
 SUPPORTED_ARTIFACT_KINDS = frozenset(
-    {"front_preview", "topdown_preview", "imu_series"}
+    {"front_preview", "topdown_preview", "imu_series", "ai_description"}
 )
 
 
@@ -474,6 +474,56 @@ class ArtifactStore:
         )
 
     def publish_series(
+        self, workspace: Path, job_id: int, cache_identity: str,
+        manifest: dict[str, object], *, replace_conflicting: bool = False,
+    ) -> PublishedArtifact:
+        return self._publish_json(workspace, job_id, cache_identity, manifest,
+                                  replace_conflicting=replace_conflicting)
+
+    def publish_description(
+        self, workspace: Path, job_id: int, cache_identity: str,
+        manifest: dict[str, object], *, replace_conflicting: bool = False,
+    ) -> PublishedArtifact:
+        self._assert_owned_workspace(workspace, job_id)
+        path = workspace / "description.json"
+        self._validate_description_file(path, manifest)
+        return self._publish_json(workspace, job_id, cache_identity, manifest,
+                                  output_name="description.json", replace_conflicting=replace_conflicting)
+
+    @staticmethod
+    def _validate_description_file(path: Path, manifest: dict[str, object]) -> None:
+        from rosbag_analyser.ai_description import MAX_DESCRIPTION_BYTES, validate_description_result, validate_description_manifest
+        try:
+            validate_description_manifest(manifest)
+            if path.is_symlink() or not 0 < path.stat().st_size <= MAX_DESCRIPTION_BYTES:
+                raise ValueError("Invalid description file")
+            result = validate_description_result(json.loads(path.read_text(encoding="utf-8")))
+            if result != validate_description_result(manifest.get("result")):
+                raise ValueError("Description does not match its manifest")
+        except (OSError, ValueError) as error:
+            raise ArtifactStoreError("ai_description_invalid", "The AI description is invalid.") from error
+
+    def validate_description_artifact(
+        self, relative_path: str, expected_size: int, cache_identity: str,
+        expected_manifest: dict[str, object],
+    ) -> None:
+        from rosbag_analyser.ai_description import MAX_DESCRIPTION_BYTES, validate_description_result, validate_description_manifest
+        opened = self._open_json(relative_path, expected_size, cache_identity, expected_manifest,
+                                 output_name="description.json")
+        try:
+            validate_description_manifest(expected_manifest)
+            if not 0 < expected_size <= MAX_DESCRIPTION_BYTES:
+                raise ValueError("Invalid description size")
+            with os.fdopen(opened.descriptor, "rb", closefd=False) as file:
+                result = validate_description_result(json.loads(file.read(MAX_DESCRIPTION_BYTES + 1)))
+            if result != validate_description_result(expected_manifest.get("result")):
+                raise ValueError("Description does not match its manifest")
+        except (ValueError, OSError) as error:
+            raise ArtifactStoreError("ai_description_invalid", "The AI description is invalid.") from error
+        finally:
+            os.close(opened.descriptor)
+
+    def _publish_json(
         self,
         workspace: Path,
         job_id: int,
@@ -481,9 +531,10 @@ class ArtifactStore:
         manifest: dict[str, object],
         *,
         replace_conflicting: bool = False,
+        output_name: str = "series.json",
     ) -> PublishedArtifact:
         self._assert_owned_workspace(workspace, job_id)
-        if self.artifact_kind != "imu_series":
+        if self.artifact_kind not in {"imu_series", "ai_description"}:
             raise ArtifactStoreError(
                 "artifact_kind_invalid", "The artifact kind is unsupported."
             )
@@ -493,10 +544,10 @@ class ArtifactStore:
             raise ArtifactStoreError(
                 "artifact_identity_invalid", "The artifact identity is invalid."
             )
-        series_path = workspace / "series.json"
+        series_path = workspace / output_name
         if not series_path.is_file() or series_path.is_symlink():
             raise ArtifactStoreError(
-                "imu_series_output_missing", "The generated IMU series is missing."
+                f"{self.artifact_kind}_output_missing", "The generated JSON output is missing."
             )
         series_details = series_path.stat(follow_symlinks=False)
         _validate_publish_manifest(
@@ -517,7 +568,7 @@ class ArtifactStore:
                     final_directory,
                     cache_identity,
                     manifest,
-                    output_name="series.json",
+                    output_name=output_name,
                 )
             except ArtifactStoreError:
                 if not replace_conflicting:
@@ -527,7 +578,7 @@ class ArtifactStore:
                     final_directory,
                     job_id,
                     cache_identity,
-                    output_name="series.json",
+                    output_name=output_name,
                 )
         try:
             os.rename(workspace, final_directory)
@@ -536,14 +587,14 @@ class ArtifactStore:
                 final_directory,
                 cache_identity,
                 manifest,
-                output_name="series.json",
+                output_name=output_name,
             )
         except OSError as error:
             raise ArtifactStoreError(
-                "artifact_publish_failed", "The IMU series could not be published."
+                "artifact_publish_failed", "The JSON output could not be published."
             ) from error
 
-        published_series = final_directory / "series.json"
+        published_series = final_directory / output_name
         details = published_series.stat(follow_symlinks=False)
         return PublishedArtifact(
             output_relative_path=published_series.relative_to(
@@ -726,11 +777,18 @@ class ArtifactStore:
         os.close(opened.descriptor)
 
     def open_series(
+        self, relative_path: str, expected_size: int, cache_identity: str,
+        expected_manifest: dict[str, object],
+    ) -> OpenedMedia:
+        return self._open_json(relative_path, expected_size, cache_identity, expected_manifest)
+
+    def _open_json(
         self,
         relative_path: str,
         expected_size: int,
         cache_identity: str,
         expected_manifest: dict[str, object],
+        *, output_name: str = "series.json",
     ) -> OpenedMedia:
         expected_relative = PurePosixPath(
             "rosbag-analyser",
@@ -738,17 +796,17 @@ class ArtifactStore:
             self.artifact_kind,
             cache_identity[:2],
             cache_identity,
-            "series.json",
+            output_name,
         )
         relative = PurePosixPath(relative_path)
         if (
-            self.artifact_kind != "imu_series"
+            self.artifact_kind not in {"imu_series", "ai_description"}
             or len(cache_identity) != 64
             or any(character not in "0123456789abcdef" for character in cache_identity)
             or relative != expected_relative
         ):
             raise ArtifactStoreError(
-                "artifact_path_invalid", "The ready IMU series path is invalid."
+                "artifact_path_invalid", "The ready JSON output path is invalid."
             )
 
         directory_descriptor = self._open_anchored_directory(
@@ -763,7 +821,7 @@ class ArtifactStore:
                 or _manifest_output_size(manifest) != expected_size
             ):
                 raise ArtifactStoreError(
-                    "artifact_manifest_mismatch", "The ready IMU series is invalid."
+                    "artifact_manifest_mismatch", "The ready JSON output is invalid."
                 )
             flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
                 os, "O_NOFOLLOW", 0
@@ -777,7 +835,7 @@ class ArtifactStore:
             except OSError as error:
                 raise ArtifactStoreError(
                     "artifact_file_missing",
-                    "The ready IMU series file is unavailable.",
+                    "The ready JSON output file is unavailable.",
                 ) from error
             try:
                 details = os.fstat(descriptor)
@@ -789,7 +847,7 @@ class ArtifactStore:
                 ):
                     raise ArtifactStoreError(
                         "artifact_file_changed",
-                        "The ready IMU series file is invalid.",
+                        "The ready JSON output file is invalid.",
                     )
                 return OpenedMedia(descriptor, details)
             except BaseException:

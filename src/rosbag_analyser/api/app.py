@@ -165,6 +165,8 @@ def create_app(
                     FRONT_PREVIEW_KIND: artifact_store,
                     TOPDOWN_PREVIEW_KIND: topdown_artifact_store,
                     IMU_SERIES_KIND: imu_artifact_store,
+                    "ai_description": ArtifactStore(config.derived_root, config.ffmpeg_path,
+                                                    config.ffprobe_path, "ai_description"),
                 },
                 admission_check=admission_guard.diagnostic,
             )

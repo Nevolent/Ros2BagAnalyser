@@ -84,7 +84,11 @@ test('live catalog filters, real folders, red review, selection and explicit sca
   await page.getByRole('menuitemradio', { name: 'Health', exact: true }).click();
   await page.getByRole('button', { name: 'Filter by analysis' }).click();
   await page.getByRole('menuitemradio', { name: 'Ready', exact: true }).click();
-  await expect(rows).toHaveCount(2);
+  await expect(rows).toHaveCount(1);
+  await expect(rows.filter({ hasText: 'recording-42' })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Filter by analysis' }).click();
+  await page.getByRole('menuitemradio', { name: 'Partially prepared', exact: true }).click();
+  await expect(rows).toHaveCount(1);
   await expect(rows.filter({ hasText: 'recording-44' })).toHaveCount(1);
   await page.getByRole('button', { name: 'Rescan Archive', exact: true }).click();
   await expect.poll(() => api.posts.length).toBe(1);
@@ -113,17 +117,19 @@ test('prepare dismisses immediately, reports background failures and never fabri
   await page.getByRole('checkbox', { name: 'Select recording-42', exact: true }).check();
   await page.getByRole('button', { name: 'Prepare Selected' }).click();
   const dialog = page.getByRole('dialog', { name: 'Prepare recordings' });
+  await dialog.getByRole('checkbox', { name: 'Go to Processing' }).uncheck();
   await dialog.getByRole('button', { name: 'Confirm' }).click();
   await expect(dialog).toBeHidden();
   release();
   await expect(page.getByRole('alert')).toHaveText('Worker storage unavailable.');
   expect(api.posts[0].body).toEqual({
     recording_ids: [42],
-    output_kinds: ['front_preview', 'topdown_preview', 'imu_series'],
+    output_kinds: ['front_preview', 'ai_description', 'topdown_preview', 'imu_series'],
   });
   await expect(page.locator('.recordings-notice')).toHaveCount(0);
   api.override = null;
   await page.getByRole('button', { name: 'Prepare Selected' }).click();
+  await dialog.getByRole('checkbox', { name: 'Go to Processing' }).uncheck();
   await dialog.getByRole('button', { name: 'Confirm' }).click();
   await expect(dialog).not.toBeVisible();
   await expect(
@@ -547,6 +553,7 @@ test('preparation reports missing front input even when optional work is queued'
   await page.goto('/');
   await page.getByRole('checkbox', { name: 'Select recording-42', exact: true }).check();
   await page.getByRole('button', { name: 'Prepare Selected' }).click();
+  await page.getByRole('dialog').getByRole('checkbox', { name: 'Go to Processing' }).uncheck();
   await page.getByRole('dialog').getByRole('button', { name: 'Confirm' }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(page.getByRole('alert')).toContainText('No front camera.');
@@ -554,6 +561,7 @@ test('preparation reports missing front input even when optional work is queued'
   available = false;
   await page.getByRole('checkbox', { name: 'Select recording-42', exact: true }).check();
   await page.getByRole('button', { name: 'Prepare Selected' }).click();
+  await page.getByRole('dialog').getByRole('checkbox', { name: 'Go to Processing' }).uncheck();
   await page.getByRole('dialog').getByRole('button', { name: 'Confirm' }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   await expect(page.getByRole('alert')).toContainText('No IMU topic.');

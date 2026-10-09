@@ -20,7 +20,10 @@ from .database import open_connection
 FRONT_PREVIEW_KIND = "front_preview"
 TOPDOWN_PREVIEW_KIND = "topdown_preview"
 IMU_SERIES_KIND = "imu_series"
-PROCESSING_KINDS = (FRONT_PREVIEW_KIND, TOPDOWN_PREVIEW_KIND, IMU_SERIES_KIND)
+AI_DESCRIPTION_KIND = "ai_description"
+PROCESSING_KINDS = (
+    FRONT_PREVIEW_KIND, AI_DESCRIPTION_KIND, TOPDOWN_PREVIEW_KIND, IMU_SERIES_KIND,
+)
 WORKER_LOCK_NAME = "rosbag_analyser_serial_worker"
 QUEUE_LOCK_NAME = "rosbag_analyser_job_queue"
 
@@ -502,6 +505,16 @@ class ProcessingRepository:
                        cancel_finished_at, queue_order
                 FROM jobs
                 WHERE state = 'queued'
+                  AND (kind <> 'ai_description' OR NOT EXISTS (
+                      SELECT 1 FROM jobs AS prerequisite
+                      JOIN preparation_targets AS target
+                        ON target.recording_id = prerequisite.recording_id
+                       AND target.kind = prerequisite.kind
+                       AND target.cache_identity = prerequisite.cache_identity
+                      WHERE prerequisite.recording_id = jobs.recording_id
+                        AND prerequisite.kind = 'front_preview'
+                        AND prerequisite.state IN ('queued', 'running')
+                  ))
                   AND NOT EXISTS (
                       SELECT 1 FROM jobs AS running WHERE running.state = 'running'
                   )
@@ -613,7 +626,8 @@ class ProcessingRepository:
                 WHERE (%s::bigint[] IS NULL OR target.recording_id = ANY (%s))
                 ORDER BY target.recording_id,
                          CASE target.kind
-                             WHEN 'front_preview' THEN 1
+                             WHEN 'front_preview' THEN 0
+                    WHEN 'ai_description' THEN 1
                              WHEN 'topdown_preview' THEN 2
                              WHEN 'imu_series' THEN 3
                          END
@@ -737,7 +751,8 @@ class ProcessingRepository:
                 FROM preparation_targets
                 WHERE recording_id = %s
                 ORDER BY CASE kind
-                    WHEN 'front_preview' THEN 1
+                    WHEN 'front_preview' THEN 0
+                    WHEN 'ai_description' THEN 1
                     WHEN 'topdown_preview' THEN 2
                     WHEN 'imu_series' THEN 3
                 END
@@ -1676,6 +1691,8 @@ class ProcessingRepository:
                             THEN 'Preview generation was interrupted. Request it again.'
                         WHEN 'topdown_preview'
                             THEN 'Top-down preview generation was interrupted. Request it again.'
+                        WHEN 'ai_description'
+                            THEN 'AI description generation was interrupted. Request it again.'
                         ELSE 'IMU series generation was interrupted. Request it again.'
                     END,
                     accumulated_paused_ms = accumulated_paused_ms + CASE

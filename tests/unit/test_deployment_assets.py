@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from rosbag_analyser.ai_description import DESCRIPTION_POLICY
 from rosbag_analyser.front_preview import FRONT_TIMING_POLICY, PROCESSOR_VERSION
 from rosbag_analyser.imu_series import (
     PROCESSOR_VERSION as IMU_PROCESSOR_VERSION,
@@ -185,10 +186,11 @@ def test_release_contract_matches_accepted_processor_and_schema_identities() -> 
     contract = json.loads(read("release-contract.json"))
 
     assert contract["processors"] == {
+        "ai_description": DESCRIPTION_POLICY,
         "front_preview": PROCESSOR_VERSION,
         "front_timing_policy": FRONT_TIMING_POLICY,
         "imu_series": IMU_PROCESSOR_VERSION,
         "topdown_preview": TOPDOWN_PROCESSOR_VERSION,
     }
     assert contract["artifact_contracts"]["imu_series_schema"] == SERIES_SCHEMA_VERSION
-    assert contract["database_schema"].endswith("0001-through-0009")
+    assert contract["database_schema"].endswith("0001-through-0010")

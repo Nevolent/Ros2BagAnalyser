@@ -255,10 +255,12 @@ test('dense six-axis telemetry scrubs with decoded cameras without rebuilding th
   const api = await apiFixture(page);
   const count = 120_000;
   api.recording.duration_ns = '1000000000';
-  api.recording.outputs.forEach((output) => {
-    output.artifact!.coverage_start_ns = '0';
-    output.artifact!.coverage_end_ns = '999991667';
-  });
+  api.recording.outputs
+    .filter((output) => output.artifact)
+    .forEach((output) => {
+      output.artifact!.coverage_start_ns = '0';
+      output.artifact!.coverage_end_ns = '999991667';
+    });
   api.imu.data.samples = Array.from({ length: count }, (_, i) => [
     String(Math.round((i * 1e9) / count)),
     ...Array.from({ length: 6 }, (_, axis) =>
@@ -381,7 +383,7 @@ test('failure counts include ready outputs while a sibling is still processing',
   api.recording.outputs[1] = { kind: 'topdown_preview', state: 'failed', job_id: 19, diagnostic };
   await page.goto('/#/processing');
   await page.getByRole('button', { name: 'Failures', exact: true }).click();
-  await expect(page.locator('.bag-table tbody tr')).toContainText('1 of 3');
+  await expect(page.locator('.bag-table tbody tr')).toContainText('1 of 4');
   await page.getByRole('button', { name: 'Retry recording-42', exact: true }).click();
   await expect.poll(() => api.posts.length).toBe(1);
   expect(api.posts[0].body).toEqual({ job_ids: [19] });

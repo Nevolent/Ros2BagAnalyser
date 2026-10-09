@@ -450,7 +450,7 @@
   font-variant-numeric: tabular-nums;
 }
 .timeline-measurement {
-  transition: transform 100ms ease-out;
+  transition: none;
 }
 .timeline-measurement[data-lifted='true'] {
   transform: translateY(-4px);
@@ -504,11 +504,6 @@
 .timeline-measurement span {
   font-size: 10px;
   color: var(--muted-foreground);
-}
-@media (prefers-reduced-motion: reduce) {
-  .timeline-measurement {
-    transition: none;
-  }
 }
 .timeline-axis {
   display: flex;
@@ -754,4 +749,26 @@
 .camera-label select:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+.recording-description p {
+  color: var(--muted-foreground);
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.recording-description .recording-muted-state {
+  margin-bottom: 0;
+}
+.recording-description .bag-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in oklab, var(--muted-foreground) 45%, var(--background));
+  border-radius: var(--radius-xs);
+  background: var(--background);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 16px;
 }

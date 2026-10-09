@@ -1,6 +1,7 @@
 /* The recordings cards establish the spacing contract for future views. */
 .recordings-content {
   --recordings-status-width: 112px;
+  --recordings-filter-width: 140px;
   --recordings-action-height: var(--control-height);
   --recordings-action-width: 150px;
 }
@@ -141,7 +142,7 @@
   scrollbar-width: thin;
 }
 .recordings-toolbar .bag-filter {
-  width: var(--recordings-status-width);
+  width: var(--recordings-filter-width);
   height: var(--search-control-height);
   border-radius: var(--radius-sm);
 }
@@ -152,9 +153,11 @@
 .recordings-toolbar .bag-filter button[aria-expanded='true'] {
   background: color-mix(in oklab, var(--foreground) 4%, transparent);
 }
-.recordings-workspace .bag-health-column,
-.recordings-workspace .bag-analysis-column {
+.recordings-workspace .bag-health-column {
   width: var(--recordings-status-width);
+}
+.recordings-workspace .bag-analysis-column {
+  width: var(--recordings-filter-width);
 }
 
 .recordings-prepare-dialog {
@@ -285,9 +288,6 @@
   }
   .recordings-toolbar .bag-search-field {
     flex-basis: 100%;
-  }
-  .recordings-toolbar .bag-filter {
-    flex: 1;
   }
   .recordings-workspace .folder-reopen svg {
     width: 14px;

@@ -24,7 +24,7 @@ test('scrubbing follows the pointer before the next seek frame', async ({ page }
   await page.mouse.up();
 });
 
-test('right-hand value and unit lift near the playhead and settle back above the grid line', async ({
+test('right-hand value and unit lift instantly near the playhead and settle back above the grid line', async ({
   page,
 }) => {
   await page.goto('/?demo=1#/analysis');
@@ -32,6 +32,7 @@ test('right-hand value and unit lift near the playhead and settle back above the
   const box = (await plot.boundingBox())!;
   const scale = page.locator('.timeline-grid text').first();
   const measurement = page.locator('.timeline-measurement');
+  await expect(measurement).toHaveCSS('transition-duration', '0s');
   const center = () => plot.click({ position: { x: box.width / 2, y: 100 } });
   await center();
   await expect(measurement).toHaveCSS('transform', 'none');

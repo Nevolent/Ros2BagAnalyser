@@ -4,6 +4,10 @@ from dataclasses import dataclass
 import hashlib
 import json
 
+from rosbag_analyser.ai_description import (
+    DESCRIPTION_PLANNER_IDENTITY,
+    description_cache_identity,
+)
 from rosbag_analyser.catalog.metadata import ParsedMetadata, TopicFact
 from rosbag_analyser.catalog.paths import (
     SOURCE_CACHE_IDENTITY_POLICY,
@@ -36,6 +40,7 @@ from rosbag_analyser.imu_series import (
 )
 from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
+    AI_DESCRIPTION_KIND,
     IMU_SERIES_KIND,
     TOPDOWN_PREVIEW_KIND,
     ProcessingSourceRecord,
@@ -48,6 +53,7 @@ from rosbag_analyser.topdown_preview import (
 
 PREPARATION_KINDS = (
     FRONT_PREVIEW_KIND,
+    AI_DESCRIPTION_KIND,
     TOPDOWN_PREVIEW_KIND,
     IMU_SERIES_KIND,
 )
@@ -97,7 +103,7 @@ class PreparationTargetPlan:
 
 
 class PreparationPlanner:
-    """Build the three current output targets from one parsed scan result."""
+    """Build the four current output targets from one parsed scan result."""
 
     def __init__(
         self,
@@ -114,6 +120,7 @@ class PreparationPlanner:
         self.profile = profile
         self.encoder_identity = encoder_identity
         self._planner_identities = {
+            AI_DESCRIPTION_KIND: DESCRIPTION_PLANNER_IDENTITY,
             FRONT_PREVIEW_KIND: _front_planner_identity(
                 front_topic=front_topic,
                 profile=profile,
@@ -187,8 +194,18 @@ class PreparationPlanner:
             cache_identity_recording_id=cache_identity_recording_id,
             cache_identity_relative_path=cache_identity_relative_path,
         )
+        front = self._plan_front(source, recording, facts)
         return (
-            self._plan_front(source, recording, facts),
+            front,
+            PreparationTargetPlan(
+                kind=AI_DESCRIPTION_KIND,
+                planner_identity=DESCRIPTION_PLANNER_IDENTITY,
+                target_state=front.target_state,
+                cache_identity=(None if front.cache_identity is None
+                                else description_cache_identity(front.cache_identity)),
+                diagnostic=front.diagnostic,
+                work_units=front.work_units,
+            ),
             self._plan_topdown(source, recording, facts),
             self._plan_imu(source, recording, facts),
         )

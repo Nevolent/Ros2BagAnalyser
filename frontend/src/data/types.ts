@@ -1,5 +1,6 @@
 /** UI domain models. API payloads can be mapped to these at the service boundary. */
-export type RecordingStatus = 'Ready' | 'Failed' | 'Not planned' | 'Queued' | 'Processing';
+export type RecordingStatus =
+  'Ready' | 'Partially prepared' | 'Failed' | 'Not planned' | 'Queued' | 'Processing';
 export interface Recording {
   id: string;
   name: string;
@@ -120,6 +121,8 @@ export interface CameraStream {
   end: number;
 }
 export interface AnalysisRecording {
+  aiDescription?: { description: string; bunker: boolean } | null;
+  descriptionState?: string;
   topics?: RecordingTopic[] | null;
   timing?: TimingInspection | null;
   healthIssues?: string[];

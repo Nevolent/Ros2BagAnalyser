@@ -31,7 +31,12 @@ export function detail(id = 42): Detail {
     presentation_health: 'readable',
     analysis_state: 'ready',
     diagnostic: null,
-    outputs,
+    outputs: [...outputs, { kind: 'ai_description', state: 'ready', diagnostic: null }],
+    ai_description: {
+      description:
+        'An indoor area with blocks. No other robots, people, or active movement are visible.',
+      bunker: true,
+    },
     message_count: '500',
     source_present: true,
     components: [

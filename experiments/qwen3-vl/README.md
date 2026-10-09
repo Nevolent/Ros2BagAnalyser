@@ -1,9 +1,10 @@
 # Standalone Qwen3-VL video experiment
 
 Official model: [Qwen/Qwen3-VL-2B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct).
-This local folder is excluded through the dashboard repository's `.git/info/exclude`.
-It has its own Python environment, CUDA PyTorch, model weights and caches.
-Nothing imports this code into the dashboard, worker or ROS bag processing.
+Code and setup are versioned; model weights, caches and generated output stay
+local and ignored. The experiment has its own Python environment and CUDA PyTorch.
+Its prompt, formatter and frame sampler are shared with dashboard processing;
+see [Development](../../docs/DEVELOPMENT.md) for worker configuration.
 
 ## Run in WSL
 

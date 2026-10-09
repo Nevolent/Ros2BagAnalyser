@@ -112,6 +112,8 @@ class AppConfig:
     ffprobe_path: Path
     catalog_scan_limits: CatalogScanLimits
     prepare_max_recordings: int
+    description_python: Path | None = None
+    description_model_root: Path | None = None
 
     @classmethod
     def from_environment(
@@ -174,6 +176,8 @@ class AppConfig:
                 DEFAULT_PREPARE_MAX_RECORDINGS,
             ),
             derived_root_writable=not deployment_enabled,
+            description_python=values.get("ROS_BAG_ANALYSER_DESCRIPTION_PYTHON"),
+            description_model_root=values.get("ROS_BAG_ANALYSER_DESCRIPTION_MODEL_ROOT"),
         )
 
     @classmethod
@@ -197,6 +201,8 @@ class AppConfig:
         catalog_max_recording_entries: int = CatalogScanLimits().max_recording_entries,
         prepare_max_recordings: int = DEFAULT_PREPARE_MAX_RECORDINGS,
         derived_root_writable: bool = True,
+        description_python: str | Path | None = None,
+        description_model_root: str | Path | None = None,
     ) -> "AppConfig":
         archive = _validated_directory(Path(archive_root), "archive root", writable=False)
         derived = _validated_directory(
@@ -254,6 +260,8 @@ class AppConfig:
             ffprobe_path=ffprobe,
             catalog_scan_limits=scan_limits,
             prepare_max_recordings=preparation_limit,
+            description_python=None if not description_python else Path(description_python).expanduser().absolute(),
+            description_model_root=None if not description_model_root else Path(description_model_root).expanduser().absolute(),
         )
 
 

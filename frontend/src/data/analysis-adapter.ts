@@ -8,6 +8,7 @@ export function artifactUrl(id: number, kind: Kind, artifact: Artifact): string 
     front_preview: 'front-preview/media',
     topdown_preview: 'topdown-preview/media',
     imu_series: 'imu-series/data',
+    ai_description: '',
   }[kind];
   if (
     !Number.isSafeInteger(artifact.id) ||
@@ -35,6 +36,16 @@ export async function analysisRecording(
   previous: AnalysisRecording | null,
 ): Promise<AnalysisRecording> {
   const row = recording(detail);
+  const description = detail.outputs.find((o) => o.kind === 'ai_description');
+  const aiDescription = description?.state === 'ready' ? detail.ai_description : null;
+  if (
+    aiDescription &&
+    (typeof aiDescription.description !== 'string' ||
+      !aiDescription.description.trim() ||
+      aiDescription.description.length > 1000 ||
+      typeof aiDescription.bunker !== 'boolean')
+  )
+    throw new Error('Invalid AI description.');
   const errors = [
     detail.diagnostic,
     ...detail.outputs
@@ -141,6 +152,8 @@ export async function analysisRecording(
   }
   return {
     id: String(detail.id),
+    aiDescription,
+    descriptionState: description?.state ?? 'not_requested',
     name: detail.name,
     topics: detail.topics,
     timing: detail.timing,
@@ -155,16 +168,17 @@ export async function analysisRecording(
       { label: 'Storage', value: detail.storage_format ?? '—', kind: 'code' },
       { label: 'Messages', value: detail.message_count ?? '—', kind: 'text' },
       { label: 'Topics', value: String(detail.topic_count ?? '—'), kind: 'text' },
-      { label: 'ROS database', value: row.health, kind: 'status' },
     ],
-    outputs: detail.outputs.map((output) => ({
-      name: outputNames[output.kind],
-      size: bytes(output.artifact?.size_bytes),
-      format: output.kind === 'imu_series' ? 'JSON' : 'MP4 · H.264',
-      status: labels[output.state] ?? 'Unavailable',
-      identity:
-        output.kind === 'imu_series' && output.artifact ? `imu-${output.artifact.id}` : undefined,
-    })),
+    outputs: detail.outputs
+      .filter((output) => output.kind !== 'ai_description')
+      .map((output) => ({
+        name: outputNames[output.kind],
+        size: bytes(output.artifact?.size_bytes),
+        format: output.kind === 'imu_series' ? 'JSON' : 'MP4 · H.264',
+        status: labels[output.state] ?? 'Unavailable',
+        identity:
+          output.kind === 'imu_series' && output.artifact ? `imu-${output.artifact.id}` : undefined,
+      })),
     sources: detail.components.map((component) => ({
       name:
         {

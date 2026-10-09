@@ -10,6 +10,7 @@ from rosbag_analyser.catalog.types import SafeDiagnostic
 from rosbag_analyser.persistence.catalog_repository import CatalogRepository
 from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
+    AI_DESCRIPTION_KIND,
     IMU_SERIES_KIND,
     PROCESSING_KINDS,
     ArtifactRecord,
@@ -299,7 +300,12 @@ class PreparationService:
                 "The generated output cannot be validated by this application instance.",
             )
         try:
-            if artifact.kind == IMU_SERIES_KIND:
+            if artifact.kind == AI_DESCRIPTION_KIND:
+                store.validate_description_artifact(
+                    artifact.output_relative_path, artifact.size_bytes,
+                    artifact.cache_identity, artifact.manifest,
+                )
+            elif artifact.kind == IMU_SERIES_KIND:
                 store.validate_series_artifact(
                     artifact.output_relative_path,
                     artifact.size_bytes,
@@ -393,7 +399,7 @@ def _aggregate_state(outputs: Mapping[str, str]) -> str:
     if "queued" in states:
         return "queued"
     if front == "ready":
-        return "ready"
+        return "ready" if outputs.get(AI_DESCRIPTION_KIND) == "ready" else "partially_prepared"
     return "not_planned"
 
 

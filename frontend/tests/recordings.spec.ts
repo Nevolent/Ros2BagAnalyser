@@ -77,10 +77,14 @@ test('preparation includes selected bags hidden by filters and supports cancel o
   await page.getByRole('button', { name: 'Prepare Selected', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Prepare recordings', exact: true });
   await expect(dialog.getByRole('listitem')).toHaveText([first, second]);
+  await expect(dialog.getByRole('checkbox', { name: 'Go to Processing' })).toBeChecked();
+  await dialog.getByRole('checkbox', { name: 'Go to Processing' }).uncheck();
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Prepare Selected', exact: true })).toBeFocused();
   await page.getByRole('button', { name: 'Prepare Selected', exact: true }).click();
+  await expect(dialog.getByRole('checkbox', { name: 'Go to Processing' })).toBeChecked();
+  await dialog.getByRole('checkbox', { name: 'Go to Processing' }).uncheck();
   await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Recordings', level: 1 })).toBeVisible();
   await expect(page.getByRole('status')).toContainText('Preparation request completed.');
@@ -104,7 +108,7 @@ test('confirming a mock bag opens Processing and lists the queued recording', as
   await page.getByRole('checkbox', { name: `Select ${name}`, exact: true }).check();
   await page.getByRole('button', { name: 'Prepare Selected' }).click();
   const dialog = page.getByRole('dialog', { name: 'Prepare recordings' });
-  await dialog.getByRole('checkbox', { name: 'Go to Processing' }).check();
+  await expect(dialog.getByRole('checkbox', { name: 'Go to Processing' })).toBeChecked();
   await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
   await expect(page).toHaveURL(/#\/processing$/);
   await expect(

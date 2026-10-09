@@ -27,10 +27,10 @@
    and zoom the graph. Encoders share one RPM axis.
 
 Fixed readouts above the graph show only selected axes or wheels; labels, traces and values share
-their colors, with the number before its axis/wheel label. The vertical scale fits
-the selected data in the visible time window. Angular velocity and RPM center on
-zero; a single acceleration axis centers on its first visible value, while
-combined acceleration axes fit their shared range. Brief extreme spikes appear
+their colors, with the number before its axis/wheel label.
+The vertical scale fits the selected data in the visible time window with a small
+margin and five evenly spaced ticks. All selected axes or wheels share the same scale; overlapping traces
+use modest transparency. Brief extreme spikes appear
 as translucent red bands across the graph, narrowing to lines when zoomed out;
 hover or focus a band to inspect the original value.
 These suspected glitches are excluded from the scale and show a warning in the

@@ -230,10 +230,11 @@ and hide outside measured coverage; numeric telemetry readouts clear outside cov
 Telemetry traces stop at their first and last measured samples; no endpoint hold
 is drawn. Zoom changes the view, not time. Five dotted grid lines keep fixed
 positions across channel selections and zoom; readout space is reserved independently
-of selection, with the scale label in a separate left lane. Angular velocity and
-RPM scales are symmetric about zero. A single acceleration axis centers on its
-first visible value (interpolated at the view boundary when needed); combined
-acceleration axes fit their shared range. Encoder traces share one RPM axis in the six-wheel
+of selection, with the scale label in a separate left lane. Angular velocity,
+acceleration and RPM scales fit the visible selected samples, including interpolated
+view boundaries, with 4% range padding and five evenly spaced ticks. Constant
+signals use 1% magnitude padding (minimum 0.001). Selected traces share one axis;
+multi-channel traces use modest opacity. Encoder traces share one RPM axis in the six-wheel
 view; individual wheel selection uses the same samples. Without IMU, the clock
 uses recording metadata Unix time, or relative seconds.
 

@@ -266,10 +266,11 @@ test('extreme encoder glitches leave inspectable gaps without stretching the sca
   await page.getByRole('button', { name: 'Choose sensor graph' }).click();
   await page.getByRole('menuitemradio', { name: 'Encoders', exact: true }).click();
   const ticks = (await page.locator('.timeline-grid text').allTextContents()).map(Number);
-  expect(ticks[2]).toBe(0);
-  expect(ticks[0]).toBe(-ticks[4]);
-  expect(Math.min(...ticks)).toBeGreaterThan(-100);
-  expect(Math.max(...ticks)).toBeLessThan(100);
+  expect(Math.min(...ticks)).toBeLessThan(9.5);
+  expect(Math.min(...ticks)).toBeGreaterThan(8);
+  expect(Math.max(...ticks)).toBeGreaterThan(20.5);
+  expect(Math.max(...ticks)).toBeLessThan(22);
+  expect(11 / (ticks[0] - ticks[4])).toBeGreaterThan(0.85);
   const positions = () =>
     page
       .locator('.timeline-axis-reading:not(.timeline-measurement-reserve *)')
@@ -320,6 +321,20 @@ test('extreme encoder glitches leave inspectable gaps without stretching the sca
   expect(await positions()).toEqual(before);
   const paths = await page.locator('[data-encoder-trace="encoder.FL"] path').getAttribute('d');
   expect(paths!.match(/M/g)).toHaveLength(2);
+  // Selection fits one wheel and then a shared two-wheel range, without spike inflation.
+  for (const wheel of ['FR', 'ML', 'MR', 'RL', 'RR'])
+    await page.getByRole('checkbox', { name: `${wheel} wheel` }).uncheck();
+  const single = (await page.locator('.timeline-grid text').allTextContents()).map(Number);
+  expect(single[0]).toBeLessThan(11);
+  expect(single[4]).toBeGreaterThan(9);
+  expect(1 / (single[0] - single[4])).toBeGreaterThan(0.85);
+  await page.getByRole('checkbox', { name: 'FR wheel' }).check();
+  const paired = (await page.locator('.timeline-grid text').allTextContents()).map(Number);
+  expect(paired[0]).toBeGreaterThan(12.5);
+  expect(paired[4]).toBeLessThan(9.5);
+  expect(3 / (paired[0] - paired[4])).toBeGreaterThan(0.85);
+  for (const wheel of ['ML', 'MR', 'RL', 'RR'])
+    await page.getByRole('checkbox', { name: `${wheel} wheel` }).check();
   await page
     .locator('.analysis-timeline')
     .screenshot({ path: test.info().outputPath('extreme-spikes.png') });

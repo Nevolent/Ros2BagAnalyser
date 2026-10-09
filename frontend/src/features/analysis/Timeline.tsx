@@ -569,10 +569,8 @@ export const Timeline = memo(function Timeline({
   const signal = useMemo((): Signal => {
     let low = Infinity;
     let high = -Infinity;
-    let first: number | null = null;
     const include = (value: number | null) => {
       if (value === null || !Number.isFinite(value)) return;
-      first ??= value;
       low = Math.min(low, value);
       high = Math.max(high, value);
     };
@@ -606,31 +604,17 @@ export const Timeline = memo(function Timeline({
     }
     let ticks = [1, 0.5, 0, -0.5, -1];
     if (Number.isFinite(low) && Number.isFinite(high)) {
-      const center =
-        encoderGraph || imuGroup === 'angular_velocity'
-          ? 0
-          : activeNames.length === 1
-            ? first
-            : null;
+      // Fit one shared axis to visible selected data, including one-sided signals.
+      const center = low + (high - low) / 2;
       const padding = Math.max(
-        high > low ? (high - low) * 0.08 : Math.max(Math.abs(low), Math.abs(high)) * 0.01,
+        high > low ? (high - low) * 0.04 : Math.max(Math.abs(low), Math.abs(high)) * 0.01,
         0.001,
       );
-      const radius =
-        center === null ? 0 : Math.max(Math.abs(high - center), Math.abs(low - center)) + padding;
-      const interval = center === null ? (high - low + padding * 2) / 4 : radius / 2;
-      const magnitude = 10 ** Math.floor(Math.log10(interval));
-      const step =
-        [1, 1.25, 1.5, 2, 2.5, 5, 10].find((factor) => factor * magnitude >= interval)! * magnitude;
-      const minimum = Math.floor((low - padding) / step);
-      const maximum = Math.ceil((high + padding) / step);
+      const interval = (high - low + padding * 2) / 4;
+      const magnitude = 10 ** (Math.floor(Math.log10(interval)) - 1);
+      const step = Math.ceil(interval / magnitude) * magnitude;
       ticks = Array.from({ length: 5 }, (_, i) =>
-        Number(
-          (center === null
-            ? (maximum - ((maximum - minimum) * i) / 4) * step
-            : center + (2 - i) * step
-          ).toPrecision(12),
-        ),
+        Number((center + (2 - i) * step).toPrecision(12)),
       );
     }
     return {
@@ -656,6 +640,10 @@ export const Timeline = memo(function Timeline({
   ]);
   const x = (seconds: number) => ((seconds - state.start) / state.span) * size.width;
   const gridY = (index: number) => top + (index / 4) * (size.height - top - bottom);
+  const tickDecimals = Math.min(
+    12,
+    Math.max(0, 1 - Math.floor(Math.log10(signal.ticks[0] - signal.ticks[1]))),
+  );
   const traces = useMemo(() => {
     const xPoint = (time: number) => ((time - state.start) / state.span) * size.width;
     const yPoint = (value: number) =>
@@ -1112,7 +1100,7 @@ export const Timeline = memo(function Timeline({
               </g>
               {(hasData ? signal.ticks : []).map((tick, index) => (
                 <text key={index} x="9" y={gridY(index) - 7}>
-                  {Number(tick.toPrecision(4))}
+                  {Number(tick.toFixed(tickDecimals))}
                 </text>
               ))}
             </g>
@@ -1380,6 +1368,7 @@ const Traces = memo(function Traces({
       {traces.map((trace) => (
         <g
           key={trace.name}
+          opacity={traces.length > 1 ? 0.78 : 1}
           data-encoder-trace={trace.name.startsWith('encoder.') ? trace.name : undefined}
           data-axis-trace={!trace.name.startsWith('encoder.') ? trace.name : undefined}
         >

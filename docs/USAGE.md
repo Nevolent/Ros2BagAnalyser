@@ -28,6 +28,8 @@
 
 Fixed readouts above the graph show only selected axes or wheels; labels, traces and values share
 their colors, with the number before its axis/wheel label.
+Hover over the encoder readouts or focus them with Tab for a wheel abbreviation
+guide that follows the pointer; Escape dismisses it.
 The vertical scale fits the selected data in the visible time window with a small
 margin and five evenly spaced ticks. All selected axes or wheels share the same scale; overlapping traces
 use modest transparency. Brief extreme spikes appear

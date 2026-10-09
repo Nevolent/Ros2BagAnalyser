@@ -572,6 +572,15 @@
 .is-encoder .timeline-reading-label {
   width: 2ch;
 }
+.timeline-measurement.is-encoder {
+  pointer-events: auto;
+  cursor: help;
+}
+.timeline-measurement.is-encoder:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
 .timeline-measurement [data-timeline-unit],
 .timeline-measurement-reserve [data-reading-reserve-unit] {
   flex: none;
@@ -611,6 +620,31 @@
   font-size: 13px;
   line-height: 18px;
   font-weight: 500;
+}
+.encoder-wheel-guide {
+  position: fixed;
+  width: 228px;
+  max-width: calc(100vw - 16px);
+  font-family: inherit;
+}
+.encoder-wheel-guide h3,
+.encoder-wheel-guide dl,
+.encoder-wheel-guide dd {
+  margin: 0;
+}
+.encoder-wheel-guide h3 {
+  font-size: 12px;
+  font-weight: 600;
+}
+.encoder-wheel-guide dl > div {
+  display: grid;
+  grid-template-columns: 2ch 1fr;
+  gap: 12px;
+  padding: 2px 0;
+}
+.encoder-wheel-guide dt {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-weight: 600;
 }
 .timeline-measurement-reserve {
   visibility: hidden;

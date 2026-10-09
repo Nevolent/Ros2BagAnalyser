@@ -30,6 +30,14 @@ const groupLabels = {
   linear_acceleration: 'Linear acceleration',
 };
 const wheelColors = ['#3b9eff', '#f99c00', '#00bb7f', '#a16aff', '#ff5c9f', '#e5d34f'];
+const wheelGuideLabels: Record<Wheel, string> = {
+  FL: 'Front left wheel',
+  FR: 'Front right wheel',
+  ML: 'Middle left wheel',
+  MR: 'Middle right wheel',
+  RL: 'Rear left wheel',
+  RR: 'Rear right wheel',
+};
 const formatReading = (value: number | null) => {
   if (value === null) return '—';
   const fixed = value.toFixed(3);
@@ -97,6 +105,7 @@ export const Timeline = memo(function Timeline({
   const [dragging, setDragging] = useState(false);
   const [shift, setShift] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [wheelGuide, setWheelGuide] = useState<{ x: number; y: number } | null>(null);
   const [hover, setHover] = useState<{
     time: number;
     x: number;
@@ -110,6 +119,7 @@ export const Timeline = memo(function Timeline({
   const measurementReserve = useRef<HTMLDivElement>(null);
   const emptyText = useRef<HTMLSpanElement>(null);
   const hoverTip = useRef<HTMLDivElement>(null);
+  const wheelGuideTip = useRef<HTMLDivElement>(null);
   const measurementLeft = useRef(Infinity);
   const help = useRef<HTMLDivElement>(null);
   const helpTrigger = useRef<HTMLButtonElement>(null);
@@ -289,6 +299,39 @@ export const Timeline = memo(function Timeline({
     tip.style.left = `${clamp(rect.left + hover.x + 12, 8, Math.max(8, innerWidth - tip.offsetWidth - 8))}px`;
     tip.style.top = `${clamp(rect.top + hover.y + 12, 8, Math.max(8, innerHeight - tip.offsetHeight - 8))}px`;
   }, [hover, size, activeNames]);
+  useLayoutEffect(() => {
+    const tip = wheelGuideTip.current;
+    if (!wheelGuide || !tip) return;
+    const left =
+      wheelGuide.x + tip.offsetWidth + 12 > innerWidth - 8
+        ? wheelGuide.x - tip.offsetWidth - 12
+        : wheelGuide.x + 12;
+    const top =
+      wheelGuide.y + tip.offsetHeight + 12 > innerHeight - 8
+        ? wheelGuide.y - tip.offsetHeight - 12
+        : wheelGuide.y + 12;
+    tip.style.left = `${clamp(left, 8, Math.max(8, innerWidth - tip.offsetWidth - 8))}px`;
+    tip.style.top = `${clamp(top, 8, Math.max(8, innerHeight - tip.offsetHeight - 8))}px`;
+  }, [wheelGuide, size]);
+  useEffect(() => setWheelGuide(null), [state.channel, activeNames.length]);
+  const wheelGuideOpen = wheelGuide !== null;
+  useEffect(() => {
+    if (!wheelGuideOpen) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    const hide = () => setWheelGuide(null);
+    document.addEventListener(
+      'keydown',
+      (event) => {
+        if (event.key === 'Escape') hide();
+      },
+      { signal },
+    );
+    document.addEventListener('scroll', hide, { capture: true, signal });
+    window.addEventListener('resize', hide, { signal });
+    window.addEventListener('blur', hide, { signal });
+    return () => controller.abort();
+  }, [wheelGuideOpen]);
   useEffect(() => {
     if (!state.playing) return;
     let previous = performance.now();
@@ -1251,7 +1294,31 @@ export const Timeline = memo(function Timeline({
               className={`timeline-measurement${encoderGraph ? ' is-encoder' : ''}`}
               role="group"
               aria-label={encoderGraph ? 'Wheel encoder readings' : 'IMU readings'}
+              tabIndex={encoderGraph ? 0 : undefined}
+              aria-describedby={wheelGuideOpen && encoderGraph ? 'encoder-wheel-guide' : undefined}
               style={{ top: 'auto', bottom: size.height - top + 2 }}
+              onPointerEnter={(event) => {
+                if (!encoderGraph || event.pointerType === 'touch') return;
+                setHover(null);
+                setWheelGuide({ x: event.clientX, y: event.clientY });
+              }}
+              onPointerMove={(event) => {
+                if (encoderGraph && wheelGuideOpen && event.pointerType !== 'touch')
+                  setWheelGuide({ x: event.clientX, y: event.clientY });
+              }}
+              onPointerLeave={(event) => {
+                if (document.activeElement !== event.currentTarget) setWheelGuide(null);
+              }}
+              onPointerDown={(event) => {
+                if (encoderGraph) event.stopPropagation();
+              }}
+              onFocus={(event) => {
+                if (!encoderGraph) return;
+                const rect = event.currentTarget.getBoundingClientRect();
+                setHover(null);
+                setWheelGuide({ x: rect.right, y: rect.bottom });
+              }}
+              onBlur={() => setWheelGuide(null)}
             >
               {activeNames.map((name) => {
                 const source = channels[name];
@@ -1309,6 +1376,31 @@ export const Timeline = memo(function Timeline({
               <span data-timeline-unit="">{hasData ? signal.unit : ''}</span>
             </div>
           )}
+          {wheelGuide &&
+            encoderGraph &&
+            activeNames.length > 0 &&
+            createPortal(
+              <div
+                ref={wheelGuideTip}
+                id="encoder-wheel-guide"
+                role="tooltip"
+                className="chart-tooltip encoder-wheel-guide"
+              >
+                <h3>Wheel guide</h3>
+                <dl>
+                  {encoderChannels.map((name, index) => {
+                    const wheel = name.slice(8) as Wheel;
+                    return (
+                      <div key={wheel}>
+                        <dt style={{ color: wheelColors[index] }}>{wheel}</dt>
+                        <dd>{wheelGuideLabels[wheel]}</dd>
+                      </div>
+                    );
+                  })}
+                </dl>
+              </div>,
+              document.body,
+            )}
           {hover &&
             !interaction.current &&
             activeNames.length > 0 &&

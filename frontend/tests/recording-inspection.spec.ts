@@ -36,10 +36,13 @@ test('sidebar tabs lead the panel; all topics are scrollable, safe and truncated
   await expect(page.getByRole('heading', { name: 'Recording details' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Timestamp inspection' })).toHaveCount(0);
   await expect(page.getByText('Rescan to check timestamps.')).toHaveCount(0);
-  const health = page.getByRole('button', { name: 'Review', exact: true });
-  await health.focus();
-  await expect(page.getByRole('tooltip')).toContainText('15.1 s timestamp gap');
-  await page.keyboard.press('Escape');
+  const health = page
+    .getByRole('region', { name: 'Recording errors' })
+    .getByText(api.recording.diagnostic.message, { exact: true });
+  await expect(health).toBeVisible();
+  await expect(health).toContainText('15.1 s timestamp gap');
+  await expect(health).toHaveCSS('white-space', 'normal');
+  await expect(health).toHaveCSS('overflow-wrap', 'anywhere');
   await page.getByRole('button', { name: 'Topics', exact: true }).click();
   await expect(page.getByRole('searchbox', { name: 'Search topics' })).toHaveCount(0);
   await expect(page.locator('.folder-heading .page-tab-count')).toHaveCount(0);

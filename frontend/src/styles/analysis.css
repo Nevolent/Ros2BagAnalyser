@@ -798,11 +798,14 @@
   line-height: 18px;
   min-width: 0;
 }
-.recording-topics-list li > *,
-.recording-errors p {
+.recording-topics-list li > * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.recording-errors p {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .recording-topics-list code {
   color: var(--foreground);

@@ -258,7 +258,7 @@ test('analysis opens actual recording with irregular IMU time, last duplicate, n
   await page.keyboard.press('End');
   await expect(page.locator('[data-timeline-value]')).toHaveText('—');
   expect((await page.locator('.timeline-line').getAttribute('d'))?.match(/M/g)?.length).toBe(2);
-  await expect(page.locator('[data-timeline-single-sample]')).toHaveCount(0);
+  await expect(page.locator('[data-timeline-single-sample]')).toHaveCount(1);
   await expect(page.locator('.recording-errors')).toContainText('camera could not be loaded.', {
     timeout: 10000,
   });
@@ -613,30 +613,33 @@ test('zero-duration and camera-only recordings retain truthful controls', async 
   await expect(page.locator('.timeline-axis')).toBeVisible();
   await expect(page.locator('[data-timeline-time]')).toHaveText('1767083100.000');
   await expect(page.locator('.timeline-state')).toHaveCount(0);
-  const baseline = await page.locator('.timeline-line').getAttribute('d');
-  expect(baseline).toMatch(/^M0,([\d.]+)L[\d.]+,\1$/);
+  await expect(page.locator('.timeline-grid line')).toHaveCount(5);
+  await expect(page.locator('.timeline-line, #timeline-fill')).toHaveCount(0);
   const { PNG } = await import('pngjs');
-  const line = (await page.locator('.timeline-line').boundingBox())!;
+  const line = (await page.locator('.timeline-grid line').first().boundingBox())!;
+  await expect(page.locator('.timeline-grid line').first()).toHaveCSS(
+    'stroke-dasharray',
+    '3px, 5px',
+  );
   const capture = PNG.sync.read(
     await page.screenshot({ path: test.info().outputPath('camera-only-timeline.png') }),
   );
-  // A horizontal SVG path has zero-height bounds; its mask must still paint it.
+  // Verify the dotted SVG grid is actually painted through its edge mask.
   for (const fraction of [0.2, 0.5, 0.8]) {
     const x = Math.floor(line.x + line.width * fraction);
     const y = Math.floor(line.y);
-    const brightness = [y - 1, y, y + 1].map((row) => capture.data[(row * capture.width + x) * 4]);
-    expect(Math.max(...brightness)).toBeGreaterThan(100);
+    const brightness = Array.from({ length: 16 }, (_, offset) =>
+      Math.max(
+        ...[y - 1, y, y + 1].map((row) => capture.data[(row * capture.width + x + offset) * 4]),
+      ),
+    );
+    expect(Math.max(...brightness) - Math.min(...brightness)).toBeGreaterThan(5);
   }
   await expect(page.locator('.timeline-measurement')).toHaveCount(0);
   await expect(page.locator('.timeline-grid text')).toHaveCount(0);
-  await expect(page.locator('.timeline-grid line')).toHaveCount(0);
   const plot = page.getByRole('slider', { name: 'Recording timeline' });
   const plotBox = (await plot.boundingBox())!;
   expect(line.y + line.height / 2 - plotBox.y).toBeCloseTo(26, 1);
-  await expect(page.locator('.timeline-static path[fill="url(#timeline-fill)"]')).toHaveAttribute(
-    'd',
-    /Z$/,
-  );
   await expect(page.locator('[data-channel-label]')).toHaveCSS(
     'color',
     await page
@@ -648,17 +651,53 @@ test('zero-duration and camera-only recordings retain truthful controls', async 
   await page.reload();
   const message = page.locator('.timeline-state');
   await expect(message).toHaveText('This output has not been prepared.');
+  await expect(page.locator('.timeline-grid line')).toHaveCount(5);
+  await expect(page.locator('.timeline-line, #timeline-fill')).toHaveCount(0);
   const messageBox = (await message.boundingBox())!;
   const emptyPlotBox = (await plot.boundingBox())!;
   expect(
     Math.abs(messageBox.x + messageBox.width / 2 - emptyPlotBox.x - emptyPlotBox.width / 2),
   ).toBeLessThan(1);
+  const textBox = (await message.locator('span').boundingBox())!;
+  const mask = await page.locator('[data-timeline-empty-label-mask]').evaluate((el) => ({
+    x: Number(el.getAttribute('x')),
+    y: Number(el.getAttribute('y')),
+    width: Number(el.getAttribute('width')),
+    height: Number(el.getAttribute('height')),
+  }));
+  expect(emptyPlotBox.x + mask.x).toBeCloseTo(textBox.x, 1);
+  expect(emptyPlotBox.y + mask.y).toBeCloseTo(textBox.y, 1);
+  expect(mask.width).toBeCloseTo(textBox.width, 1);
+  expect(mask.height).toBeCloseTo(textBox.height, 1);
   expect(
     Math.abs(
       messageBox.y + messageBox.height / 2 - emptyPlotBox.y - 26 - (emptyPlotBox.height - 36) / 2,
     ),
   ).toBeLessThan(1);
   await page.screenshot({ path: test.info().outputPath('unprepared-timeline.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await plot.scrollIntoViewIfNeeded();
+  await page
+    .locator('.analysis-timeline')
+    .screenshot({ path: test.info().outputPath('unprepared-timeline-mobile.png') });
+  await expect
+    .poll(async () => {
+      const plotBounds = (await plot.boundingBox())!;
+      const textBounds = (await message.locator('span').boundingBox())!;
+      const cutout = await page.locator('[data-timeline-empty-label-mask]').evaluate((el) => ({
+        x: Number(el.getAttribute('x')),
+        y: Number(el.getAttribute('y')),
+        width: Number(el.getAttribute('width')),
+        height: Number(el.getAttribute('height')),
+      }));
+      return {
+        x: Math.round(plotBounds.x + cutout.x - textBounds.x),
+        y: Math.round(plotBounds.y + cutout.y - textBounds.y),
+        width: Math.round(cutout.width - textBounds.width),
+        height: Math.round(cutout.height - textBounds.height),
+      };
+    })
+    .toEqual({ x: 0, y: 0, width: 0, height: 0 });
   await page.getByRole('slider', { name: 'Recording timeline' }).focus();
   await page.keyboard.press('End');
   await expect(page.getByRole('slider')).toHaveAttribute('aria-valuenow', '6');

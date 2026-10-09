@@ -65,10 +65,18 @@ test('channel menu, zoom and help work with mouse and keyboard', async ({ page }
   await page.getByRole('button', { name: 'Reset zoom', exact: true }).click();
   await expect(range).toHaveText(end!);
   await expect(slider).toHaveAttribute('aria-valuenow', currentTime!);
-  await page.getByRole('button', { name: 'Graph help' }).click();
-  await expect(page.getByRole('region', { name: 'Timeline controls' })).toBeVisible();
+  const help = page.getByRole('button', { name: 'Graph help' });
+  await help.hover();
+  await expect(page.locator('#timeline-help')).toBeVisible();
+  await expect(page.locator('#timeline-help')).toHaveText(
+    'Hold Shift and drag on the graph to zoom in.',
+  );
+  await slider.hover();
+  await expect(page.locator('#timeline-help')).toBeHidden();
+  await help.focus();
+  await expect(page.locator('#timeline-help')).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('region', { name: 'Timeline controls' })).toBeHidden();
+  await expect(page.locator('#timeline-help')).toBeHidden();
 });
 
 test('playback stops at the end, can restart, and is disposed when leaving Analysis', async ({

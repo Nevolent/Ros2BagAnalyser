@@ -19,6 +19,12 @@ interface Graph {
   parseSeriesStream(body: ReadableStream<Uint8Array>, artifact: unknown): Promise<Parsed>;
   selectSeries(parsed: Parsed, id: string): { samples: Sample[] };
   sampleAtOrBefore(samples: Sample[], time: number): Sample | null;
+  extremeSpikeGaps(samples: Sample[]): {
+    samples: Sample[];
+    spikes: Sample[];
+    gaps: { start: number; end: number; spikes: Sample[] }[];
+  };
+  visibleSpikes(spikes: Sample[], start: number, end: number, width: number): Sample[];
   visibleTraceSegments(samples: Sample[], start: number, end: number, width: number): Sample[][];
 }
 declare const graph: Readonly<Graph>;

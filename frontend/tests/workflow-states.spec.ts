@@ -226,7 +226,7 @@ test('missing front input is diagnosed while optional absence has no redundant e
   await expect(page.locator('.recording-errors')).toContainText(diagnostic.message);
 });
 
-test('scrubbing beyond the graph never selects page text and the visual tail fills the timeline', async ({
+test('scrubbing beyond the graph never selects page text and traces stop at measured coverage', async ({
   page,
 }) => {
   await apiFixture(page);
@@ -235,9 +235,20 @@ test('scrubbing beyond the graph never selects page text and the visual tail fil
   await expect(page.locator('[data-timeline-value]')).toBeVisible();
   const box = (await plot.boundingBox())!;
   const end = await page
-    .locator('.timeline-line')
-    .evaluate((el: SVGPathElement) => el.getPointAtLength(el.getTotalLength()).x);
-  expect(end).toBeCloseTo(box.width, 1);
+    .locator('[data-axis-trace]')
+    .evaluate((el) =>
+      Math.max(
+        ...Array.from(
+          el.querySelectorAll<SVGPathElement>('path'),
+          (path) => path.getPointAtLength(path.getTotalLength()).x,
+        ),
+        ...Array.from(
+          el.querySelectorAll<SVGCircleElement>('circle'),
+          (point) => point.cx.baseVal.value,
+        ),
+      ),
+    );
+  expect(end).toBeCloseTo((box.width * 4) / 6, 1);
   await page.mouse.move(box.x + box.width * 0.8, box.y + 60);
   await page.mouse.down();
   await page.mouse.move(0, 0, { steps: 8 });

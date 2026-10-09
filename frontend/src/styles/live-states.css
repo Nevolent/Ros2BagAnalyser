@@ -62,6 +62,10 @@
   color: var(--muted-foreground);
   font-size: 12px;
 }
+.timeline-state > span {
+  padding: 4px 8px;
+  overflow-wrap: anywhere;
+}
 /* Request errors remain visible even if the initiating page has been left. */
 .workspace-error {
   position: fixed;

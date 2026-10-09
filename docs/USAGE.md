@@ -15,12 +15,21 @@
    menu. Combine X/Y/Z axes or FL/FR/ML/MR/RL/RR wheels with the adjacent checkboxes,
    and zoom the graph. Encoders share one RPM axis.
 
-Hover shows the timestamp and selected values without seeking. Fixed readouts
-above the graph show only selected axes or wheels; labels, traces and values share
-their colors. The vertical scale fits the selected data in the visible time window.
+Fixed readouts above the graph show only selected axes or wheels; labels, traces and values share
+their colors, with the number before its axis/wheel label. The vertical scale fits
+the selected data in the visible time window. Angular velocity and RPM center on
+zero; a single acceleration axis centers on its first visible value, while
+combined acceleration axes fit their shared range. Brief extreme spikes appear
+as translucent red bands across the graph, narrowing to lines when zoomed out;
+hover or focus a band to inspect the original value.
+These suspected glitches are excluded from the scale and show a warning in the
+readout. Sustained changes remain plotted. The five dotted lines stay in place.
 With every checkbox cleared, the dotted grid and timeline remain without values.
+Unprepared telemetry uses the same grid, with a centered status message and a
+small break in the dotted line behind the text.
 
 Space plays or pauses; arrow keys seek one second, or ten seconds with Shift.
+Hold Shift and drag on the graph to zoom in; hover or focus **?** for this hint.
 When multiple colour-camera previews are prepared, use the dropdown beside
 **Front** to switch streams without moving the shared timeline. A clearly
 front-named stream is selected first; otherwise the busiest stream wins, with
@@ -67,12 +76,11 @@ Top-down previews use companion AVI/CSV files. IMU data has six raw angular
 velocity (`rad/s`) and linear acceleration (`m/s²`) axes. Multiple IMU topics
 require an operator preference. Encoders support the custom KuupKulgur
 `EncodersStamped` message, with six RPM values ordered front left/right (FL/FR),
-middle left/right (ML/MR), rear left/right (RL/RR). Values are plotted as recorded;
+middle left/right (ML/MR), rear left/right (RL/RR). Recorded values are preserved;
 matching wheel values can overlap.
 
 Top-down, IMU and encoder inputs are optional. Cameras and numeric telemetry values clear
-outside measured coverage. A final IMU value extended visually to the graph's
-end is not additional recorded data. Encoder traces stop at measured coverage.
+outside measured coverage. IMU and encoder traces stop at their measured endpoints.
 
 For support, include the recording/job ID, visible error, browser, and time
 with timezone. Keep recordings, private paths and credentials out of reports.

@@ -176,12 +176,25 @@ strings; lookup selects the last sample at or before the clock, including duplic
 times. Non-finite values are per-channel null gaps. JSON is capped at 64 MiB and
 validated row by row. The browser streams parsing and reduces visible points while
 preserving spikes and gaps; large sample bundles stay outside subscribed UI state.
+For display, brief extreme excursions become trace gaps and inspectable markers,
+without changing recorded samples. With at least twenty finite reference values
+(uniformly sampled up to 4,096), the envelope uses the 10th/90th percentiles plus
+ten times their magnitude or range (minimum 0.001). Excursions must return to
+finite ordinary data within one second, or end at coverage within one second of
+ordinary data. Sustained changes and runs beside null gaps remain plotted.
+Gap bands span the surrounding ordinary samples and retain the largest excursion
+per wheel/axis in each display bucket; zoom reveals finer events. Coverage-edge
+bands stop at measured coverage. Original values do not affect autoscaling.
 
 One bag-relative clock drives cameras, IMU and encoders. Cameras correct drift at 100 ms
 and hide outside measured coverage; numeric telemetry readouts clear outside coverage.
-The individual IMU graph may visually hold a finite final sample to the recording/camera end
-without changing samples or readout coverage. Zoom changes the view, not time.
-Encoder traces stop at measured coverage and share one RPM axis in the six-wheel
+Telemetry traces stop at their first and last measured samples; no endpoint hold
+is drawn. Zoom changes the view, not time. Five dotted grid lines keep fixed
+positions across channel selections and zoom; readout space is reserved independently
+of selection, with the scale label in a separate left lane. Angular velocity and
+RPM scales are symmetric about zero. A single acceleration axis centers on its
+first visible value (interpolated at the view boundary when needed); combined
+acceleration axes fit their shared range. Encoder traces share one RPM axis in the six-wheel
 view; individual wheel selection uses the same samples. Without IMU, the clock
 uses recording metadata Unix time, or relative seconds.
 

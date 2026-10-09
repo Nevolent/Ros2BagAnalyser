@@ -156,7 +156,7 @@ test('six wheels remain usable on a small viewport with reduced motion and witho
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   const scale = (await page.locator('.timeline-grid text').first().boundingBox())!;
-  expect(scale.y).toBeGreaterThanOrEqual(bounds!.y + bounds!.height);
+  expect(scale.x + scale.width).toBeLessThan(bounds!.x);
   await page.screenshot({ path: 'artifacts/encoder-mobile.png', fullPage: true });
 });
 
@@ -212,7 +212,7 @@ test('encoder checkboxes combine solid colored traces and keep readings above th
   await expect(page.locator('.timeline-reading-label')).toHaveText(['FL', 'FR']);
   const box = (await plot.boundingBox())!;
   await page.mouse.move(box.x + box.width / 3, box.y + 80);
-  await expect(page.locator('.chart-tooltip strong')).toHaveText(['19.000', '5.000']);
+  await expect(page.locator('.chart-tooltip')).toHaveCount(0);
   await expect(plot).toHaveAttribute('aria-valuenow', '2');
   await page.mouse.move(0, 0);
   const readings = page.getByRole('group', { name: 'Wheel encoder readings' });
@@ -233,4 +233,114 @@ test('encoder checkboxes combine solid colored traces and keep readings above th
     page.locator('[data-encoder-trace], [data-encoder-value], .timeline-grid text'),
   ).toHaveCount(0);
   await expect(page.locator('.timeline-grid line')).toHaveCount(5);
+});
+
+test('extreme encoder glitches leave inspectable gaps without stretching the scale or readouts', async ({
+  page,
+}) => {
+  const { api, encoder } = await setup(page);
+  const values = Array.from({ length: 81 }, (_, index) =>
+    [10, 12, 14, 16, 18, 20].map((value) => value + Math.sin(index) * 0.5),
+  );
+  values[20][0] = -36030;
+  values[20][1] = -3060;
+  values[20][2] = 3307;
+  values[21][0] = -36031;
+  encoder.data.samples = values.map((row, index) => [
+    String(1_000_000_000 + index * 50_000_000),
+    ...row,
+  ]);
+  const metadata = encoder.state.artifact;
+  metadata.delivered_sample_count = '81';
+  metadata.coverage_end_ns = '5000000000';
+  metadata.series.forEach((series, index) => {
+    series.finite_sample_count = '81';
+    series.non_finite_sample_count = '0';
+    series.minimum_value = Math.min(...values.map((row) => row[index]));
+    series.maximum_value = Math.max(...values.map((row) => row[index]));
+  });
+  api.recording.outputs.find(
+    (output) => output.kind === 'encoder_series',
+  )!.artifact!.coverage_end_ns = '5000000000';
+  await page.goto('/#/analysis/42');
+  await page.getByRole('button', { name: 'Choose sensor graph' }).click();
+  await page.getByRole('menuitemradio', { name: 'Encoders', exact: true }).click();
+  const ticks = (await page.locator('.timeline-grid text').allTextContents()).map(Number);
+  expect(ticks[2]).toBe(0);
+  expect(ticks[0]).toBe(-ticks[4]);
+  expect(Math.min(...ticks)).toBeGreaterThan(-100);
+  expect(Math.max(...ticks)).toBeLessThan(100);
+  const positions = () =>
+    page
+      .locator('.timeline-axis-reading:not(.timeline-measurement-reserve *)')
+      .evaluateAll((items) =>
+        items.map((el) => ({
+          x: el.getBoundingClientRect().x,
+          width: el.getBoundingClientRect().width,
+        })),
+      );
+  const before = await positions();
+  const plot = page.getByRole('slider');
+  await plot.press('ArrowRight');
+  await plot.press('ArrowRight');
+  await expect(page.locator('[data-encoder-value="encoder.FL"]')).toHaveText('⚠');
+  await expect(page.locator('[data-encoder-value="encoder.FR"]')).toHaveText('⚠');
+  expect(await positions()).toEqual(before);
+  const marker = page.getByRole('button', { name: /FL extreme spike: -36031/ });
+  await expect(marker).toHaveText('');
+  const fill = marker.locator('.timeline-spike-fill');
+  await expect(fill).toHaveCSS('opacity', '0.22');
+  const initialGap = (await fill.boundingBox())!;
+  const plotBox = (await plot.boundingBox())!;
+  const grid = await page
+    .locator('.timeline-grid line')
+    .evaluateAll((lines) => lines.map((line) => Number(line.getAttribute('y1'))));
+  expect(initialGap.y).toBeCloseTo(plotBox.y + grid[0], 1);
+  expect(initialGap.y + initialGap.height).toBeCloseTo(plotBox.y + grid[4], 1);
+  await marker.hover();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toContainText('FL extreme spike: -36031 RPM');
+  await expect(tooltip).toContainText('FR extreme spike: -3060 RPM');
+  await expect(tooltip).toContainText('recorded values preserved');
+  await marker.focus();
+  await expect(tooltip).toBeVisible();
+  await marker.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+  await expect(plot).toHaveAttribute('aria-valuenow', '2');
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  const zoomedGap = (await fill.boundingBox())!;
+  expect(zoomedGap.width).toBeCloseTo(initialGap.width * 2, 1);
+  await marker.hover();
+  await expect(tooltip).toContainText('FL extreme spike: -36031 RPM');
+  await page.getByRole('button', { name: 'Reset zoom', exact: true }).click();
+  await plot.press('ArrowRight');
+  await expect(page.locator('[data-encoder-value="encoder.FL"]')).toHaveText(
+    values[40][0].toFixed(3),
+  );
+  expect(await positions()).toEqual(before);
+  const paths = await page.locator('[data-encoder-trace="encoder.FL"] path').getAttribute('d');
+  expect(paths!.match(/M/g)).toHaveLength(2);
+  await page
+    .locator('.analysis-timeline')
+    .screenshot({ path: test.info().outputPath('extreme-spikes.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('[data-encoder-value]')).toHaveCount(6);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.getByRole('button', { name: /FL extreme spike:/ }).focus();
+  await expect(tooltip).toBeVisible();
+  const tip = (await tooltip.boundingBox())!;
+  expect(tip.x).toBeGreaterThanOrEqual(0);
+  expect(tip.x + tip.width).toBeLessThanOrEqual(390);
+  expect(tip.y + tip.height).toBeLessThanOrEqual(844);
+
+  // A short gap in a long recording still has a visible line and a usable hover target.
+  api.recording.duration_ns = '7200000000000';
+  await page.reload();
+  await page.getByRole('button', { name: 'Choose sensor graph' }).click();
+  await page.getByRole('menuitemradio', { name: 'Encoders', exact: true }).click();
+  const thinMarker = page.getByRole('button', { name: /FL extreme spike: -36031/ });
+  expect((await thinMarker.locator('.timeline-spike-fill').boundingBox())!.width).toBe(1);
+  expect((await thinMarker.boundingBox())!.width).toBeGreaterThanOrEqual(12);
+  await thinMarker.hover();
+  await expect(tooltip).toContainText('FL extreme spike: -36031 RPM');
 });

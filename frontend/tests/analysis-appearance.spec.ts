@@ -27,7 +27,8 @@ test('synthetic preview has dense bounded signals and stable initial readouts', 
   expect(mode.y + mode.height / 2).toBeCloseTo(play.y + play.height / 2, 1);
   const icon = (await page.locator('[data-timeline-play] svg').boundingBox())!;
   const title = (await page.locator('[data-channel-label]').boundingBox())!;
-  expect(Math.abs(icon.y + icon.height / 2 - title.y - title.height / 2)).toBeLessThanOrEqual(1.5);
+  expect(icon.y + icon.height / 2).toBeLessThan(title.y + title.height / 2);
+  expect(Math.abs(icon.y + icon.height / 2 - title.y - title.height / 2)).toBeLessThanOrEqual(3.5);
   for (const label of await page.locator('.timeline-axes label').all()) {
     const checkbox = (await label.locator('input').boundingBox())!;
     const text = (await label.locator('span').boundingBox())!;
@@ -64,19 +65,19 @@ test('synthetic preview has dense bounded signals and stable initial readouts', 
   await page.screenshot({ path: test.info().outputPath('analysis-three-axes.png') });
   const measurement = page.locator('.timeline-measurement');
   const readout = (await measurement.boundingBox())!;
-  expect(readout.y + readout.height).toBeLessThan(
-    (await page.locator('.timeline-grid text').first().boundingBox())!.y,
-  );
+  expect(readout.y + readout.height).toBeLessThan(plot.y + Math.min(...grid));
+  expect(Math.min(...grid)).toBe(33);
   const topLabel = (await page.locator('.timeline-grid text').first().boundingBox())!;
+  expect(topLabel.x + topLabel.width).toBeLessThan(readout.x);
   expect(topLabel.y + topLabel.height).toBeLessThan(plot.y + Math.min(...grid));
-  await expect(measurement.locator('strong').first()).toHaveCSS('font-size', '13px');
+  await expect(measurement.locator('strong').first()).toHaveCSS('font-size', '14px');
   const labelGap = await measurement
     .locator('.timeline-axis-reading')
     .first()
     .evaluate((el) => {
       const label = el.querySelector('span')!.getBoundingClientRect();
       const number = el.querySelector('strong')!.getBoundingClientRect();
-      return number.x - label.right;
+      return label.x - number.right;
     });
   expect(labelGap).toBeCloseTo(3, 1);
   for (const input of await page
@@ -88,7 +89,9 @@ test('synthetic preview has dense bounded signals and stable initial readouts', 
   }
 });
 
-test('hover samples the selected axes without seeking or changing playback', async ({ page }) => {
+test('ordinary graph hover shows no table and leaves seeking and playback unchanged', async ({
+  page,
+}) => {
   await apiFixture(page);
   const now = new Date('2026-10-09T10:00:00Z');
   await page.clock.install({ time: now });
@@ -103,12 +106,7 @@ test('hover samples the selected axes without seeking or changing playback', asy
   const box = (await plot.boundingBox())!;
   await page.mouse.move(box.x + box.width * 0.35, box.y + 80);
   const tooltip = page.locator('.chart-tooltip');
-  await expect(tooltip).toBeVisible();
-  await expect(tooltip.locator('strong').first()).toHaveCSS('font-size', '13px');
-  await expect(tooltip.locator('time')).toHaveText('1767083102.100');
-  await expect(tooltip.locator('strong')).toHaveText(['9.000', '9.000']);
-  await expect(tooltip.locator('strong').first()).toHaveCSS('color', colors[0]);
-  await expect(tooltip.locator('strong').last()).toHaveCSS('color', colors[2]);
+  await expect(tooltip).toHaveCount(0);
   await expect(plot).toHaveAttribute('aria-valuenow', before!);
   await page
     .locator('.analysis-timeline')
@@ -117,10 +115,7 @@ test('hover samples the selected axes without seeking or changing playback', asy
   await page.getByRole('button', { name: 'Pause timeline', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Y axis' }).check();
   await page.mouse.move(box.x + box.width - 1, box.y + box.height - 12);
-  await expect(tooltip.locator('strong')).toHaveText(['—', '—', '—']);
-  const tip = (await tooltip.boundingBox())!;
-  expect(tip.x + tip.width).toBeLessThanOrEqual(box.x + box.width);
-  expect(tip.y + tip.height).toBeLessThanOrEqual(box.y + box.height);
+  await expect(tooltip).toHaveCount(0);
   await page.getByRole('heading', { name: 'Analysis', exact: true }).hover();
   await expect(tooltip).toHaveCount(0);
 });
@@ -180,24 +175,32 @@ test('the scale fits selected visible values and an empty selection keeps only t
   ];
   columns.forEach((values, index) => {
     api.imu.data.samples.forEach((row, i) => {
-      row[index + 1] = values[i];
+      row[index + 4] = values[i];
     });
     const finite = values.filter((value): value is number => value !== null);
-    api.imu.state.artifact.series[index].minimum_value = Math.min(...finite);
-    api.imu.state.artifact.series[index].maximum_value = Math.max(...finite);
+    api.imu.state.artifact.series[index + 3].minimum_value = Math.min(...finite);
+    api.imu.state.artifact.series[index + 3].maximum_value = Math.max(...finite);
   });
   await page.goto('/#/analysis/42');
+  await page.getByRole('button', { name: 'Choose sensor graph' }).click();
+  await page.getByRole('menuitemradio', { name: 'Linear acceleration', exact: true }).click();
   const labels = page.locator('.timeline-grid text');
+  const gridPositions = () =>
+    page
+      .locator('.timeline-grid line')
+      .evaluateAll((lines) => lines.map((line) => line.getAttribute('y1')));
   const range = async () => {
     const ticks = (await labels.allTextContents()).map(Number);
     return { low: Math.min(...ticks), high: Math.max(...ticks) };
   };
   await expect(page.locator('[data-axis-value]')).toHaveCount(1);
+  const originalGrid = await gridPositions();
   const z = await range();
-  expect(z.low).toBeGreaterThan(99);
+  expect(z.low).toBeGreaterThanOrEqual(99);
   expect(z.low).toBeLessThan(101);
   expect(z.high).toBeGreaterThan(102);
-  expect(z.high).toBeLessThan(104);
+  expect(z.high).toBeLessThanOrEqual(103);
+  expect((z.high + z.low) / 2).toBe(101);
   await page.getByRole('checkbox', { name: 'Y axis' }).check();
   const yz = await range();
   expect(yz.low).toBeLessThan(-34);
@@ -221,6 +224,7 @@ test('the scale fits selected visible values and an empty selection keeps only t
   await page.getByRole('checkbox', { name: 'Z axis' }).uncheck();
   await expect(labels).toHaveCount(0);
   await expect(page.locator('.timeline-grid line')).toHaveCount(5);
+  expect(await gridPositions()).toEqual(originalGrid);
   await expect(
     page.locator(
       '[data-axis-trace], [data-axis-value], [data-timeline-unit], .timeline-measurement',
@@ -255,6 +259,8 @@ for (const value of [0, -0.003, 98]) {
     await page.goto('/#/analysis/42');
     await expect(page.locator('[data-axis-trace]')).toHaveCount(1);
     const ticks = (await page.locator('.timeline-grid text').allTextContents()).map(Number);
+    expect(ticks[2]).toBe(0);
+    expect(ticks[0]).toBe(-ticks[4]);
     expect(ticks.every(Number.isFinite)).toBe(true);
     expect(Math.min(...ticks)).toBeLessThan(value);
     expect(Math.max(...ticks)).toBeGreaterThan(value);
@@ -263,6 +269,36 @@ for (const value of [0, -0.003, 98]) {
     );
   });
 }
+
+test('angular velocity keeps zero centered for one or several axes and after zoom', async ({
+  page,
+}) => {
+  const api = await apiFixture(page);
+  const values = [0, 0.1, 0.2, null, 0.05];
+  api.imu.data.samples.forEach((row, index) => {
+    row[3] = values[index];
+  });
+  api.imu.state.artifact.series[2].minimum_value = 0;
+  api.imu.state.artifact.series[2].maximum_value = 0.2;
+  await page.goto('/#/analysis/42');
+  const assertCentered = async () => {
+    await expect(page.locator('.timeline-grid text')).toHaveCount(5);
+    const ticks = (await page.locator('.timeline-grid text').allTextContents()).map(Number);
+    expect(ticks[2]).toBe(0);
+    expect(ticks[0]).toBe(-ticks[4]);
+    expect(ticks[0]).toBeGreaterThan(0.2);
+  };
+  await assertCentered();
+  const plot = (await page.getByRole('slider').boundingBox())!;
+  expect(Number(await page.locator('.timeline-grid line').first().getAttribute('y1'))).toBe(33);
+  expect(plot.height).toBeGreaterThanOrEqual(200);
+  await page.getByRole('checkbox', { name: 'X axis' }).check();
+  await assertCentered();
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await assertCentered();
+  await page.getByRole('checkbox', { name: 'X axis' }).uncheck();
+  await assertCentered();
+});
 
 for (const width of [390, 640]) {
   test(`selected readouts and scale labels stay spaced at ${width}px`, async ({ page }) => {
@@ -288,7 +324,8 @@ for (const width of [390, 640]) {
     const label = (await page.locator('.timeline-grid text').first().boundingBox())!;
     const plot = (await page.getByRole('slider').boundingBox())!;
     const top = Number(await page.locator('.timeline-grid line').first().getAttribute('y1'));
-    expect(label.y).toBeGreaterThan(readings.y + readings.height);
+    expect(label.x + label.width).toBeLessThan(readings.x);
+    expect(readings.y + readings.height).toBeLessThan(plot.y + top);
     expect(label.y + label.height).toBeLessThan(plot.y + top);
     for (const control of await page.locator('.timeline-axes label').all()) {
       const checkbox = (await control.locator('input').boundingBox())!;

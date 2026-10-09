@@ -342,6 +342,78 @@ function traceSegments(samples) {
   return segments;
 }
 
+// A display-only, conservative envelope: brief excursions at least ten times
+// the usual magnitude/range become gaps. Keep the original samples for inspection.
+function extremeSpikeGaps(samples) {
+  const reference = [];
+  const stride = Math.max(1, Math.ceil(samples.length / 4096));
+  for (let index = 0; index < samples.length; index += stride) {
+    if (samples[index].value !== null) reference.push(samples[index].value);
+  }
+  if (reference.length < 20) return { samples, spikes: [], gaps: [] };
+  reference.sort((a, b) => a - b);
+  const low = reference[Math.floor((reference.length - 1) * 0.1)];
+  const high = reference[Math.ceil((reference.length - 1) * 0.9)];
+  const margin = Math.max(high - low, Math.abs(low), Math.abs(high), 0.001) * 10;
+  const outside = (sample) =>
+    sample.value !== null && (sample.value < low - margin || sample.value > high + margin);
+  const spikes = [];
+  const gaps = [];
+  let display = samples;
+  for (let index = 0; index < samples.length; index += 1) {
+    if (!outside(samples[index])) continue;
+    const first = index;
+    while (index + 1 < samples.length && outside(samples[index + 1])) index += 1;
+    const next = samples[index + 1];
+    const previous = samples[first - 1];
+    // Require nearby ordinary finite data. Sustained changes and
+    // excursions bordering missing data remain visible as recorded.
+    if (
+      (previous && previous.value === null) ||
+      (next && next.value === null) ||
+      (!previous && !next) ||
+      (!next && samples[index].timeSeconds - previous.timeSeconds > 1) ||
+      (next ?? samples[index]).timeSeconds - samples[first].timeSeconds > 1
+    )
+      continue;
+    if (display === samples) display = samples.slice();
+    for (let spike = first; spike <= index; spike += 1) {
+      spikes.push(samples[spike]);
+      display[spike] = { ...samples[spike], value: null };
+    }
+    gaps.push({
+      start: (previous ?? samples[first]).timeSeconds,
+      end: (next ?? samples[index]).timeSeconds,
+      spikes: samples.slice(first, index + 1),
+    });
+  }
+  return { samples: display, spikes, gaps };
+}
+
+function visibleSpikes(spikes, start, end, pixelWidth) {
+  if (!(end > start)) return [];
+  const buckets = new Map();
+  const width = Math.max(1, Math.ceil(pixelWidth));
+  let low = 0;
+  let high = spikes.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (spikes[middle].timeSeconds < start) low = middle + 1;
+    else high = middle;
+  }
+  for (let index = low; index < spikes.length; index += 1) {
+    const spike = spikes[index];
+    if (spike.timeSeconds > end) break;
+    const column = Math.min(
+      width - 1,
+      Math.floor(((spike.timeSeconds - start) / (end - start)) * width),
+    );
+    const previous = buckets.get(column);
+    if (!previous || Math.abs(spike.value) > Math.abs(previous.value)) buckets.set(column, spike);
+  }
+  return [...buckets.values()];
+}
+
 function visibleTraceSegments(samples, start, end, pixelWidth) {
   if (
     !samples.length ||
@@ -445,5 +517,7 @@ export default Object.freeze({
   timeFromPlotPosition,
   snappedCursorPosition,
   traceSegments,
+  extremeSpikeGaps,
+  visibleSpikes,
   visibleTraceSegments,
 });

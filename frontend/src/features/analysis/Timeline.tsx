@@ -1,7 +1,7 @@
 import { useRememberedState } from '../../app/WorkspaceProvider';
 import { graph, channelLabel, encoderChannels } from '../../data/telemetry';
 import { stopCamera, syncCamera } from './camera-clock';
-import { flushSync } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import {
   memo,
   useEffect,
@@ -15,7 +15,7 @@ import {
   type RefObject,
 } from 'react';
 import { useWorkspacePanel } from '../../components/Workspace';
-import type { AnalysisBundle, Channel, Signal, Wheel } from '../../data/types';
+import type { AnalysisBundle, Channel, Sample, Signal, Wheel } from '../../data/types';
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const plotTop = 26;
@@ -30,6 +30,13 @@ const groupLabels = {
   linear_acceleration: 'Linear acceleration',
 };
 const wheelColors = ['#3b9eff', '#f99c00', '#00bb7f', '#a16aff', '#ff5c9f', '#e5d34f'];
+const formatReading = (value: number | null) => {
+  if (value === null) return '—';
+  const fixed = value.toFixed(3);
+  if (fixed.length <= 8) return fixed;
+  const scientific = value.toExponential(1);
+  return scientific.length <= 8 ? scientific : value.toExponential(0);
+};
 type TimelineState = {
   time: number;
   playing: boolean;
@@ -85,15 +92,23 @@ export const Timeline = memo(function Timeline({
   const lastDuration = useRef(duration);
   const [size, setSize] = useState({ width: 1, height: 100 });
   const [measurementHeight, setMeasurementHeight] = useState(18);
+  const [emptyTextSize, setEmptyTextSize] = useState({ width: 0, height: 0 });
   const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [shift, setShift] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [hover, setHover] = useState<{ time: number; x: number; y: number } | null>(null);
+  const [hover, setHover] = useState<{
+    time: number;
+    x: number;
+    y: number;
+    spikes: { name: Channel; sample: Sample }[];
+  } | null>(null);
   const [notice, setNotice] = useState('');
   const plot = useRef<HTMLDivElement>(null);
   const cursor = useRef<HTMLDivElement>(null);
   const measurement = useRef<HTMLDivElement>(null);
+  const measurementReserve = useRef<HTMLDivElement>(null);
+  const emptyText = useRef<HTMLSpanElement>(null);
   const hoverTip = useRef<HTMLDivElement>(null);
   const measurementLeft = useRef(Infinity);
   const help = useRef<HTMLDivElement>(null);
@@ -144,8 +159,15 @@ export const Timeline = memo(function Timeline({
               .filter((name) => availableChannelNames.includes(name)),
     [hasTelemetry, encoderGraph, selectedWheels, selectedAxes, imuGroup, availableChannelNames],
   );
-  // Leave room for wrapped readouts and the top scale label above its grid line.
-  const top = Math.max(plotTop, activeNames.length ? measurementHeight + 24 : 0);
+  const displaySeries = useMemo(
+    () =>
+      new Map(
+        activeNames.map((name) => [name, graph.extremeSpikeGaps(channels[name].samples ?? [])]),
+      ),
+    [activeNames, channels],
+  );
+  // Keep the first line just below the readouts; the scale label has its own left lane.
+  const top = Math.max(plotTop, hasTelemetry ? measurementHeight + 12 : 0);
   const formatUnix = (seconds: number) =>
     bundle.absoluteTime === false ? `${seconds.toFixed(3)} s` : (startUnix + seconds).toFixed(3);
   function update(next: Partial<TimelineState> | ((previous: TimelineState) => TimelineState)) {
@@ -211,6 +233,20 @@ export const Timeline = memo(function Timeline({
     observer.observe(plot.current!);
     return () => observer.disconnect();
   }, []);
+  useLayoutEffect(() => {
+    const text = emptyText.current;
+    if (hasTelemetry || !text) return;
+    const measure = () => {
+      const { width, height } = text.getBoundingClientRect();
+      setEmptyTextSize((previous) =>
+        previous.width === width && previous.height === height ? previous : { width, height },
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(() => flushSync(measure));
+    observer.observe(text);
+    return () => observer.disconnect();
+  }, [hasTelemetry, bundle.message]);
   function paintCursor(time = current.current.time) {
     const element = cursor.current;
     if (!element) return;
@@ -225,16 +261,16 @@ export const Timeline = memo(function Timeline({
       measurement.current?.setAttribute('data-lifted', lifted);
   }
   useLayoutEffect(() => {
-    if (!measurement.current) return;
+    if (!measurementReserve.current) return;
     const measure = () => {
-      const height = measurement.current?.offsetHeight ?? 22;
+      const height = measurementReserve.current?.offsetHeight ?? 18;
       setMeasurementHeight((previous) => (previous === height ? previous : height));
     };
     measure();
     const observer = new ResizeObserver(() => flushSync(measure));
-    observer.observe(measurement.current);
+    observer.observe(measurementReserve.current);
     return () => observer.disconnect();
-  }, [hasTelemetry, encoderGraph, activeNames.length > 0]);
+  }, [hasTelemetry]);
   useLayoutEffect(() => {
     measurementLeft.current = size.width - (measurement.current?.offsetWidth ?? 0) - 10;
     paintCursor(pendingSeek.current ?? current.current.time);
@@ -242,8 +278,9 @@ export const Timeline = memo(function Timeline({
   useLayoutEffect(() => {
     const tip = hoverTip.current;
     if (!hover || !tip) return;
-    tip.style.left = `${clamp(hover.x + 12, 0, Math.max(0, size.width - tip.offsetWidth))}px`;
-    tip.style.top = `${clamp(hover.y + 12, 0, Math.max(0, size.height - tip.offsetHeight))}px`;
+    const rect = plot.current!.getBoundingClientRect();
+    tip.style.left = `${clamp(rect.left + hover.x + 12, 8, Math.max(8, innerWidth - tip.offsetWidth - 8))}px`;
+    tip.style.top = `${clamp(rect.top + hover.y + 12, 8, Math.max(8, innerHeight - tip.offsetHeight - 8))}px`;
   }, [hover, size, activeNames]);
   useEffect(() => {
     if (!state.playing) return;
@@ -412,7 +449,6 @@ export const Timeline = memo(function Timeline({
         if (event.key !== 'Escape') return;
         if (helpOpen) {
           setHelpOpen(false);
-          helpTrigger.current?.focus();
         }
       },
       { signal: controller.signal },
@@ -488,14 +524,14 @@ export const Timeline = memo(function Timeline({
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [duration]);
-  const sample = (seconds: number, source: Signal): number | null => {
+  const sample = (seconds: number, source: Signal, name: Channel): number | null => {
     if (source.samples) {
       if (
         seconds < (source.coverageStart ?? Infinity) ||
         seconds > (source.coverageEnd ?? -Infinity)
       )
         return null;
-      return graph.sampleAtOrBefore(source.samples, seconds)?.value ?? null;
+      return graph.sampleAtOrBefore(displaySeries.get(name)!.samples, seconds)?.value ?? null;
     }
     if (!source.values.length || duration <= 0) return null;
     const position = clamp(seconds / duration, 0, 1) * (source.values.length - 1);
@@ -509,21 +545,12 @@ export const Timeline = memo(function Timeline({
       const source = channels[name];
       let points;
       if (source.samples) {
-        points = graph.visibleTraceSegments(source.samples, state.start, end, size.width);
-        const last = source.samples.at(-1);
-        // Visual hold only: samples and readouts retain their measured coverage.
-        if (
-          !encoderGraph &&
-          last?.value != null &&
-          last.timeSeconds < end &&
-          duration > last.timeSeconds
-        ) {
-          const tail = { ...last, timeSeconds: end };
-          const final = points.at(-1);
-          if (final?.at(-1) === last) points[points.length - 1] = [...final, tail];
-          else if (state.start > last.timeSeconds)
-            points.push([{ ...last, timeSeconds: state.start }, tail]);
-        }
+        points = graph.visibleTraceSegments(
+          displaySeries.get(name)!.samples,
+          state.start,
+          end,
+          size.width,
+        );
       } else {
         const timestamps = [
           state.start,
@@ -532,16 +559,20 @@ export const Timeline = memo(function Timeline({
             .filter((time) => time > state.start && time < end),
           end,
         ];
-        points = [timestamps.map((time) => ({ timeSeconds: time, value: sample(time, source) }))];
+        points = [
+          timestamps.map((time) => ({ timeSeconds: time, value: sample(time, source, name) })),
+        ];
       }
       return { name, points };
     });
-  }, [activeNames, channels, state.start, state.span, size.width, duration, encoderGraph]);
+  }, [activeNames, channels, displaySeries, state.start, state.span, size.width, duration]);
   const signal = useMemo((): Signal => {
     let low = Infinity;
     let high = -Infinity;
+    let first: number | null = null;
     const include = (value: number | null) => {
       if (value === null || !Number.isFinite(value)) return;
+      first ??= value;
       low = Math.min(low, value);
       high = Math.max(high, value);
     };
@@ -549,40 +580,58 @@ export const Timeline = memo(function Timeline({
     for (const { points } of visibleSeries) {
       for (const segment of points) {
         segment.forEach((point, index) => {
-          if (point.timeSeconds >= state.start && point.timeSeconds <= end) include(point.value);
           const previous = segment[index - 1];
-          if (!previous || previous.value === null || point.value === null) return;
           // Adjacent offscreen samples contribute only where their line enters the view.
-          for (const edge of [state.start, end]) {
-            if (previous.timeSeconds < edge && point.timeSeconds > edge)
-              include(
-                previous.value +
-                  ((edge - previous.timeSeconds) / (point.timeSeconds - previous.timeSeconds)) *
-                    (point.value - previous.value),
-              );
+          if (previous && previous.value !== null && point.value !== null) {
+            for (const edge of [state.start, end]) {
+              if (previous.timeSeconds < edge && point.timeSeconds > edge)
+                include(
+                  previous.value +
+                    ((edge - previous.timeSeconds) / (point.timeSeconds - previous.timeSeconds)) *
+                      (point.value - previous.value),
+                );
+            }
           }
+          if (point.timeSeconds >= state.start && point.timeSeconds <= end) include(point.value);
         });
+      }
+    }
+    if (!Number.isFinite(low)) {
+      for (const name of activeNames) {
+        const source = channels[name];
+        if (source.samples)
+          displaySeries.get(name)!.samples.forEach((point) => include(point.value));
+        else source.values.forEach(include);
       }
     }
     let ticks = [1, 0.5, 0, -0.5, -1];
     if (Number.isFinite(low) && Number.isFinite(high)) {
+      const center =
+        encoderGraph || imuGroup === 'angular_velocity'
+          ? 0
+          : activeNames.length === 1
+            ? first
+            : null;
       const padding = Math.max(
         high > low ? (high - low) * 0.08 : Math.max(Math.abs(low), Math.abs(high)) * 0.01,
         0.001,
       );
-      const interval = (high - low + padding * 2) / 4;
+      const radius =
+        center === null ? 0 : Math.max(Math.abs(high - center), Math.abs(low - center)) + padding;
+      const interval = center === null ? (high - low + padding * 2) / 4 : radius / 2;
       const magnitude = 10 ** Math.floor(Math.log10(interval));
-      const step = [1, 2, 2.5, 5, 10].find((factor) => factor * magnitude >= interval)! * magnitude;
+      const step =
+        [1, 1.25, 1.5, 2, 2.5, 5, 10].find((factor) => factor * magnitude >= interval)! * magnitude;
       const minimum = Math.floor((low - padding) / step);
       const maximum = Math.ceil((high + padding) / step);
-      ticks = Array.from({ length: maximum - minimum + 1 }, (_, i) =>
-        Number(((maximum - i) * step).toPrecision(12)),
+      ticks = Array.from({ length: 5 }, (_, i) =>
+        Number(
+          (center === null
+            ? (maximum - ((maximum - minimum) * i) / 4) * step
+            : center + (2 - i) * step
+          ).toPrecision(12),
+        ),
       );
-    } else if (activeNames.length) {
-      const sources = activeNames.map((name) => channels[name]);
-      high = Math.max(...sources.map((source) => source.ticks[0]));
-      low = Math.min(...sources.map((source) => source.ticks.at(-1)!));
-      ticks = Array.from({ length: 5 }, (_, i) => high - ((high - low) * i) / 4);
     }
     return {
       available: activeNames.length > 0,
@@ -595,12 +644,18 @@ export const Timeline = memo(function Timeline({
           ? 'radians per second'
           : 'metres per second squared',
     };
-  }, [visibleSeries, activeNames, channels, state.start, state.span, encoderGraph, imuGroup]);
+  }, [
+    visibleSeries,
+    activeNames,
+    channels,
+    displaySeries,
+    state.start,
+    state.span,
+    encoderGraph,
+    imuGroup,
+  ]);
   const x = (seconds: number) => ((seconds - state.start) / state.span) * size.width;
-  const y = (value: number) =>
-    top +
-    ((signal.ticks[0] - value) / (signal.ticks[0] - signal.ticks.at(-1)!)) *
-      (size.height - top - bottom);
+  const gridY = (index: number) => top + (index / 4) * (size.height - top - bottom);
   const traces = useMemo(() => {
     const xPoint = (time: number) => ((time - state.start) / state.span) * size.width;
     const yPoint = (value: number) =>
@@ -639,6 +694,36 @@ export const Timeline = memo(function Timeline({
     });
   }, [visibleSeries, signal, state.start, state.span, size, encoderGraph, top]);
   const hasData = signal.available ?? !!signal.values.length;
+  const spikeMarkers = useMemo(() => {
+    const gaps: { start: number; end: number; spikes: { name: Channel; sample: Sample }[] }[] = [];
+    for (const name of activeNames) {
+      for (const gap of displaySeries.get(name)!.gaps) {
+        if (gap.end < state.start || gap.start > state.start + state.span) continue;
+        const sample = gap.spikes.reduce((largest, sample) =>
+          Math.abs(sample.value!) > Math.abs(largest.value!) ? sample : largest,
+        );
+        gaps.push({ start: gap.start, end: gap.end, spikes: [{ name, sample }] });
+      }
+    }
+    // Merge overlapping gaps and nearby display buckets so tiny markers remain inspectable.
+    gaps.sort((a, b) => a.start - b.start);
+    const groups: typeof gaps = [];
+    for (const gap of gaps) {
+      const previous = groups.at(-1);
+      if (!previous || ((gap.start - previous.end) / state.span) * size.width > 6) {
+        groups.push(gap);
+        continue;
+      }
+      previous.end = Math.max(previous.end, gap.end);
+      for (const spike of gap.spikes) {
+        const prior = previous.spikes.findIndex(({ name }) => name === spike.name);
+        if (prior < 0) previous.spikes.push(spike);
+        else if (Math.abs(spike.sample.value!) > Math.abs(previous.spikes[prior].sample.value!))
+          previous.spikes[prior] = spike;
+      }
+    }
+    return groups;
+  }, [activeNames, displaySeries, state.start, state.span, size.width]);
   const selectionStart = selection ? Math.min(selection.start, selection.end) : 0;
   const selectionEnd = selection ? Math.max(selection.start, selection.end) : 0;
   return (
@@ -831,34 +916,36 @@ export const Timeline = memo(function Timeline({
               <path d="M4 8h8M8 4v8" />
             </svg>
           </button>
-          <button
-            ref={helpTrigger}
-            className="analysis-graph-button timeline-help-trigger"
-            type="button"
-            data-timeline-help=""
-            aria-label="Graph help"
-            aria-expanded={helpOpen}
-            aria-controls="timeline-help"
-            title="Graph help"
-            onClick={() => {
-              setHelpOpen(!helpOpen);
-            }}
+          <div
+            className="timeline-help-control"
+            onPointerEnter={() => setHelpOpen(true)}
+            onPointerLeave={() => setHelpOpen(false)}
           >
-            ?
-          </button>
-        </div>
-        <div
-          ref={help}
-          id="timeline-help"
-          className="timeline-help"
-          role="region"
-          aria-label="Timeline controls"
-          hidden={!helpOpen}
-        >
-          <p>
-            Press <kbd>Space</kbd> to play or pause, and arrow keys to seek. Hold <kbd>Shift</kbd>{' '}
-            for ten-second steps, or drag on the graph to zoom in.
-          </p>
+            <button
+              ref={helpTrigger}
+              className="analysis-graph-button timeline-help-trigger"
+              type="button"
+              data-timeline-help=""
+              aria-label="Graph help"
+              aria-describedby={helpOpen ? 'timeline-help' : undefined}
+              onFocus={() => setHelpOpen(true)}
+              onBlur={() => setHelpOpen(false)}
+              onClick={() => setHelpOpen(true)}
+            >
+              ?
+            </button>
+            <div
+              ref={help}
+              id="timeline-help"
+              className="timeline-help"
+              role="tooltip"
+              hidden={!helpOpen}
+            >
+              <p>
+                Hold <kbd>Shift</kbd> and drag on the graph to zoom in.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
       <div className="timeline-content" data-slot="card-content">
@@ -877,7 +964,7 @@ export const Timeline = memo(function Timeline({
               ? `${bundle.absoluteTime === false ? 'Recording position' : 'Unix time'} ${formatUnix(state.time)}, ends at ${formatUnix(duration)}, ${activeNames
                   .map(
                     (name) =>
-                      `${channelLabel(name)}: ${sample(state.time, channels[name])?.toFixed(3) ?? '—'} ${signal.spokenUnit}`,
+                      `${channelLabel(name)}: ${sample(state.time, channels[name], name)?.toFixed(3) ?? '—'} ${signal.spokenUnit}`,
                   )
                   .join(', ')}`
               : `Recording position ${state.time.toFixed(1)} of ${duration.toFixed(1)} seconds`
@@ -909,14 +996,6 @@ export const Timeline = memo(function Timeline({
           onPointerMove={(event) => {
             setShift(event.shiftKey);
             if (!event.currentTarget.hasPointerCapture(event.pointerId) || !interaction.current) {
-              if (event.pointerType !== 'touch' && activeNames.length) {
-                const rect = event.currentTarget.getBoundingClientRect();
-                setHover({
-                  time: pointerTime(event),
-                  x: event.clientX - rect.left,
-                  y: event.clientY - rect.top,
-                });
-              }
               return;
             }
             event.preventDefault();
@@ -940,9 +1019,24 @@ export const Timeline = memo(function Timeline({
           onPointerCancel={() => finishInteraction(true)}
           onLostPointerCapture={() => finishInteraction(true)}
         >
+          {hasTelemetry && (
+            <div
+              ref={measurementReserve}
+              className="timeline-measurement-reserve"
+              aria-hidden="true"
+            >
+              {Array.from({ length: encoderNames.length ? 6 : 3 }, (_, index) => (
+                <span className="timeline-reading-reserve" key={index}>
+                  <strong>−000.000</strong>
+                  <span style={{ width: '2ch' }}>RR</span>
+                </span>
+              ))}
+              <span data-reading-reserve-unit="">rad/s</span>
+            </div>
+          )}
           {bundle.message && !hasTelemetry && (
             <p className="timeline-state" role="status">
-              {bundle.message}
+              <span ref={emptyText}>{bundle.message}</span>
             </p>
           )}
           <svg
@@ -953,10 +1047,6 @@ export const Timeline = memo(function Timeline({
             viewBox={`0 0 ${size.width} ${size.height}`}
           >
             <defs>
-              <linearGradient id="timeline-fill" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="var(--timeline-line)" stopOpacity=".14" />
-                <stop offset="100%" stopColor="var(--timeline-line)" stopOpacity="0" />
-              </linearGradient>
               <clipPath id="timeline-bounds">
                 <rect x="0" y={top} width={size.width} height={size.height - top - bottom} />
               </clipPath>
@@ -975,6 +1065,16 @@ export const Timeline = memo(function Timeline({
                 height={size.height}
               >
                 <rect width={size.width} height={size.height} fill="url(#timeline-edge-fade)" />
+                {bundle.message && !hasTelemetry && (
+                  <rect
+                    data-timeline-empty-label-mask=""
+                    x={(size.width - emptyTextSize.width) / 2}
+                    y={gridY(2) - emptyTextSize.height / 2}
+                    width={emptyTextSize.width}
+                    height={emptyTextSize.height}
+                    fill="black"
+                  />
+                )}
               </mask>
               <linearGradient
                 id="timeline-area-edge-fade"
@@ -1006,12 +1106,12 @@ export const Timeline = memo(function Timeline({
             </defs>
             <g className="timeline-grid">
               <g mask="url(#timeline-grid-mask)">
-                {(hasTelemetry ? signal.ticks : []).map((tick) => (
-                  <line key={tick} x1="0" x2={size.width} y1={y(tick)} y2={y(tick)} />
+                {signal.ticks.map((tick, index) => (
+                  <line key={index} x1="0" x2={size.width} y1={gridY(index)} y2={gridY(index)} />
                 ))}
               </g>
-              {(hasData ? signal.ticks : []).map((tick) => (
-                <text key={tick} x="9" y={y(tick) - 7}>
+              {(hasData ? signal.ticks : []).map((tick, index) => (
+                <text key={index} x="9" y={gridY(index) - 7}>
                   {Number(tick.toPrecision(4))}
                 </text>
               ))}
@@ -1019,19 +1119,6 @@ export const Timeline = memo(function Timeline({
             <g clipPath="url(#timeline-bounds)">
               <Traces traces={traces} />
             </g>
-            {!hasTelemetry && (
-              <g mask="url(#timeline-area-edge-mask)">
-                <path
-                  d={`M0,${top}L${size.width},${top}L${size.width},${size.height - bottom}L0,${size.height - bottom}Z`}
-                  fill="url(#timeline-fill)"
-                />
-                <path
-                  className="timeline-line"
-                  d={`M0,${top}L${size.width},${top}`}
-                  style={{ strokeWidth: 1.2 }}
-                />
-              </g>
-            )}
           </svg>
           <svg
             data-timeline-svg=""
@@ -1087,6 +1174,65 @@ export const Timeline = memo(function Timeline({
             aria-hidden="true"
             style={{ top, bottom }}
           />
+          {spikeMarkers.map(({ start, end, spikes }) => {
+            const { name, sample: spike } = spikes[0];
+            const markerLeft = clamp(x(start), 0, size.width - 1);
+            const markerWidth = Math.max(1, clamp(x(end), 0, size.width) - markerLeft);
+            const hitWidth = Math.max(12, markerWidth);
+            const hitLeft = clamp(
+              markerLeft - (hitWidth - markerWidth) / 2,
+              0,
+              Math.max(0, size.width - hitWidth),
+            );
+            const description =
+              spikes
+                .map(
+                  ({ name, sample }) =>
+                    `${name.split('.')[1]} extreme spike: ${sample.value} ${signal.unit} at ${formatUnix(sample.timeSeconds)}.`,
+                )
+                .join(' ') + ' Omitted from the trace and scale; recorded values preserved.';
+            const show = () =>
+              setHover({
+                time: spike.timeSeconds,
+                x: markerLeft + markerWidth / 2,
+                y: top,
+                spikes,
+              });
+            return (
+              <button
+                key={`${name}-${spike.timeNs}`}
+                type="button"
+                className="timeline-spike-marker"
+                data-spike-channel={spikes.map(({ name }) => name).join(' ')}
+                aria-label={description}
+                aria-describedby={hover?.spikes === spikes ? 'timeline-spike-tooltip' : undefined}
+                style={{ left: hitLeft, width: hitWidth, top, bottom }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onPointerMove={(event) => {
+                  event.stopPropagation();
+                  show();
+                }}
+                onPointerEnter={show}
+                onPointerLeave={() => setHover(null)}
+                onFocus={show}
+                onBlur={() => setHover(null)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  show();
+                }}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.key === 'Escape') setHover(null);
+                }}
+              >
+                <span
+                  className="timeline-spike-fill"
+                  aria-hidden="true"
+                  style={{ left: markerLeft - hitLeft, width: markerWidth }}
+                />
+              </button>
+            );
+          })}
           {activeNames.length > 0 && (
             <div
               ref={measurement}
@@ -1096,9 +1242,15 @@ export const Timeline = memo(function Timeline({
             >
               {activeNames.map((name) => {
                 const source = channels[name];
-                const value = sample(state.time, source);
+                const value = sample(state.time, source, name);
                 const axis = name.split('.')[1] as Axis;
-                const digits = Math.max(6, ...source.ticks.map((tick) => tick.toFixed(3).length));
+                const recorded =
+                  source.samples && graph.sampleAtOrBefore(source.samples, state.time);
+                const isSpike =
+                  value === null &&
+                  recorded?.value != null &&
+                  state.time >= source.coverageStart! &&
+                  state.time <= source.coverageEnd!;
                 return (
                   <span
                     className="timeline-axis-reading"
@@ -1110,20 +1262,17 @@ export const Timeline = memo(function Timeline({
                               encoderChannels.indexOf(name as (typeof encoderChannels)[number])
                             ]
                           : axisColors[axis],
-                        '--reading-digits': `${digits}ch`,
                       } as CSSProperties
                     }
                     title={
-                      state.time > (source.coverageEnd ?? Infinity)
-                        ? encoderGraph
+                      isSpike
+                        ? `Extreme spike: ${recorded!.value} ${source.unit}. See the red gap on the graph.`
+                        : state.time < (source.coverageStart ?? -Infinity) ||
+                            state.time > (source.coverageEnd ?? Infinity)
                           ? 'Outside sensor coverage.'
-                          : 'Outside sensor coverage. The line holds the final sample visually.'
-                        : undefined
+                          : undefined
                     }
                   >
-                    <span className="timeline-reading-label">
-                      {encoderGraph ? name.slice(8) : axis.toUpperCase()}
-                    </span>
                     <strong
                       data-axis-value={!encoderGraph ? axis : undefined}
                       data-encoder-value={encoderGraph ? name : undefined}
@@ -1136,33 +1285,40 @@ export const Timeline = memo(function Timeline({
                           : undefined
                       }
                     >
-                      {value === null ? '—' : value.toFixed(3)}
+                      {isSpike ? '⚠' : formatReading(value)}
                     </strong>
+                    <span className="timeline-reading-label">
+                      {encoderGraph ? name.slice(8) : axis.toUpperCase()}
+                    </span>
                   </span>
                 );
               })}
               <span data-timeline-unit="">{hasData ? signal.unit : ''}</span>
             </div>
           )}
-          {hover && !interaction.current && activeNames.length > 0 && (
-            <div ref={hoverTip} className="chart-tooltip" role="tooltip">
-              <time>{formatUnix(hover.time)}</time>
-              {activeNames.map((name) => {
-                const axis = name.split('.')[1] as Axis;
-                const index = encoderChannels.indexOf(name as (typeof encoderChannels)[number]);
-                return (
-                  <span
-                    key={name}
-                    style={{ color: encoderGraph ? wheelColors[index] : axisColors[axis] }}
-                  >
-                    <span>{encoderGraph ? name.slice(8) : axis.toUpperCase()}</span>
-                    <strong>{sample(hover.time, channels[name])?.toFixed(3) ?? '—'}</strong>
-                    <span>{signal.unit}</span>
+          {hover &&
+            !interaction.current &&
+            activeNames.length > 0 &&
+            createPortal(
+              <div
+                ref={hoverTip}
+                className="chart-tooltip is-spike"
+                role="tooltip"
+                id="timeline-spike-tooltip"
+              >
+                <time>{formatUnix(hover.time)}</time>
+                {hover.spikes.map(({ name, sample }, index) => (
+                  <span key={index} className="timeline-spike-detail">
+                    {name.split('.')[1]} extreme spike: {sample.value} {signal.unit} at{' '}
+                    {formatUnix(sample.timeSeconds)}.
                   </span>
-                );
-              })}
-            </div>
-          )}
+                ))}
+                <span className="timeline-spike-detail">
+                  Omitted from the trace and scale; recorded values preserved.
+                </span>
+              </div>,
+              document.body,
+            )}
         </div>
         {duration > 0 && (
           <div

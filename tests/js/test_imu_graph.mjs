@@ -172,3 +172,71 @@ test("rejects unordered time, invalid values, and mismatched channel metadata", 
     /declared coverage/,
   );
 });
+
+test("brief extreme excursions become display gaps without changing raw values or sustained changes", () => {
+  const samples = Array.from({ length: 2001 }, (_, index) => ({
+    timeNs: BigInt(index * 50_000_000),
+    timeSeconds: index / 20,
+    value: index >= 500 && index <= 503 ? -36030 : index === 550 ? 3307
+      : index === 700 ? null : index >= 1200 && index <= 1240 ? -40000 : 20 + Math.sin(index),
+  }));
+  const original = samples.map((sample) => sample.value);
+  const display = ImuGraph.extremeSpikeGaps(samples);
+  assert.deepEqual(display.spikes.map((sample) => sample.value), [-36030, -36030, -36030, -36030, 3307]);
+  assert.deepEqual(samples.map((sample) => sample.value), original);
+  assert.equal(display.samples[500].value, null);
+  assert.equal(display.samples[503].value, null);
+  assert.equal(display.samples[700].value, null);
+  assert.equal(display.samples[1200].value, -40000);
+  assert.equal(display.samples[1240].value, -40000);
+  assert.equal(display.samples[504], samples[504]);
+  assert.deepEqual(display.gaps.map(({start, end}) => [start, end]), [[24.95, 25.2], [27.45, 27.55]]);
+  assert.equal(display.gaps[0].spikes[0], samples[500]);
+  assert.equal(ImuGraph.visibleTraceSegments(display.samples, 24, 29, 500).length, 3);
+});
+
+test("spike detection preserves sparse data, normal peaks, null-adjacent excursions and constant channels", () => {
+  const sample = (value, index) => ({ timeSeconds: index / 20, value });
+  const sparse = [20, -36030, 20].map(sample);
+  assert.equal(ImuGraph.extremeSpikeGaps(sparse).samples, sparse);
+  for (const value of [0, 9.81, 1000000]) {
+    const constant = Array.from({ length: 100 }, (_, index) => sample(value, index));
+    assert.equal(ImuGraph.extremeSpikeGaps(constant).samples, constant);
+  }
+  const values = Array(100).fill(20);
+  values[20] = 99;
+  values[30] = null;
+  values[31] = -36030;
+  values[80] = -36030;
+  values[81] = null;
+  const ordinary = values.map(sample);
+  assert.equal(ImuGraph.extremeSpikeGaps(ordinary).samples, ordinary);
+});
+
+test("spike markers are bounded per pixel, preserve the largest original excursion and obey view boundaries", () => {
+  const spikes = Array.from({ length: 10000 }, (_, index) => ({
+    timeSeconds: index / 1000, value: index === 5500 ? -36030 : 3307,
+  }));
+  const visible = ImuGraph.visibleSpikes(spikes, 5, 6, 100);
+  assert.ok(visible.length <= 100);
+  assert.ok(visible.some((sample) => sample.value === -36030));
+  assert.ok(visible.every((sample) => sample.timeSeconds >= 5 && sample.timeSeconds <= 6));
+  assert.deepEqual(ImuGraph.visibleSpikes(spikes, 11, 12, 100), []);
+  assert.deepEqual(ImuGraph.visibleSpikes(spikes, 5, 5, 100), []);
+});
+
+test("coverage-edge glitches need nearby ordinary data and duplicate lookups remain last-wins", () => {
+  const samples = Array.from({ length: 100 }, (_, index) => ({
+    timeSeconds: index / 20, value: index === 0 ? 3307 : index === 99 ? -36030 : 20,
+  }));
+  let display = ImuGraph.extremeSpikeGaps(samples);
+  assert.deepEqual(display.spikes.map(sample => sample.value), [3307, -36030]);
+  assert.equal(ImuGraph.sampleAtOrBefore(display.samples, 0).value, null);
+  assert.deepEqual(display.gaps.map(({start, end}) => [start, end]), [[0, 0.05], [4.9, 4.95]]);
+  samples[99].timeSeconds = 20;
+  display = ImuGraph.extremeSpikeGaps(samples);
+  assert.equal(display.samples[99].value, -36030);
+  samples[99].timeSeconds = samples[98].timeSeconds;
+  display = ImuGraph.extremeSpikeGaps(samples);
+  assert.equal(ImuGraph.sampleAtOrBefore(display.samples, samples[98].timeSeconds).value, null);
+});

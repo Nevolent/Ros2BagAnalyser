@@ -1,6 +1,34 @@
 import { expect, test } from '@playwright/test';
 import { apiFixture } from './api-fixture';
 
+test('IMU traces stop at measured endpoints and disappear in views before and after coverage', async ({
+  page,
+}) => {
+  await apiFixture(page);
+  await page.goto('/#/analysis/42');
+  const trace = page.locator('[data-axis-trace] path');
+  await expect(trace).toHaveAttribute('d', /M/);
+  const plot = page.getByRole('slider');
+  const width = (await plot.boundingBox())!.width;
+  const coordinates = (await trace.getAttribute('d'))!
+    .match(/[ML]([\d.-]+),/g)!
+    .map((point) => Number(point.slice(1, -1)));
+  expect(Math.min(...coordinates)).toBeCloseTo(width / 6, 2);
+  expect(Math.max(...coordinates)).toBeCloseTo((width * 4) / 6, 2);
+  await expect(page.locator('[data-timeline-single-sample]')).toHaveCount(1);
+  for (let i = 0; i < 3; i++)
+    await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect(trace).toHaveAttribute('d', '');
+  await expect(page.locator('[data-timeline-single-sample]')).toHaveCount(0);
+  await expect(page.locator('[data-axis-value]')).toHaveText('—');
+  await plot.press('End');
+  await expect(trace).toHaveAttribute('d', '');
+  await expect(page.locator('[data-timeline-single-sample]')).toHaveCount(0);
+  await expect(page.locator('[data-axis-value]')).toHaveText('—');
+  await page.getByRole('button', { name: 'Reset zoom', exact: true }).click();
+  await expect(trace).toHaveAttribute('d', /M/);
+});
+
 for (const width of [390, 1440]) {
   test(`long Analysis diagnostics wrap completely at ${width}px`, async ({ page }) => {
     const api = await apiFixture(page);

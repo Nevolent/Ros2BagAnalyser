@@ -1,14 +1,11 @@
 """Read evenly spaced video frames into memory without writing near the input."""
 
-from io import BytesIO
 from fractions import Fraction
 import json
 import math
 from pathlib import Path
 import subprocess
-
-from PIL import Image
-
+from rosbag_analyser.model_runtime import FRAME_COUNT, MAX_FRAME_SIDE
 
 def _local_video(path: Path) -> Path:
     path = path.expanduser().absolute()
@@ -53,10 +50,10 @@ def _video_timing(path: Path, *, video_fd: int | None = None, ffprobe: str = "ff
     return duration, 0.5 / fps if math.isfinite(fps) and fps > 0 else 0.0
 
 
-def sample_video_frames(path: Path, *, count: int = 12,
-                        max_side: int = 640, video_fd: int | None = None,
-                        ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe") -> tuple[list[Image.Image], list[float]]:
-    """Sample the center of each equal-duration interval, earliest to latest."""
+def sample_video_frames(path: Path, *, count: int = FRAME_COUNT,
+                        max_side: int = MAX_FRAME_SIDE, video_fd: int | None = None,
+                        ffmpeg: str = "ffmpeg", ffprobe: str = "ffprobe") -> tuple[list[bytes], list[float]]:
+    """Sample chronological PNG bytes in memory; no additional image dependency."""
     if count < 2 or max_side < 1:
         raise ValueError("At least two frames and a positive maximum side are required")
     path = _local_video(path) if video_fd is None else Path(f"/proc/self/fd/{video_fd}")
@@ -81,8 +78,10 @@ def sample_video_frames(path: Path, *, count: int = 12,
                 )
                 if not result.stdout:
                     continue
-                with Image.open(BytesIO(result.stdout)) as image:
-                    frames.append(image.convert("RGB"))
+                payload = result.stdout
+                if not payload.startswith(b"\x89PNG\r\n\x1a\n") or len(payload) > 4 * max_side**2 + 65536:
+                    raise ValueError("Decoder did not return a bounded PNG frame")
+                frames.append(payload)
                 timestamps[index - 1] = seek_time
                 break
             except (FileNotFoundError, subprocess.CalledProcessError,

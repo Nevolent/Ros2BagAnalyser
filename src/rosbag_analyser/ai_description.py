@@ -5,7 +5,9 @@ import hashlib
 import json
 import re
 
-DESCRIPTION_POLICY = 'ai-description-v1:qwen3-vl-2b-89644892e4d85e24eaac8bacfd4f463576704203:frames12:side640:tokens160'
+from rosbag_analyser.model_runtime import RUNTIME_ID, FRAME_COUNT, MAX_FRAME_SIDE, MAX_NEW_TOKENS
+
+DESCRIPTION_POLICY = f"ai-description-v2:{RUNTIME_ID}:ordered-images:frames{FRAME_COUNT}:side{MAX_FRAME_SIDE}:tokens{MAX_NEW_TOKENS}:prompt-v1:formatter-v1"
 DESCRIPTION_PLANNER_IDENTITY = hashlib.sha256(DESCRIPTION_POLICY.encode()).hexdigest()
 MAX_DESCRIPTION_BYTES = 8192
 

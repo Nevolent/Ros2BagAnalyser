@@ -132,6 +132,10 @@ if json.loads(pathlib.Path(sys.argv[1]).read_text())["source_revision"] != sys.a
     raise SystemExit("The staged release represents a different Git revision.")
 PYTHON
 
+# Model setup/validation happens before the maintenance gate or service interruption.
+# Failures preserve the active release; neither source recordings nor jobs are opened.
+"$release_target/venv/bin/python" "$repository_root/deploy/scripts/prepare-model-runtime" "$release_target"
+
 if [[ "$restart_mode" == "both" ]]; then
   "$release_target/venv/bin/python" "$repository_root/deploy/scripts/deploy_release.py" \
     upgrade "$release_target" "$previous_release" "$migrate"

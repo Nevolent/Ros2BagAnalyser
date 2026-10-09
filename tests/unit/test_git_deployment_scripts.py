@@ -54,7 +54,8 @@ def test_vm_git_deployment_preserves_immutable_release_and_refuses_sensitive_cha
     assert "activate-release" in deployer
     assert "build-release" in deployer
     assert "rescan" not in deployer
-    assert "prepare" not in deployer
+    assert "prepare" not in deployer.replace("prepare-model-runtime", "")
+    assert deployer.index('"$repository_root/deploy/scripts/prepare-model-runtime"') < deployer.index('if [[ "$restart_mode" == "both" ]]')
 
 
 def test_git_deployment_help_needs_no_private_settings() -> None:

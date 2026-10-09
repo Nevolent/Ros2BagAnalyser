@@ -10,6 +10,7 @@ from typing import Mapping
 from urllib.parse import parse_qs, urlsplit
 
 from rosbag_analyser.catalog.paths import CatalogScanLimits
+from rosbag_analyser.model_runtime import DEFAULT_THREADS, default_runtime_root
 
 
 ARCHIVE_ROOT_ENV = "ROS_BAG_ANALYSER_ARCHIVE_ROOT"
@@ -113,8 +114,8 @@ class AppConfig:
     ffprobe_path: Path
     catalog_scan_limits: CatalogScanLimits
     prepare_max_recordings: int
-    description_python: Path | None = None
-    description_model_root: Path | None = None
+    description_runtime_root: Path | None = None
+    description_threads: int = DEFAULT_THREADS
     encoder_topic: str = ""
 
     @classmethod
@@ -179,8 +180,13 @@ class AppConfig:
                 DEFAULT_PREPARE_MAX_RECORDINGS,
             ),
             derived_root_writable=not deployment_enabled,
-            description_python=values.get("ROS_BAG_ANALYSER_DESCRIPTION_PYTHON"),
-            description_model_root=values.get("ROS_BAG_ANALYSER_DESCRIPTION_MODEL_ROOT"),
+            description_runtime_root=(
+                values.get("ROS_BAG_ANALYSER_DESCRIPTION_RUNTIME_ROOT")
+                or default_runtime_root(deployment=deployment_enabled)
+            ),
+            description_threads=_environment_int(
+                values, "ROS_BAG_ANALYSER_DESCRIPTION_THREADS", DEFAULT_THREADS
+            ),
         )
 
     @classmethod
@@ -204,8 +210,8 @@ class AppConfig:
         catalog_max_recording_entries: int = CatalogScanLimits().max_recording_entries,
         prepare_max_recordings: int = DEFAULT_PREPARE_MAX_RECORDINGS,
         derived_root_writable: bool = True,
-        description_python: str | Path | None = None,
-        description_model_root: str | Path | None = None,
+        description_runtime_root: str | Path | None = None,
+        description_threads: int = DEFAULT_THREADS,
         encoder_topic: str = "",
     ) -> "AppConfig":
         archive = _validated_directory(Path(archive_root), "archive root", writable=False)
@@ -252,6 +258,20 @@ class AppConfig:
         preparation_limit = _positive_int(
             prepare_max_recordings, "preparation maximum recordings"
         )
+        model_threads = _positive_int(description_threads, "description CPU threads")
+        if model_threads > 32:
+            raise ConfigurationError("Description CPU threads must be between 1 and 32.")
+        model_root = Path(
+            description_runtime_root or default_runtime_root()
+        ).expanduser().absolute()
+        _reject_symlink_path(model_root, "model runtime root")
+        model_root = model_root.resolve(strict=False)
+        for data_root in (archive, derived):
+            if (data_root == model_root or data_root in model_root.parents
+                    or model_root in data_root.parents):
+                raise ConfigurationError("Model runtime and data roots must not overlap.")
+            if model_root.exists():
+                _reject_overlapping_roots(data_root, model_root)
         return cls(
             archive_root=archive,
             derived_root=derived,
@@ -265,8 +285,8 @@ class AppConfig:
             ffprobe_path=ffprobe,
             catalog_scan_limits=scan_limits,
             prepare_max_recordings=preparation_limit,
-            description_python=None if not description_python else Path(description_python).expanduser().absolute(),
-            description_model_root=None if not description_model_root else Path(description_model_root).expanduser().absolute(),
+            description_runtime_root=model_root,
+            description_threads=model_threads,
         )
 
 

@@ -24,7 +24,9 @@ On Ubuntu 22.04 / WSL, with the project environment configured:
 ```
 
 For setup, frontend development and tests, see [Development](docs/DEVELOPMENT.md).
-Processing requires Python 3.10, ROS 2 Humble, PostgreSQL and FFmpeg. Frontend
+Processing requires Python 3.10, ROS 2 Humble, PostgreSQL and FFmpeg.
+AI descriptions use the pinned Qwen3-VL-2B Q8 CPU runtime through llama.cpp;
+provision it with `scripts/setup-model setup` as described in Development. Frontend
 development uses Node.js; the committed browser build needs no Node.js on the VM.
 
 ## Project layout

@@ -6,8 +6,10 @@ from pathlib import Path
 import signal
 import subprocess
 import time
+import sys
 
 from rosbag_analyser.ai_description import MAX_DESCRIPTION_BYTES, validate_description_result
+from rosbag_analyser.model_runtime import DEFAULT_THREADS, DEFAULT_TIMEOUT_SECONDS, validate_runtime
 
 
 def _signal_group(process, sig):
@@ -25,27 +27,33 @@ class DescriptionProcessingError(RuntimeError):
 
 
 class DescriptionProcessor:
-    def __init__(self, python: Path | None, model_root: Path | None,
-                 ffmpeg: Path, ffprobe: Path, *, timeout_seconds: float = 1800) -> None:
-        self.python = python
-        self.model_root = model_root
+    def __init__(self, runtime_root: Path | None,
+                 ffmpeg: Path, ffprobe: Path, *, threads: int = DEFAULT_THREADS,
+                 timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> None:
+        if isinstance(threads, bool) or not isinstance(threads, int) or not 1 <= threads <= 32:
+            raise ValueError("Description CPU threads must be between 1 and 32.")
+        if timeout_seconds <= 0:
+            raise ValueError("Description timeout must be positive.")
+        self.runtime_root = runtime_root
+        self.threads = threads
         self.ffmpeg = ffmpeg
         self.ffprobe = ffprobe
         self.timeout_seconds = timeout_seconds
 
     def process(self, video_descriptor: int, output_path: Path, *, control=None):
-        if self.python is None or self.model_root is None:
+        if self.runtime_root is None:
             raise DescriptionProcessingError(
-                "ai_model_unavailable", "Configure the local Qwen model environment to prepare AI descriptions.")
-        if not self.python.is_file() or not (self.model_root / "model.safetensors").is_file():
-            raise DescriptionProcessingError("ai_model_unavailable", "The configured Qwen model environment is unavailable.")
+                "ai_model_unavailable", "Provision the Q8 CPU model runtime to prepare AI descriptions.")
+        try:
+            validate_runtime(self.runtime_root)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise DescriptionProcessingError("ai_model_unavailable", "The pinned Q8 CPU model runtime is unavailable or invalid.") from error
         environment = dict(os.environ)
         package_root = str(Path(__file__).resolve().parents[2])
         environment["PYTHONPATH"] = package_root
-        environment["HF_HUB_OFFLINE"] = "1"
-        environment["TRANSFORMERS_OFFLINE"] = "1"
-        command = [str(self.python), "-m", "rosbag_analyser.processors.qwen_inference",
-                   "--video-fd", str(video_descriptor), "--model-root", str(self.model_root),
+        command = [sys.executable, "-m", "rosbag_analyser.processors.qwen_inference",
+                   "--video-fd", str(video_descriptor), "--runtime-root", str(self.runtime_root),
+                   "--threads", str(self.threads),
                    "--output", str(output_path), "--ffmpeg", str(self.ffmpeg), "--ffprobe", str(self.ffprobe)]
         process = None
         started = time.monotonic()
@@ -71,7 +79,7 @@ class DescriptionProcessor:
                         if time.monotonic() - started > self.timeout_seconds:
                             raise DescriptionProcessingError("ai_description_timeout", "AI description generation timed out. Retry it.")
             if returncode != 0:
-                raise DescriptionProcessingError("ai_description_inference_failed", "Qwen could not generate a valid description. Check the model environment and retry.")
+                raise DescriptionProcessingError("ai_description_inference_failed", "Qwen could not generate a valid description. Check the CPU model runtime and retry.")
             if control is not None:
                 control.checkpoint("validating", force=True)
             if output_path.is_symlink() or not 0 < output_path.stat().st_size <= MAX_DESCRIPTION_BYTES:
@@ -82,7 +90,7 @@ class DescriptionProcessor:
         except (OSError, ValueError) as error:
             raise DescriptionProcessingError("ai_description_invalid", "The generated AI description is invalid.") from error
         finally:
-            if process is not None and process.poll() is None:
+            if process is not None:
                 _signal_group(process, signal.SIGCONT)
                 _signal_group(process, signal.SIGTERM)
                 try:
@@ -90,3 +98,5 @@ class DescriptionProcessor:
                 except subprocess.TimeoutExpired:
                     _signal_group(process, signal.SIGKILL)
                     process.wait(timeout=2)
+                # Reap remaining group members even if the Python wrapper exited first.
+                _signal_group(process, signal.SIGKILL)

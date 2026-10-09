@@ -21,6 +21,41 @@ DEPLOYMENT_DATABASE_URL = (
 IMU_TOPIC = "/sensors/imu"
 
 
+def test_unprovisioned_model_root_is_optional_and_configurable(tmp_path):
+    archive, derived = tmp_path / "archive", tmp_path / "derived"
+    archive.mkdir(); derived.mkdir()
+    runtime = tmp_path / "models" / "not-yet-installed"
+    config = AppConfig.from_environment({
+        "ROS_BAG_ANALYSER_ARCHIVE_ROOT": str(archive),
+        "ROS_BAG_ANALYSER_DERIVED_ROOT": str(derived),
+        "ROS_BAG_ANALYSER_DATABASE_URL": DATABASE_URL,
+        "ROS_BAG_ANALYSER_DESCRIPTION_RUNTIME_ROOT": str(runtime),
+        "ROS_BAG_ANALYSER_DESCRIPTION_THREADS": "2",
+    })
+    assert config.description_runtime_root == runtime and config.description_threads == 2
+    assert not runtime.exists()
+
+
+@pytest.mark.parametrize("invalid", [0, -1, 33, True])
+def test_description_threads_are_bounded(tmp_path, invalid):
+    archive, derived = tmp_path / "archive", tmp_path / "derived"
+    archive.mkdir(); derived.mkdir()
+    with pytest.raises(ConfigurationError, match="threads"):
+        AppConfig.create(archive, derived, DATABASE_URL, description_threads=invalid)
+
+
+@pytest.mark.parametrize("location", ["archive", "derived", "parent", "symlink"])
+def test_model_root_cannot_alias_or_overlap_data(tmp_path, location):
+    archive, derived = tmp_path / "archive", tmp_path / "derived"
+    archive.mkdir(); derived.mkdir()
+    runtime = {"archive": archive / "model", "derived": derived / "model",
+               "parent": tmp_path, "symlink": tmp_path / "alias"}[location]
+    if location == "symlink":
+        runtime.symlink_to(archive, target_is_directory=True)
+    with pytest.raises(ConfigurationError, match="overlap|symbolic link"):
+        AppConfig.create(archive, derived, DATABASE_URL, description_runtime_root=runtime)
+
+
 def test_accepts_existing_separate_roots(tmp_path: Path) -> None:
     archive = tmp_path / "archive"
     derived = tmp_path / "derived"

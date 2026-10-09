@@ -13,6 +13,7 @@ Site configuration and credentials stay outside Git.
 | `release-contract.json` | Platform, schema and processor identities |
 | `systemd/`, `nginx/`, `firewall/` | Service, mount and access templates |
 | `scripts/` | Build, installation, validation, deployment and recovery commands |
+| `scripts/prepare-model-runtime` | Provision and smoke-test the candidate CPU model before activation |
 
 Read-only diagnostics:
 

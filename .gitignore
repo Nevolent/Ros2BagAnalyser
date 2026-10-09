@@ -32,6 +32,10 @@ wheelhouse/
 release/
 releases/
 *.whl
+*.gguf
+*.safetensors
+# Retained local CUDA experiment assets are historical, never production inputs.
+experiments/qwen3-vl/
 *.tar.gz
 *.tar.gz.sha256
 *.dump

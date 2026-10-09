@@ -21,14 +21,32 @@ The local launcher reads mode-0600/0400 private files:
 - `~/.config/rosbag-analyser/database.env`: database password and optional
   host, user, database name and port.
 
-The local service wrapper reuses `experiments/qwen3-vl/.venv` and its downloaded
-model when present. Run that experiment's `setup.sh` to provision it. Elsewhere,
-configure `ROS_BAG_ANALYSER_DESCRIPTION_PYTHON` (the model environment's Python)
-and `ROS_BAG_ANALYSER_DESCRIPTION_MODEL_ROOT` (the pinned model directory).
-The API/ROS environment needs no Torch or Transformers; missing inference setup
-fails only description jobs and preserves prepared media. Inference is offline.
-Keep model weights and generated descriptions outside Git. Model settings take
-effect after a local service restart; migrate before using the new output kind.
+AI descriptions use Qwen3-VL-2B-Instruct Q8_0 through a pinned llama.cpp CPU
+runtime, with the matching F16 vision projector. Install `build-essential` and
+`cmake` on the Linux x86_64 builder, then run from the repository root:
+
+```bash
+scripts/setup-model setup   # Download verified assets and build portable CPU binaries
+scripts/setup-model check   # Verify all installed checksums
+scripts/setup-model smoke   # Actual CPU inference on synthetic video
+```
+
+Setup needs network access and at least 8 GiB free staging space. It installs
+under `~/.local/share/rosbag-analyser/models/`; the download/build cache is under
+`~/.cache/rosbag-analyser/setup/`. Weights and native binaries stay outside Git.
+The application environment owns inference; no experiment, Torch, Transformers
+or extra Python image package is required. Normal processing is offline and
+never downloads assets. Missing setup fails description jobs truthfully while
+preserving prepared media.
+
+`ROS_BAG_ANALYSER_DESCRIPTION_RUNTIME_ROOT` overrides the installed runtime path;
+`ROS_BAG_ANALYSER_DESCRIPTION_THREADS` defaults to four (allowed range 1–32).
+Runtime storage must be separate from source and derived roots, without symlinks.
+The old `DESCRIPTION_PYTHON` and `DESCRIPTION_MODEL_ROOT` settings are unused.
+Restart local services after configuration changes. Apply migration
+`0012_q8_ai_description.sql` before Prepare Selected: it updates saved description
+targets to the new model/sampling identity without scanning sources or creating
+jobs. Old artifacts remain saved; the new policy generates new descriptions.
 
 The default database host is the Windows host. Override file locations with
 `ROS_BAG_ANALYSER_SETTINGS_FILE` and `ROS_BAG_ANALYSER_DATABASE_SECRET_FILE`.

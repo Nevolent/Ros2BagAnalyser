@@ -6,7 +6,7 @@
     "imu_series_schema": 2,
     "topdown_preview_manifest": 1
   },
-  "database_schema": "six-domain-tables-migrations-0001-through-0011",
+  "database_schema": "six-domain-tables-migrations-0001-through-0012",
   "platform": {
     "architecture": "amd64",
     "operating_system": "Ubuntu 22.04 LTS",
@@ -15,7 +15,7 @@
     "support_boundary": "2027-05"
   },
   "processors": {
-    "ai_description": "ai-description-v1:qwen3-vl-2b-89644892e4d85e24eaac8bacfd4f463576704203:frames12:side640:tokens160",
+    "ai_description": "ai-description-v2:qwen3-vl-2b-q8-52d6c8ff-llama-8345f333-cpu-v1:ordered-images:frames6:side448:tokens160:prompt-v1:formatter-v1",
     "encoder_series": "encoder-series-v1",
     "front_preview": "front-preview-v6",
     "front_timing_policy": "image_header_affine_or_all_zero_record_timestamp_v3",

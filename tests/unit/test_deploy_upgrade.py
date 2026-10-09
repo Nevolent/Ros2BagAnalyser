@@ -48,6 +48,7 @@ def repository(tmp_path):
     ('pyproject.toml', ('both', False, True)),
     ('deploy/scripts/deploy_release.py', ('none', False, False)),
     ('deploy/scripts/deploy-from-git', ('none', False, False)),
+    ('deploy/scripts/prepare-model-runtime', ('both', False, False)),
     ('src/rosbag_analyser/persistence/migrations/0002_new.sql', ('both', True, False)),
 ])
 def test_application_changes_plan_the_required_upgrade(repository, path, expected):

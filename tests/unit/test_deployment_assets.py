@@ -196,4 +196,4 @@ def test_release_contract_matches_accepted_processor_and_schema_identities() -> 
     }
     assert contract["artifact_contracts"]["imu_series_schema"] == SERIES_SCHEMA_VERSION
     assert contract["artifact_contracts"]["encoder_series_schema"] == SERIES_SCHEMA_VERSION
-    assert contract["database_schema"].endswith("0001-through-0011")
+    assert contract["database_schema"].endswith("0001-through-0012")

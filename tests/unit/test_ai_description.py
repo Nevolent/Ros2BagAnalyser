@@ -161,11 +161,53 @@ def test_missing_description_is_partial_and_ready_requires_both_outputs(prepared
 
 
 def test_migration_backfill_uses_the_runtime_identity_policy():
-    sql = (Path(__file__).parents[2] / "src/rosbag_analyser/persistence/migrations/0010_ai_description.sql").read_text()
+    sql = (Path(__file__).parents[2] / "src/rosbag_analyser/persistence/migrations/0012_q8_ai_description.sql").read_text()
     assert DESCRIPTION_POLICY in sql
     assert DESCRIPTION_PLANNER_IDENTITY in sql
     assert "INSERT INTO jobs" not in sql
     assert description_cache_identity("a" * 64) != description_cache_identity("b" * 64)
+    legacy = (Path(__file__).parents[2] / "src/rosbag_analyser/persistence/migrations/0010_ai_description.sql").read_text()
+    assert "ai-description-v1" in legacy and DESCRIPTION_POLICY not in legacy
+
+
+def test_pause_excludes_wait_time_and_stops_native_descendant(tmp_path, monkeypatch):
+    import subprocess
+    import time
+    from rosbag_analyser.processors import ai_description
+    children = []
+    original_popen = subprocess.Popen
+    descendant_pid = tmp_path / "native.pid"
+    command = ("import subprocess,sys,time,json,signal; "
+               "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+               f"open({str(descendant_pid)!r},'w').write(str(child.pid)); "
+               "signal.signal(signal.SIGTERM, lambda *a: (child.terminate(),child.wait(),sys.exit())); "
+               f"time.sleep(0.4); open({str(tmp_path / 'description.json')!r},'w').write({json.dumps(RESULT)!r})")
+    def start(_, **kwargs):
+        child = original_popen([sys.executable, "-c", command], **kwargs)
+        children.append(child)
+        return child
+    monkeypatch.setattr(ai_description.subprocess, "Popen", start)
+    monkeypatch.setattr(ai_description, "validate_runtime", lambda _: {})
+    class Pause:
+        paused = False
+        def checkpoint(self, phase, **kwargs):
+            if phase == "processing" and not self.paused:
+                self.paused = True
+                native = int(descendant_pid.read_text())
+                time.sleep(0.02)
+                assert Path(f"/proc/{native}/stat").read_text().split()[2] == "T"
+                time.sleep(0.6)
+    pause = Pause()
+    result = DescriptionProcessor(tmp_path, Path("ffmpeg"), Path("ffprobe"), timeout_seconds=0.55).process(
+        0, tmp_path / "description.json", control=pause)
+    assert result == RESULT and pause.paused
+    native = int(descendant_pid.read_text())
+    deadline = time.monotonic() + 2
+    while Path(f"/proc/{native}/stat").exists() and time.monotonic() < deadline:
+        if Path(f"/proc/{native}/stat").read_text().split()[2] == "Z":
+            break
+        time.sleep(0.02)
+    assert not Path(f"/proc/{native}/stat").exists() or Path(f"/proc/{native}/stat").read_text().split()[2] == "Z"
 
 
 @pytest.mark.parametrize("value", [None, {}, {"description": "", "bunker": False},
@@ -177,7 +219,7 @@ def test_invalid_result_contract_is_rejected(value):
 
 
 def test_model_environment_absence_fails_truthfully(tmp_path):
-    processor = DescriptionProcessor(None, None, Path("ffmpeg"), Path("ffprobe"))
+    processor = DescriptionProcessor(None, Path("ffmpeg"), Path("ffprobe"))
     with pytest.raises(DescriptionProcessingError) as error:
         processor.process(0, tmp_path / "description.json")
     assert error.value.code == "ai_model_unavailable"
@@ -200,6 +242,7 @@ def test_cancellation_and_timeout_terminate_inference_processes(tmp_path, monkey
         return child
 
     monkeypatch.setattr(ai_description.subprocess, "Popen", stand_in)
+    monkeypatch.setattr(ai_description, "validate_runtime", lambda _: {})
 
     class Cancel:
         def checkpoint(self, phase):
@@ -208,7 +251,7 @@ def test_cancellation_and_timeout_terminate_inference_processes(tmp_path, monkey
             assert Path(f"/proc/{children[0].pid}/stat").read_text().split()[2] == "T"
             raise JobCanceled("Synthetic cancellation")
 
-    processor = DescriptionProcessor(Path(sys.executable), model, Path("ffmpeg"), Path("ffprobe"),
+    processor = DescriptionProcessor(model, Path("ffmpeg"), Path("ffprobe"),
                                      timeout_seconds=0.05)
     with pytest.raises(JobCanceled if cancel else DescriptionProcessingError) as error:
         processor.process(0, tmp_path / "description.json", control=Cancel() if cancel else None)

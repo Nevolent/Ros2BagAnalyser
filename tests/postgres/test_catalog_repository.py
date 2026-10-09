@@ -2954,3 +2954,40 @@ def test_repeated_migration_preserves_encoder_targets_jobs_and_artifacts(postgre
     assert reused.artifact == artifact and reused.job is None
     assert repository.get_current_artifact_for_delivery(recording_id, "encoder_series", artifact.id,
         PLANNER_IDENTITIES["encoder_series"]) == artifact
+
+
+@pytest.mark.postgres
+def test_q8_migration_replaces_legacy_targets_preserving_jobs_and_artifacts(postgres_url):
+    from rosbag_analyser.ai_description import DESCRIPTION_PLANNER_IDENTITY, description_cache_identity
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    _make_targets_available(postgres_url, recording_id)
+    repository = ProcessingRepository(postgres_url)
+    old_identity = TARGET_IDENTITIES["ai_description"]
+    repository.request_job(recording_id, "ai_description", old_identity)
+    running = repository.claim_next_job()
+    repository.enter_publishing(running.id)
+    repository.complete_job(running.id, ArtifactWrite(
+        recording_id, "ai_description", old_identity, "legacy/description.json",
+        "application/json", 100, 0, 100, {"legacy": True}))
+    with open_connection(postgres_url) as connection:
+        connection.execute("UPDATE preparation_targets SET planner_identity=%s WHERE kind='ai_description'",
+                           ("ac1caef9b5d65940f1fc528209d7f6a3df9984a361967b1ce583ff9b825d5304",))
+        before = tuple(connection.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
+                       for table in ("jobs", "artifacts"))
+        other_targets = connection.execute("SELECT * FROM preparation_targets WHERE kind<>'ai_description' ORDER BY kind").fetchall()
+    migration = Path(__file__).parents[2] / "src/rosbag_analyser/persistence/migrations/0012_q8_ai_description.sql"
+    with open_connection(postgres_url) as connection:
+        connection.execute(migration.read_text())
+        target = connection.execute("SELECT * FROM preparation_targets WHERE kind='ai_description'").fetchone()
+        assert target["planner_identity"] == DESCRIPTION_PLANNER_IDENTITY
+        assert target["cache_identity"] == description_cache_identity(TARGET_IDENTITIES["front_preview"])
+        assert tuple(connection.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
+                     for table in ("jobs", "artifacts")) == before
+        assert connection.execute("SELECT * FROM preparation_targets WHERE kind<>'ai_description' ORDER BY kind").fetchall() == other_targets
+        connection.execute(migration.read_text())
+        assert connection.execute("SELECT * FROM preparation_targets WHERE kind='ai_description'").fetchone() == target
+        connection.execute("UPDATE preparation_targets SET planner_identity=%s WHERE kind='ai_description'", ("f" * 64,))
+        connection.execute(migration.read_text())
+        assert connection.execute("SELECT planner_identity FROM preparation_targets WHERE kind='ai_description'").fetchone()["planner_identity"] == "f" * 64

@@ -7,7 +7,8 @@
 | `/opt/rosbag-analyser/releases/<id>/` | Immutable releases |
 | `/opt/rosbag-analyser/current` | Active release symlink |
 | `/opt/rosbag-analyser/repository/` | Deployment checkout; services do not run here |
-| `/opt/rosbag-analyser/staging/` | Release staging |
+| `/opt/rosbag-analyser/staging/` | Release and model-download staging |
+| `/opt/rosbag-analyser/models/<runtime-id>/` | Verified offline CPU model and native runtime |
 | `/etc/rosbag-analyser/` | Private configuration and credentials |
 | `/srv/rosbag-analyser/source` | Read-only source mount |
 | `/var/lib/rosbag-analyser/derived` | Writable cache mount; application uses its `rosbag-analyser/` child |
@@ -78,7 +79,24 @@ SSH, then fast-forwards the dedicated VM checkout and validates the exact pushed
 revision. Documentation/test-only changes update that checkout without
 activating a release.
 
-The deployer stages an immutable release before interrupting services.
+The deployer stages an immutable release before interrupting services. It also
+provisions/checks the candidate's pinned CPU model and runs synthetic inference
+as the service account before closing writes. Download, build or inference
+failure leaves the active release running. The Linux x86_64 builder needs
+`build-essential` and `cmake`; an operator must provision missing OS packages
+before deployment. First setup downloads about 2.65 GB of weights plus llama.cpp
+source and needs at least 8 GiB free staging space. Subsequent releases reuse
+verified runtime assets. The runtime uses CPU feature dispatch, including a
+baseline backend for guests that expose no AVX. It requires no compute GPU.
+
+`ROS_BAG_ANALYSER_DESCRIPTION_RUNTIME_ROOT` defaults to the pinned directory
+under `/opt/rosbag-analyser/models/`; overrides must be direct children of that
+root. `ROS_BAG_ANALYSER_DESCRIPTION_THREADS` defaults to four. Native binaries
+and weights are root-owned and readable/executable by the service account;
+recording processing never downloads them. Do not place model assets on the
+source or derived mount. Model/build cache cleanup is an explicit operator action.
+The synthetic smoke check reports elapsed time on the guest; it is not a promise
+of real-recording latency or description accuracy.
 Frontend-only changes restart API only. Other application changes close writes
 and let active worker work finish; queued work remains saved. Dependency changes
 build a checked wheelhouse on the existing platform. OS/ROS/Python or service,
@@ -168,7 +186,16 @@ intentionally invalid template placeholders. Run `validate-site`,
 applying settings. Source stays read-only; API and database stay local behind
 the access boundary.
 
-For a site upgrade or manual recovery:
+For a new installation, provision and smoke-test the model before activation
+using the candidate's installed environment:
+
+```bash
+sudo /opt/rosbag-analyser/releases/RELEASE/venv/bin/python \
+  /opt/rosbag-analyser/releases/RELEASE/deploy/scripts/prepare-model-runtime \
+  /opt/rosbag-analyser/releases/RELEASE
+```
+
+Candidate preflight requires a valid model runtime. For a site upgrade or manual recovery:
 
 1. Record the active release/schema and rollback compatibility. Stage and validate
    the candidate and capacity.

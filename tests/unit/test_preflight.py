@@ -8,6 +8,18 @@ from types import SimpleNamespace
 
 import pytest
 
+
+def test_candidate_preflight_requires_model_before_database_or_source_access(tmp_path, monkeypatch):
+    from rosbag_analyser import preflight
+    (tmp_path / "deploy").mkdir()
+    (tmp_path / "deploy/release-contract.json").write_text('{"processors":{"ai_description":"q8"}}')
+    monkeypatch.setattr(preflight, "validate_release_manifest", lambda *a, **k: {})
+    monkeypatch.setattr(preflight, "validate_catalog_schema", lambda *a: pytest.fail("unexpected database access"))
+    with pytest.raises(DeploymentConfigurationError, match="Q8 CPU model"):
+        preflight.run_preflight(SimpleNamespace(description_runtime_root=tmp_path / "absent"),
+                                SimpleNamespace(enabled=True, release_id="fixture"),
+                                activation=True, release_root=tmp_path)
+
 from rosbag_analyser.deployment import DeploymentConfigurationError
 from rosbag_analyser.preflight import (
     _stable_file_identity,

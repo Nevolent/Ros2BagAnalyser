@@ -13,6 +13,7 @@ import sys
 from typing import Any, Sequence
 
 from rosbag_analyser.config import AppConfig, ConfigurationError
+from rosbag_analyser.model_runtime import validate_runtime
 from rosbag_analyser.deployment import (
     DeploymentConfigurationError,
     DeploymentSettings,
@@ -225,6 +226,15 @@ def run_preflight(
             expected_release_id=settings.release_id,
         )
         checks.append("release_identity")
+        contract = json.loads((release_root / "deploy/release-contract.json").read_text())
+        if "ai_description" in contract.get("processors", {}):
+            try:
+                if config.description_runtime_root is None:
+                    raise ValueError("No model runtime configured")
+                validate_runtime(config.description_runtime_root)
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                raise DeploymentConfigurationError("The pinned Q8 CPU model runtime is unavailable or invalid.") from error
+            checks.append("cpu_model_runtime")
     validate_catalog_schema(config.database_url)
     admission = build_admission_guard(
         config.archive_root,

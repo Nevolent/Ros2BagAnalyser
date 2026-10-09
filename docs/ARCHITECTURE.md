@@ -41,7 +41,7 @@ last successful catalog or mark unseen recordings missing. Scanning creates no j
 
 Six tables hold domain state: `recordings`, `source_components`, `artifacts`,
 `jobs`, `catalog_state` and `preparation_targets`. Applied SQL migrations,
-currently through `0011_encoder_series.sql`, remain part of the upgrade path.
+currently through `0012_q8_ai_description.sql`, remain part of the upgrade path.
 
 Catalog and processing reads use saved projections, without source access per row.
 Each successful scan saves five preparation targets per recording. Planner or
@@ -78,16 +78,23 @@ an encoder target. Unavailable top-down, IMU and encoder inputs are optional;
 Analysis can review available output independently.
 
 AI descriptions are separate jobs after the front preview. They read its default
-stream through a validated, held file descriptor and sample 12 chronological frames
-at a maximum side of 640 pixels. Offline Qwen3-VL-2B-Instruct runs in a separately
-provisioned Python environment with the experiment's exact prompt and formatter;
-all three visual cues (gravel-like terrain, dark curtains, artificial lighting)
-are required for the bunker tag. Validated JSON is published atomically and exposed
-only in recording details. Inference errors leave camera/IMU artifacts intact.
-Migration 0010 derives missing description targets from saved front targets without
-scanning sources or creating jobs. Prepare Selected reuses compatible artifacts;
-a reordered description waits for active front work. Cancellation terminates
-inference and decoders; pause holds them at a checkpoint before publication.
+stream through a validated, held file descriptor and sample six chronological PNG
+frames at a maximum side of 448 pixels. Qwen3-VL-2B-Instruct Q8_0 and the matching
+F16 vision projector run offline through pinned llama.cpp CPU binaries, using the
+application's Python environment. A job-owned server accepts one constrained JSON
+completion over a private Unix socket; it exposes no TCP listener. The prompt and
+formatter retain the three required bunker cues: gravel-like terrain, dark
+curtains and artificial lighting. Four CPU inference threads are the default.
+
+Validated JSON is published atomically and exposed in recording details.
+Inference errors leave existing artifacts intact. Migration 0012 derives current
+description targets from saved front targets without scanning sources or creating
+jobs; the new identity prevents reuse of old model/sampling output. Prepare
+Selected reuses compatible artifacts; a reordered description waits for active
+front work. Cancellation terminates inference, the server and decoders; pause
+holds their process group at a checkpoint before publication. Generation has a
+300-second active-time limit, excluding pauses. Model provisioning is explicit,
+verified and separate from application startup and recording processing.
 
 A PostgreSQL advisory lock permits one worker. Claim, insertion, reordering and
 queued cancellation share a stable queue order. Durable pause/resume/cancel
@@ -121,7 +128,7 @@ Queued work and recordings are preserved; recovery is in [Operations](OPERATIONS
 | --- | --- |
 | Front preview | `front-preview-v6`; validated MP4 per supported raw CDR Image stream |
 | Top-down preview | `topdown-preview-v2`; AVI frames timed by CSV Unix timestamps; H.264/yuv420p MP4 |
-| AI description | `ai-description-v1`; bounded JSON with the short description and bunker boolean, tied to front identity and fixed model/prompt/sampling policy |
+| AI description | `ai-description-v2`; bounded JSON with the short description and bunker boolean, tied to front identity and fixed model/prompt/sampling policy |
 | IMU | `imu-series-v2`; schema-2 JSON with three angular-velocity and three linear-acceleration axes |
 | Encoders | `encoder-series-v1`; schema-2 JSON with six RPM channels in FL, FR, ML, MR, RL, RR order |
 

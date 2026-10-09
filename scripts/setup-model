@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+readonly project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+export PYTHONPATH="$project_root/src"
+exec "$project_root/.venv/bin/python" -m rosbag_analyser.model_setup "$@"

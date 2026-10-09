@@ -30,6 +30,7 @@ rosbag-analyser-preflight = "rosbag_analyser.preflight:main"
 rosbag-analyser-bag-inventory = "rosbag_analyser.bag_inventory:main"
 rosbag-analyser-source-manifest = "rosbag_analyser.source_manifest:main"
 rosbag-analyser-worker = "rosbag_analyser.worker:main"
+rosbag-analyser-model = "rosbag_analyser.model_setup:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

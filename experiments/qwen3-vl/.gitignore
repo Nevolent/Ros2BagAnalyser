@@ -1,9 +1,0 @@
-/.cache/
-/.venv/
-/model/
-/outputs/
-/user-inputs/
-/model-download.json
-*.log
-*.png
-*-description.txt

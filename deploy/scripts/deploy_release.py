@@ -62,7 +62,8 @@ def plan(repository, previous, candidate):
         ):
             continue
         if path.startswith('deploy/scripts/') and path not in (
-            'deploy/scripts/deploy-from-git', 'deploy/scripts/deploy_release.py'
+            'deploy/scripts/deploy-from-git', 'deploy/scripts/deploy_release.py',
+            'deploy/scripts/prepare-model-runtime',
         ):
             raise ValueError('Release tooling changes need a reviewed site upgrade.')
         if path.startswith(('deploy/systemd/', 'deploy/nginx/', 'deploy/firewall/')) or (
@@ -83,6 +84,8 @@ def plan(repository, previous, candidate):
             if mode == 'none':
                 mode = 'api'
         elif path.startswith('src/rosbag_analyser/'):
+            mode = 'both'
+        elif path == 'deploy/scripts/prepare-model-runtime':
             mode = 'both'
     if migrate:
         prefix = 'src/rosbag_analyser/persistence/migrations/'

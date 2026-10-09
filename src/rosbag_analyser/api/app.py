@@ -362,6 +362,8 @@ def main() -> None:
         host=deployment.bind_host,
         port=deployment.bind_port,
         reload=False,
+        # Paused browser media reads must not hold API restarts indefinitely.
+        timeout_graceful_shutdown=10,
         log_config=None,
     )
 

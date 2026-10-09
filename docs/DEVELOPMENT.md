@@ -50,6 +50,15 @@ can use the installed `rosbag-analyser`, `rosbag-analyser-worker` and
 `rosbag-analyser-migrate` commands with explicit settings. Migrate a development
 database before starting it. Configuration validation lives in `config.py`.
 
+The launcher uses bounded `/health/ready` requests, restarts an unresponsive
+managed API and starts a missing worker. Startup waits up to 20 seconds for both
+processes and API readiness; failure prints their status and recent logs.
+Opening or starting checks backend Python/SQL files, launch configuration and
+dependency manifests against both process start markers. Changes reload the API
+and worker together, after the worker finishes its current job; it is never
+force-killed. Packaged frontend-only changes reload just the API. This does not
+rescan sources or retry failed jobs.
+
 Encoder support requires migration `0011_encoder_series.sql`, followed by an
 explicit rescan to save the new preparation targets. Prepare Selected reuses
 existing compatible output and queues missing encoder work. The optional

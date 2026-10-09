@@ -217,11 +217,20 @@ stop_process() {
   fail "$label process $pid did not stop after 20 seconds; it was not force-killed"
 }
 
+api_is_ready() {
+  curl --fail --silent --show-error --connect-timeout 1 \
+    --max-time "${1:-5}" "$health_url/health/ready" >/dev/null 2>&1
+}
+
+api_is_live() {
+  curl --fail --silent --show-error --connect-timeout 1 --max-time 5 \
+    "$health_url/health/live" >/dev/null 2>&1
+}
+
 application_is_healthy() {
   process_is_running "$api_pid_file" "rosbag-analyser" \
     && process_is_running "$worker_pid_file" "rosbag-analyser-worker" \
-    && curl --fail --silent --show-error \
-      "$health_url/api/recordings" >/dev/null 2>&1
+    && api_is_ready "${1:-5}"
 }
 
 frontend_assets_changed() {
@@ -239,15 +248,44 @@ frontend_assets_changed() {
   return 1
 }
 
+backend_files_changed() {
+  local pid_file
+  local expected_command
+  local file
+  for expected_command in rosbag-analyser rosbag-analyser-worker; do
+    pid_file="$api_pid_file"
+    [[ "$expected_command" != rosbag-analyser-worker ]] || pid_file="$worker_pid_file"
+    process_is_running "$pid_file" "$expected_command" || continue
+    while IFS= read -r -d '' file; do
+      [[ ! "$file" -nt "$pid_file" ]] || return 0
+    done < <(find "$project_root/src/rosbag_analyser" -type f \
+      \( -name '*.py' -o -name '*.sql' \) -print0)
+    for file in "$project_root/scripts/rosbag-analyser-service" \
+      "$project_root/pyproject.toml" "$project_root/requirements.lock" \
+      "$settings_file" "$database_secret_file"; do
+      [[ ! "$file" -nt "$pid_file" ]] || return 0
+    done
+  done
+  return 1
+}
+
 wait_for_application() {
-  local attempt
-  for attempt in $(seq 1 80); do
-    if application_is_healthy; then
+  local deadline=$((SECONDS + 20))
+  local remaining
+  while (( SECONDS < deadline )); do
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || break
+    if application_is_healthy "$((remaining < 5 ? remaining : 5))"; then
       return 0
+    fi
+    if ! process_is_running "$api_pid_file" "rosbag-analyser" \
+      || ! process_is_running "$worker_pid_file" "rosbag-analyser-worker"; then
+      break
     fi
     sleep 0.25
   done
-  echo "The API did not become healthy at $health_url." >&2
+  echo "The API and worker did not become ready at $health_url." >&2
+  show_status >&2
   tail --lines=30 "$api_log_file" "$worker_log_file" >&2 || true
   return 1
 }
@@ -258,6 +296,13 @@ run_migrations() {
 
 start_application() {
   check_configuration
+  if backend_files_changed; then
+    echo "Backend files changed; reloading the API and worker processes."
+    # SIGTERM lets the serial worker finish its current job before stopping.
+    # Stop it before migrations or starting either process with new code.
+    stop_process "Worker" "$worker_pid_file" "rosbag-analyser-worker"
+    stop_process "API" "$api_pid_file" "rosbag-analyser"
+  fi
   if application_is_healthy; then
     if frontend_assets_changed; then
       echo "Frontend files changed; reloading the API process."
@@ -271,8 +316,13 @@ start_application() {
     return
   fi
 
-  if curl --fail --silent "$health_url/api/recordings" >/dev/null 2>&1; then
+  if ! process_is_running "$api_pid_file" "rosbag-analyser" && api_is_live; then
     fail "an unmanaged application is already responding at $health_url; stop it before using ./dev"
+  fi
+
+  if process_is_running "$api_pid_file" "rosbag-analyser" && ! api_is_ready; then
+    echo "The managed API is not ready; restarting its process."
+    stop_process "API" "$api_pid_file" "rosbag-analyser"
   fi
 
   run_migrations
@@ -333,7 +383,7 @@ show_status() {
   else
     echo "Serial worker                        stopped"
   fi
-  if curl --fail --silent "$health_url/api/recordings" >/dev/null 2>&1; then
+  if api_is_ready; then
     echo "HTTP API                             healthy ($health_url)"
   else
     echo "HTTP API                             unavailable ($health_url)"

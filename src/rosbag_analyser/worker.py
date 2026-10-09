@@ -61,6 +61,7 @@ from rosbag_analyser.persistence.processing_repository import (
 from rosbag_analyser.processors.front_preview import (
     FrontPreviewProcessingError,
     FrontPreviewProcessor,
+    FrontPreviewStreamExcluded,
 )
 from rosbag_analyser.processors.imu_series import (
     ImuSeriesProcessingError,
@@ -362,30 +363,30 @@ class SerialWorker:
 
             workspace = self.artifact_store.create_workspace(job.id)
             streams = []
-            skipped = []
             result = manifest = None
             for topic in descriptor.topics or (descriptor.topic,):
                 filename = "preview.mp4" if not streams else f"stream-{len(streams)}.mp4"
                 try:
                     stream_result, stream_manifest = self._process_front_stream(
-                        job, replace(descriptor, topic=topic), workspace, filename, control)
-                except FrontPreviewProcessingError as error:
-                    if error.code != "front_encoding_unsupported":
-                        raise
+                        job, replace(descriptor, topic=topic), workspace, filename, control
+                    )
+                except FrontPreviewStreamExcluded:
                     (workspace / filename).unlink(missing_ok=True)
-                    skipped.append({"topic": topic.name, "code": error.code,
-                                    "message": "Image encoding is not supported (requires rgb8 or bgr8)."})
                     continue
                 if result is None:
                     result, manifest = stream_result, stream_manifest
-                streams.append({"topic": topic.name, "output": stream_manifest["output"],
-                                "timing": stream_manifest["timing"],
-                                "frames": stream_manifest["frames"]})
+                streams.append({
+                    "topic": topic.name,
+                    "output": stream_manifest["output"],
+                    "timing": stream_manifest["timing"],
+                    "frames": stream_manifest["frames"],
+                })
             if result is None or manifest is None:
                 raise FrontPreviewProcessingError(
-                    "front_encoding_unsupported", "No camera uses a supported raw image encoding (rgb8 or bgr8).")
+                    "front_colour_stream_unavailable",
+                    "No eligible colour-camera stream was found.",
+                )
             manifest["streams"] = streams
-            manifest["skipped_streams"] = skipped
             current = self.resolver.resolve(job.recording_id)
             if (
                 current.descriptor is None

@@ -115,18 +115,23 @@ Queued work and recordings are preserved; recovery is in [Operations](OPERATIONS
 
 | Output | Format and identity |
 | --- | --- |
-| Front preview | `front-preview-v5`; validated MP4 per supported raw CDR Image stream |
+| Front preview | `front-preview-v6`; validated MP4 per supported raw CDR Image stream |
 | Top-down preview | `topdown-preview-v2`; AVI frames timed by CSV Unix timestamps; H.264/yuv420p MP4 |
 | AI description | `ai-description-v1`; bounded JSON with the short description and bunker boolean, tied to front identity and fixed model/prompt/sampling policy |
 | IMU | `imu-series-v2`; schema-2 JSON with three angular-velocity and three linear-acceleration axes |
 | Encoders | `encoder-series-v1`; schema-2 JSON with six RPM channels in FL, FR, ML, MR, RL, RR order |
 
-Front discovery accepts nonempty CDR ROS Image streams with `bgr8`/`rgb8`
-encoding. All eligible topics form one job and bundle, ordered by message count
-then name. The busiest supported stream is the default; skipped encodings retain
-diagnostics. Each MP4 is timed and validated independently before atomic bundle
-publication. Stream URLs use artifact identity and numeric manifest index, never
-a topic name as a path. IMU selection uses a valid configured preference or one
+Front discovery accepts nonempty CDR `sensor_msgs/msg/Image` streams whose first
+image uses `rgb8`, `bgr8`, `rgba8` or `bgra8`. Alpha is discarded for video previews.
+Other encodings, including monochrome Ouster measurement images, are excluded
+before camera validation and produce no stream-failure diagnostics. Every frame
+of an eligible stream must satisfy the colour-image and timing contracts.
+All eligible topics form one job and bundle. Names with a `front` component
+(including camelCase) come first, then message count descending and topic name
+ascending; the first eligible stream is the default. Each MP4 is timed and
+validated independently before atomic bundle publication. Stream URLs use
+artifact identity and numeric manifest index, never a topic name as a path.
+IMU selection uses a valid configured preference or one
 unique standard IMU stream; ambiguous streams are not combined. Encoder selection
 uses a configured preference or one unique CDR `kuupkulgur_msgs/msg/EncodersStamped`
 stream. Its bounded decoder reads `Header` plus `Float64MultiArray` with exactly

@@ -109,3 +109,48 @@ test('one stream needs no camera selector; missing topic inventory asks for a sc
   await page.getByRole('button', { name: 'Topics', exact: true }).click();
   await expect(page.getByText('Rescan to load topic names.')).toBeVisible();
 });
+
+test('front default and keyboard selection expose only prepared colour streams', async ({
+  page,
+}) => {
+  const api = await apiFixture(page);
+  const artifact = api.recording.outputs[0].artifact!;
+  artifact.streams = ['/robot/camera_front/color', '/other/<script>rgb</script>'].map(
+    (topic, index) => ({
+      index,
+      topic,
+      url: `${artifact.url}/streams/${index}`,
+      coverage_start_ns: '1000000000',
+      coverage_end_ns: '4000000000',
+    }),
+  );
+  // Older bundles can still contain encoding-exclusion diagnostics.
+  artifact.skipped_streams = ['/ouster/range_image', '/ouster/nearir_image'].map((topic) => ({
+    topic,
+    code: 'front_encoding_unsupported',
+    message: 'Image encoding is not supported (requires rgb8 or bgr8).',
+  }));
+  api.override = async (route, path) => {
+    if (!path.includes('/media/')) return false;
+    await route.fulfill({ contentType: 'video/mp4', body: syntheticVideo });
+    return true;
+  };
+  await page.goto('/#/analysis/42');
+  const select = page.getByRole('combobox', { name: 'Front camera stream' });
+  await expect(select).toHaveValue('/robot/camera_front/color');
+  await expect(select.locator('option')).toHaveCount(2);
+  await expect(select.locator('option').last()).toHaveText('/other/<script>rgb</script>');
+  await expect(select.locator('script')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Recording errors' })).toHaveCount(0);
+  await expect(select.locator('..')).toContainText('Front');
+  await page.screenshot({ path: test.info().outputPath('front-camera-default.png') });
+  await select.focus();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(select).toHaveValue('/other/<script>rgb</script>');
+  await expect(select).toBeFocused();
+  await expect(page.locator('.analysis-camera-front video')).toHaveAttribute(
+    'src',
+    `${artifact.url}/streams/1`,
+  );
+});

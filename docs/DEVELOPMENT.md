@@ -57,6 +57,10 @@ existing compatible output and queues missing encoder work. The optional
 selects one unique supported stream automatically. Restart services after
 configuration changes, then rescan.
 
+Colour-camera discovery and default selection use `front-preview-v6`. After
+updating an existing installation, explicitly rescan and prepare recordings to
+save current targets and generate bundles with the new eligibility policy.
+
 ## Frontend
 
 The React/TypeScript source is in `frontend/`. Use Node.js 22.12+ or 24:

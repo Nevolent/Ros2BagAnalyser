@@ -22,6 +22,7 @@ from rosbag_analyser.persistence.processing_repository import JobRecord
 from rosbag_analyser.processors.front_preview import (
     FrontPreviewProcessingError,
     FrontPreviewResult,
+    FrontPreviewStreamExcluded,
 )
 from rosbag_analyser.processors.imu_series import (
     ImuComponentResult,
@@ -746,7 +747,7 @@ def test_all_camera_streams_are_validated_and_published_as_one_bundle(tmp_path):
     assert store.published_manifest["source"]["topic"] == "/busiest"
 
 
-def test_unsupported_depth_stream_does_not_hide_supported_color_stream(tmp_path):
+def test_excluded_stream_does_not_hide_supported_colour_stream_or_report_failure(tmp_path):
     repository = FakeRepository(_job())
     store = FakeArtifactStore(tmp_path)
     resolver = FakeResolver()
@@ -757,10 +758,46 @@ def test_unsupported_depth_stream_does_not_hide_supported_color_stream(tmp_path)
     class Processor(SuccessfulProcessor):
         def process(self, descriptor, output_path, **kwargs):
             if descriptor.topic.name == "/depth":
-                raise FrontPreviewProcessingError("front_encoding_unsupported", "Unsupported encoding")
+                raise FrontPreviewStreamExcluded()
             return super().process(descriptor, output_path, **kwargs)
     _worker(repository, Processor(), store, resolver).run_once()
     assert repository.failures == []
     assert store.published_manifest["source"]["topic"] == "/color"
     assert store.published_manifest["streams"][0]["output"]["file_name"] == "preview.mp4"
-    assert store.published_manifest["skipped_streams"][0]["topic"] == "/depth"
+    assert store.published_manifest.get("skipped_streams", []) == []
+
+
+def test_encoding_failure_in_eligible_stream_prevents_partial_bundle_publication(tmp_path):
+    repository = FakeRepository(_job())
+    store = FakeArtifactStore(tmp_path)
+    resolver = FakeResolver()
+    topics = tuple(SimpleNamespace(name=name, message_type="sensor_msgs/msg/Image",
+                                  serialization_format="cdr")
+                   for name in ("/front/color", "/rear/color"))
+    resolver.descriptor = replace(resolver.descriptor, topic=topics[0], topics=topics)
+
+    class Processor(SuccessfulProcessor):
+        def process(self, descriptor, output_path, **kwargs):
+            if descriptor.topic.name == "/rear/color":
+                raise FrontPreviewProcessingError("front_encoding_unsupported", "Encoding changed")
+            return super().process(descriptor, output_path, **kwargs)
+
+    assert _worker(repository, Processor(), store, resolver).run_once()
+    assert repository.failures == [(5, "front_encoding_unsupported", "Encoding changed")]
+    assert repository.completed == []
+    assert store.published_manifest is None
+
+
+def test_recording_without_colour_streams_reports_no_eligible_camera(tmp_path):
+    repository = FakeRepository(_job())
+    store = FakeArtifactStore(tmp_path)
+
+    class Processor(SuccessfulProcessor):
+        def process(self, descriptor, output_path, **kwargs):
+            raise FrontPreviewStreamExcluded()
+
+    assert _worker(repository, Processor(), store).run_once()
+    assert repository.failures == [
+        (5, "front_colour_stream_unavailable", "No eligible colour-camera stream was found.")]
+    assert repository.completed == []
+    assert store.published_manifest is None

@@ -12,6 +12,7 @@ from rosbag_analyser.catalog.paths import (
     source_file_identity,
 )
 from rosbag_analyser.front_preview import (
+    COLOUR_IMAGE_CHANNELS,
     CDR_SERIALIZATION,
     IMAGE_MESSAGE_TYPE,
     FrontSourceDescriptor,
@@ -289,7 +290,10 @@ def inspect_front_headers(
                 encoding_counts[decoded.encoding] = (
                     encoding_counts.get(decoded.encoding, 0) + 1
                 )
-                if decoded.encoding != "bgr8" and first_unsupported_encoding is None:
+                if (
+                    decoded.encoding not in COLOUR_IMAGE_CHANNELS
+                    and first_unsupported_encoding is None
+                ):
                     first_unsupported_encoding = EncodingObservation(
                         message_index=message_count,
                         message_id=int(message_id),

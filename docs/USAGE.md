@@ -15,6 +15,10 @@
    the graph. The six-wheel view shares an RPM axis and shows each wheel at the cursor.
 
 Space plays or pauses; arrow keys seek one second, or ten seconds with Shift.
+When multiple colour-camera previews are prepared, use the dropdown beside
+**Front** to switch streams without moving the shared timeline. A clearly
+front-named stream is selected first; otherwise the busiest stream wins, with
+topic name breaking ties.
 Playback stops when leaving Analysis. Filters, panel settings and the last
 analysis position persist while switching pages during the browser session.
 
@@ -47,8 +51,11 @@ retries automatically, then offers a **Retry** button if needed.
 ## Supported data
 
 The application reads uncompressed, single-file ROS 2 SQLite recordings.
-Front previews support raw ROS Image streams with `rgb8` or `bgr8` encoding;
-top-down previews use companion AVI/CSV files. IMU data has six raw angular
+Front previews discover raw `sensor_msgs/msg/Image` streams by type and support
+`rgb8`, `bgr8`, `rgba8` and `bgra8`, without requiring a configured topic name.
+Monochrome streams such as `mono8`/`mono16`, including Ouster LiDAR measurement
+images, are excluded without camera-failure diagnostics.
+Top-down previews use companion AVI/CSV files. IMU data has six raw angular
 velocity (`rad/s`) and linear acceleration (`m/s²`) axes. Multiple IMU topics
 require an operator preference. Encoders support the custom KuupKulgur
 `EncodersStamped` message, with six RPM values ordered front left/right (FL/FR),

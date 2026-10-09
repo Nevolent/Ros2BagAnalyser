@@ -117,7 +117,8 @@ export async function analysisRecording(
           });
         }
         for (const skipped of output.artifact.skipped_streams ?? [])
-          errors.push(`${skipped.topic}: ${skipped.message}`);
+          if (skipped.code !== 'front_encoding_unsupported')
+            errors.push(`${skipped.topic}: ${skipped.message}`);
         bundle.duration = Math.max(bundle.duration, camera.end);
       } catch (error) {
         errors.push(String(error));

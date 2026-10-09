@@ -1,3 +1,5 @@
+import pytest
+
 from rosbag_analyser.catalog.metadata import TopicFact
 from rosbag_analyser.topic_selection import select_topic, usable_topics
 
@@ -21,3 +23,32 @@ def test_imu_fallback_requires_unique_type_or_valid_preference():
     assert select_topic((first,), "/missing", IMU) == first
     assert select_topic((first, second), "/missing", IMU) is None
     assert select_topic((first, second), second.name, IMU) == second
+
+@pytest.mark.parametrize("name", [
+    "/front/image_raw", "/sensors/camera_front/color", "/FrontCamera/rgb",
+    "/robot/front_left/image", "/camera/FRONT/image",
+])
+def test_named_front_camera_wins_over_busier_streams_without_configuration(name):
+    front = topic(name, 20)
+    topics = (topic("/waterfront/image", 5000), front, topic("/other/image", 800))
+    assert usable_topics(topics, IMAGE)[0] == front
+    assert select_topic(topics, "", IMAGE) == front
+
+
+def test_camera_fallback_is_stable_when_metadata_order_changes():
+    topics = (topic("/z/image", 800), topic("/a/image", 800), topic("/b/image", 50))
+    assert usable_topics(topics, IMAGE) == usable_topics(reversed(topics), IMAGE)
+    assert select_topic(topics, "", IMAGE).name == "/a/image"
+
+
+def test_multiple_front_names_use_count_then_name_and_ignore_ineligible_types():
+    topics = (topic("/front/compressed", 10000, "sensor_msgs/msg/CompressedImage"),
+              topic("/front/empty", 0), topic("/front/z", 100),
+              topic("/front/a", 100), topic("/front/slow", 30), topic("/rear", 5000))
+    assert [item.name for item in usable_topics(topics, IMAGE)] == [
+        "/front/a", "/front/z", "/front/slow", "/rear"]
+
+
+def test_configured_name_cannot_make_a_non_image_stream_eligible():
+    configured = topic("/configured/front", kind=IMU)
+    assert select_topic((configured,), configured.name, IMAGE) is None

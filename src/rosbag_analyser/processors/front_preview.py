@@ -17,6 +17,7 @@ import numpy as np
 from rosbag_analyser.catalog.paths import SourceFileIdentity, source_file_identity
 from rosbag_analyser.config import PreviewProfile
 from rosbag_analyser.front_preview import (
+    COLOUR_IMAGE_CHANNELS,
     FRONT_ALL_ZERO_HEADER_TIMING_POLICY,
     FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE,
     FRONT_HEADER_TIMING_POLICY,
@@ -39,6 +40,10 @@ class FrontPreviewProcessingError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.safe_message = message
+
+
+class FrontPreviewStreamExcluded(RuntimeError):
+    """The first image identifies a stream outside colour-camera processing."""
 
 
 @dataclass(frozen=True)
@@ -468,11 +473,13 @@ def _load_timing_plan(
             image_decoder,
             _message_data(connection.cursor(), int(first[0]), first[2]),
         )
+        if first_image.encoding not in COLOUR_IMAGE_CHANNELS:
+            raise FrontPreviewStreamExcluded()
+        _validate_image(first_image)
         last_image = _decode_image(
             image_decoder,
             _message_data(connection.cursor(), int(last[0]), last[2]),
         )
-        _validate_image(first_image)
         _validate_image(last_image)
         first_header = _header_stamp(first_image)
         last_header = _header_stamp(last_image)
@@ -723,7 +730,7 @@ def _message_data(
 
 
 def _validate_image(image: DecodedImage) -> None:
-    if image.encoding not in {"bgr8", "rgb8"}:
+    if image.encoding not in COLOUR_IMAGE_CHANNELS:
         raise FrontPreviewProcessingError(
             "front_encoding_unsupported",
             "The front-camera image encoding is unsupported.",
@@ -737,7 +744,7 @@ def _validate_image(image: DecodedImage) -> None:
         raise FrontPreviewProcessingError(
             "front_dimensions_invalid", "A front-camera image has invalid dimensions."
         )
-    packed_step = image.width * 3
+    packed_step = image.width * COLOUR_IMAGE_CHANNELS[image.encoding]
     if image.step < packed_step:
         raise FrontPreviewProcessingError(
             "front_step_invalid", "A front-camera image has an invalid row step."
@@ -821,7 +828,9 @@ def _bgr_pixels(image: DecodedImage) -> np.ndarray:
     """Return validated packed pixels in the format used by the encoder."""
 
     rows = np.frombuffer(image.data, dtype=np.uint8).reshape(image.height, image.step)
-    pixels = rows[:, : image.width * 3].reshape(image.height, image.width, 3)
-    if image.encoding == "rgb8":
+    channels = COLOUR_IMAGE_CHANNELS[image.encoding]
+    pixels = rows[:, : image.width * channels].reshape(image.height, image.width, channels)
+    pixels = pixels[:, :, :3]  # Video previews omit alpha.
+    if image.encoding in {"rgb8", "rgba8"}:
         return np.ascontiguousarray(pixels[:, :, ::-1])
     return np.ascontiguousarray(pixels)

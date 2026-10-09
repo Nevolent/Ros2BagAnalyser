@@ -8,6 +8,7 @@ import subprocess
 import time
 import weakref
 
+import av
 import pytest
 
 from conftest import inventory
@@ -27,6 +28,7 @@ from rosbag_analyser.processors.front_preview import (
     DecodedImage,
     FrontPreviewProcessingError,
     FrontPreviewProcessor,
+    FrontPreviewStreamExcluded,
 )
 from rosbag_analyser.processors import front_preview as front_preview_module
 
@@ -111,18 +113,6 @@ def _all_zero_header_decoder(serialized: bytes) -> DecodedImage:
             "header_stamp_sec": 0,
             "header_stamp_nanosec": 0,
         }
-    )
-
-
-def _rgb_decoder(serialized: bytes) -> DecodedImage:
-    value = serialized[0]
-    return DecodedImage(
-        width=2,
-        height=1,
-        encoding="rgb8",
-        step=8,
-        data=bytes([255, value, 0, 0, value, 255, 17, 19]),
-        header_timestamp_ns=2_000_000_000 + value * 100_000_000,
     )
 
 
@@ -693,22 +683,74 @@ def test_single_frame_header_timing_maps_to_zero(tmp_path: Path) -> None:
     assert result.maximum_presentation_gap_ns == 0
 
 
-def test_rgb8_frames_are_normalized_to_bgr_and_encoded(tmp_path: Path) -> None:
+@pytest.mark.parametrize("encoding", ["rgb8", "bgr8", "rgba8", "bgra8"])
+def test_colour_frames_are_normalized_to_bgr_and_encoded(tmp_path: Path, encoding: str) -> None:
     database = tmp_path / "recording.db3"
     _create_image_database(database, [100_000_000, 200_000_000])
-    rgb = _rgb_decoder(b"\x01")
+    before = inventory(tmp_path)
 
-    assert front_preview_module._bgr_pixels(rgb).tolist() == [
+    def decoder(serialized: bytes) -> DecodedImage:
+        value = serialized[0]
+        pixels = ([255, value, 0], [0, value, 255])
+        if encoding in {"bgr8", "bgra8"}:
+            pixels = tuple(pixel[::-1] for pixel in pixels)
+        if encoding in {"rgba8", "bgra8"}:
+            pixels = (pixels[0] + [0], pixels[1] + [127])
+        data = bytes(pixels[0] + pixels[1] + [17, 19])
+        return DecodedImage(2, 1, encoding, len(data), data,
+                            header_timestamp_ns=2_000_000_000 + value * 100_000_000)
+
+    assert front_preview_module._bgr_pixels(decoder(b"\x01")).tolist() == [
         [[0, 1, 255], [255, 1, 0]]
     ]
 
-    result = FrontPreviewProcessor(V0_PREVIEW_PROFILE, _rgb_decoder).process(
+    result = FrontPreviewProcessor(V0_PREVIEW_PROFILE, decoder).process(
         _descriptor(database, 0, 2), tmp_path / "preview.mp4"
     )
 
     assert result.input_frame_count == 2
     assert result.encoded_frame_count == 2
     assert (tmp_path / "preview.mp4").stat().st_size > 0
+    with av.open(tmp_path / "preview.mp4") as container:
+        frames = list(container.decode(video=0))
+    assert len(frames) == 2
+    assert [float(frame.pts * frame.time_base) for frame in frames] == pytest.approx([0, 0.1])
+    assert tuple(entry for entry in inventory(tmp_path) if entry[0] != "preview.mp4") == before
+
+
+@pytest.mark.parametrize("encoding", ["mono8", "mono16", "16UC1", "bayer_rggb8"])
+def test_non_colour_stream_is_excluded_before_payload_and_header_validation(tmp_path, encoding):
+    database = tmp_path / "recording.db3"
+    _create_image_database(database, [100, 200])
+    before = inventory(tmp_path)
+    decoded = []
+
+    def decoder(serialized):
+        decoded.append(serialized)
+        # Non-camera streams may have camera-incompatible dimensions or timing.
+        return DecodedImage(0, 0, encoding, 0, b"", header_timestamp_ns=None)
+
+    with pytest.raises(FrontPreviewStreamExcluded):
+        FrontPreviewProcessor(V0_PREVIEW_PROFILE, decoder).process(
+            _descriptor(database, 0, 2), tmp_path / "preview.mp4")
+    assert decoded == [b"\x01"]
+    assert inventory(tmp_path) == before
+
+
+def test_colour_stream_changing_to_monochrome_is_a_processing_failure(tmp_path):
+    database = tmp_path / "recording.db3"
+    _create_image_database(database, [100, 200, 300])
+
+    def decoder(serialized):
+        image = _decoder(serialized)
+        if serialized == b"\x02":
+            return DecodedImage(**{**image.__dict__, "encoding": "mono8"})
+        return image
+
+    with pytest.raises(FrontPreviewProcessingError) as captured:
+        FrontPreviewProcessor(V0_PREVIEW_PROFILE, decoder).process(
+            _descriptor(database, 0, 3), tmp_path / "preview.mp4")
+    assert captured.value.code == "front_encoding_unsupported"
 
 
 def test_oversized_serialized_frame_is_rejected_before_deserialization(
@@ -739,7 +781,8 @@ def test_oversized_serialized_frame_is_rejected_before_deserialization(
 @pytest.mark.parametrize(
     ("image", "code"),
     [
-        (DecodedImage(4, 2, "rgba8", 16, b"x" * 32), "front_encoding_unsupported"),
+        (DecodedImage(4, 2, "rgba8", 15, b"x" * 30), "front_step_invalid"),
+        (DecodedImage(4, 2, "bgra8", 16, b"x" * 31), "front_payload_invalid"),
         (DecodedImage(0, 2, "bgr8", 12, b"x" * 24), "front_dimensions_invalid"),
         (DecodedImage(4, 2, "bgr8", 11, b"x" * 22), "front_step_invalid"),
         (DecodedImage(4, 2, "bgr8", 12, b"x" * 23), "front_payload_invalid"),

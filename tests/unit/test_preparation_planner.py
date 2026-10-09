@@ -162,6 +162,14 @@ def test_front_v3_planner_identity_differs_from_historical_v2() -> None:
     assert current.planner_identity("front_preview") != historical_v2
 
 
+def test_front_colour_discovery_policy_invalidates_historical_v5_targets() -> None:
+    current = _planner()
+    historical = _front_planner_identity(
+        front_topic=FRONT_TOPIC, profile=V0_PREVIEW_PROFILE,
+        encoder_identity="encoder-v1", processor_version="front-preview-v5")
+    assert current.planner_identity("front_preview") != historical
+
+
 def test_front_v4_planner_identity_differs_from_historical_v3() -> None:
     current = _planner()
     historical_v3 = _front_planner_identity(

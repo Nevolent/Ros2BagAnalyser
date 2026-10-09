@@ -139,10 +139,10 @@ def test_report_counts_image_encodings_and_identifies_first_unsupported(
 
     assert report.encoding_counts == {"bgr8": 1, "rgb8": 2, "mono8": 1}
     assert report.first_unsupported_encoding is not None
-    assert report.first_unsupported_encoding.message_index == 2
-    assert report.first_unsupported_encoding.message_id == 2
-    assert report.first_unsupported_encoding.record_timestamp_ns == 200
-    assert report.first_unsupported_encoding.encoding == "rgb8"
+    assert report.first_unsupported_encoding.message_index == 4
+    assert report.first_unsupported_encoding.message_id == 4
+    assert report.first_unsupported_encoding.record_timestamp_ns == 400
+    assert report.first_unsupported_encoding.encoding == "mono8"
     assert (database.stat().st_size, database.stat().st_mtime_ns) == before
     assert not (tmp_path / "recording.db3-journal").exists()
     assert not (tmp_path / "recording.db3-wal").exists()

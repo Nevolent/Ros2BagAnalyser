@@ -5,7 +5,8 @@ export function diagnosticMessage(diagnostic: Diagnostic): string {
   const messages: Record<string, string> = {
     front_topic_unavailable: 'No usable raw camera stream was found.',
     front_topic_empty: 'The camera stream has no frames.',
-    front_encoding_unsupported: 'No camera uses a supported image encoding (rgb8 or bgr8).',
+    front_encoding_unsupported: 'A colour-camera stream contains an unsupported image encoding.',
+    front_colour_stream_unavailable: 'No eligible colour-camera stream was found.',
     imu_topic_empty: 'The IMU stream has no samples.',
     topdown_video_unavailable: 'No top-down video was found.',
     topdown_timestamps_unavailable: 'No top-down timestamps were found.',

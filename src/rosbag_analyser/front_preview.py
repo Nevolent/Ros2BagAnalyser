@@ -40,7 +40,7 @@ from rosbag_analyser.persistence.processing_repository import (
 FRONT_PREVIEW_V2_PROCESSOR_VERSION = "front-preview-v2"
 FRONT_PREVIEW_V3_PROCESSOR_VERSION = "front-preview-v3"
 FRONT_TIMING_POLICY_V2 = "capture_header_affine_to_record_span_v2"
-PROCESSOR_VERSION = "front-preview-v5"
+PROCESSOR_VERSION = "front-preview-v6"
 FRONT_TIMING_POLICY = "image_header_affine_or_all_zero_record_timestamp_v3"
 FRONT_HEADER_TIMING_POLICY = FRONT_TIMING_POLICY_V2
 FRONT_ALL_ZERO_HEADER_TIMING_POLICY = (
@@ -52,6 +52,7 @@ FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE = (
 )
 IMAGE_MESSAGE_TYPE = "sensor_msgs/msg/Image"
 CDR_SERIALIZATION = "cdr"
+COLOUR_IMAGE_CHANNELS = {"rgb8": 3, "bgr8": 3, "rgba8": 4, "bgra8": 4}
 
 
 @dataclass(frozen=True)

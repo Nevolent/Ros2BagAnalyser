@@ -128,6 +128,10 @@ class CatalogRepository:
 
         component_count = 0
         with open_connection(self.database_url) as connection:
+            # Match preparation's queue-before-recording lock order. Thumbnail
+            # insertion and the successful catalog commit are one transaction.
+            from .processing_repository import _lock_job_queue
+            _lock_job_queue(connection)
             connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
                 ("rosbag_analyser_catalog_apply",),
@@ -153,34 +157,13 @@ class CatalogRepository:
                 move_fingerprints,
             )
             for recording in snapshot.recordings:
-                roles = [component.role.value for component in recording.components]
-                if len(roles) != len(set(roles)):
-                    raise ValueError("A recording contains duplicate component roles.")
-                persisted_identity = self._upsert_recording(
+                self._save_recording(
                     connection,
                     recording,
                     generation,
                     move_fingerprints[recording.archive_relative_path],
                 )
-                for component in recording.components:
-                    self._upsert_component(
-                        connection, persisted_identity.id, component
-                    )
-                    component_count += 1
-                targets = self._plan_recording(
-                    persisted_identity.id,
-                    recording,
-                    persisted_identity.cache_identity_recording_id,
-                    persisted_identity.cache_identity_relative_path,
-                )
-                if tuple(target.kind for target in targets) != PREPARATION_KINDS:
-                    raise ValueError(
-                        "Preparation planning did not return the three fixed targets."
-                    )
-                for target in targets:
-                    self._upsert_target(
-                        connection, persisted_identity.id, generation, target
-                    )
+                component_count += len(recording.components)
 
             connection.execute(
                 """
@@ -276,10 +259,66 @@ class CatalogRepository:
                     **counts,
                 },
             )
+            self._queue_thumbnails(connection, generation)
         return ApplySummary(
             recording_count=len(snapshot.recordings),
             component_count=component_count,
             generation=generation,
+        )
+
+    def _save_recording(
+        self,
+        connection: Any,
+        recording: RecordingScanResult,
+        generation: int,
+        move_fingerprint: str | None,
+    ) -> _PersistedRecordingIdentity:
+        roles = [component.role.value for component in recording.components]
+        if len(roles) != len(set(roles)):
+            raise ValueError("A recording contains duplicate component roles.")
+        identity = self._upsert_recording(
+            connection, recording, generation, move_fingerprint
+        )
+        for component in recording.components:
+            self._upsert_component(connection, identity.id, component)
+        targets = self._plan_recording(
+            identity.id,
+            recording,
+            identity.cache_identity_recording_id,
+            identity.cache_identity_relative_path,
+        )
+        if tuple(target.kind for target in targets) != PREPARATION_KINDS:
+            raise ValueError("Preparation planning did not return the fixed output targets.")
+        for target in targets:
+            self._upsert_target(connection, identity.id, generation, target)
+        return identity
+
+    @staticmethod
+    def _queue_thumbnails(
+        connection: Any,
+        generation: int,
+        recording_ids: list[int] | None = None,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO jobs (recording_id, kind, cache_identity, state,
+                              work_units, estimate_key, estimate_method, estimate_sample_count)
+            SELECT target.recording_id, target.kind, target.cache_identity, 'queued',
+                   target.work_units, target.planner_identity, 'insufficient_history', 0
+            FROM preparation_targets AS target
+            JOIN recordings AS recording ON recording.id = target.recording_id
+            WHERE target.kind = 'thumbnail' AND target.target_state = 'available'
+              AND target.scan_generation = %s AND recording.source_present
+              AND (%s::bigint[] IS NULL OR target.recording_id = ANY(%s::bigint[]))
+              AND NOT EXISTS (
+                  SELECT 1 FROM artifacts WHERE recording_id = target.recording_id
+                      AND kind = target.kind AND cache_identity = target.cache_identity)
+              AND NOT EXISTS (
+                  SELECT 1 FROM jobs WHERE recording_id = target.recording_id
+                      AND kind = target.kind AND cache_identity = target.cache_identity)
+            ORDER BY target.recording_id
+            """,
+            (generation, recording_ids, recording_ids),
         )
 
     def get_catalog_state(self) -> CatalogState:
@@ -554,6 +593,18 @@ class CatalogRepository:
             if len(historical) != 1:
                 continue
             owner = historical[0]
+            # Unstarted thumbnail work alone must not prevent recovery of an
+            # older move split. Preserve these attempts as cancelled history;
+            # the restored source anchor supplies the compatible target below.
+            connection.execute(
+                """
+                UPDATE jobs SET state = 'canceled', finished_at = CURRENT_TIMESTAMP,
+                    cancel_requested_at = CURRENT_TIMESTAMP, cancel_finished_at = CURRENT_TIMESTAMP
+                WHERE recording_id = %s AND kind = 'thumbnail'
+                    AND state = 'queued' AND started_at IS NULL
+                """,
+                (exact.id,),
+            )
             connection.execute(
                 """
                 UPDATE recordings
@@ -735,6 +786,7 @@ def _load_move_candidates(
                EXISTS (
                    SELECT 1 FROM jobs
                    WHERE jobs.recording_id = recording.id
+                     AND NOT (kind = 'thumbnail' AND state = 'queued' AND started_at IS NULL)
                ) AS has_jobs
         FROM recordings AS recording
         WHERE recording.source_present = TRUE
@@ -769,6 +821,7 @@ def _load_move_candidates(
                EXISTS (
                    SELECT 1 FROM jobs
                    WHERE jobs.recording_id = recording.id
+                     AND NOT (kind = 'thumbnail' AND state = 'queued' AND started_at IS NULL)
                ) AS has_jobs
         FROM recordings AS recording
         WHERE recording.source_present = FALSE

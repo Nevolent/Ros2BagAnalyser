@@ -130,6 +130,7 @@ test('prepare dismisses immediately, reports background failures and never fabri
       'topdown_preview',
       'imu_series',
       'encoder_series',
+      'thumbnail',
     ],
   });
   await expect(page.locator('.recordings-notice')).toHaveCount(0);

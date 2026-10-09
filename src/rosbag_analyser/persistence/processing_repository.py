@@ -22,8 +22,9 @@ TOPDOWN_PREVIEW_KIND = "topdown_preview"
 IMU_SERIES_KIND = "imu_series"
 ENCODER_SERIES_KIND = "encoder_series"
 AI_DESCRIPTION_KIND = "ai_description"
+THUMBNAIL_KIND = "thumbnail"
 PROCESSING_KINDS = (
-    FRONT_PREVIEW_KIND, AI_DESCRIPTION_KIND, TOPDOWN_PREVIEW_KIND, IMU_SERIES_KIND, ENCODER_SERIES_KIND,
+    FRONT_PREVIEW_KIND, AI_DESCRIPTION_KIND, TOPDOWN_PREVIEW_KIND, IMU_SERIES_KIND, ENCODER_SERIES_KIND, THUMBNAIL_KIND,
 )
 WORKER_LOCK_NAME = "rosbag_analyser_serial_worker"
 QUEUE_LOCK_NAME = "rosbag_analyser_job_queue"
@@ -632,6 +633,7 @@ class ProcessingRepository:
                              WHEN 'topdown_preview' THEN 2
                              WHEN 'imu_series' THEN 3
                              WHEN 'encoder_series' THEN 4
+                             WHEN 'thumbnail' THEN 5
                          END
                 """,
                 (selected_ids, selected_ids),
@@ -758,6 +760,7 @@ class ProcessingRepository:
                     WHEN 'topdown_preview' THEN 2
                     WHEN 'imu_series' THEN 3
                              WHEN 'encoder_series' THEN 4
+                             WHEN 'thumbnail' THEN 5
                 END
                 FOR UPDATE
                 """,
@@ -1696,6 +1699,8 @@ class ProcessingRepository:
                             THEN 'Top-down preview generation was interrupted. Request it again.'
                         WHEN 'ai_description'
                             THEN 'AI description generation was interrupted. Request it again.'
+                        WHEN 'thumbnail'
+                            THEN 'Thumbnail generation was interrupted. Request it again.'
                         WHEN 'encoder_series'
                             THEN 'Encoder series generation was interrupted. Request it again.'
                         ELSE 'IMU series generation was interrupted. Request it again.'

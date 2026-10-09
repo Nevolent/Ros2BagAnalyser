@@ -37,14 +37,16 @@ them and closing request resources, so stalled media reads cannot prevent restar
 
 The scanner has depth, entry, directory and recording limits and never follows
 symlinks. A damaged recording is isolated. An incomplete scan cannot replace the
-last successful catalog or mark unseen recordings missing. Scanning creates no jobs.
+last successful catalog or mark unseen recordings missing. A successful scan queues
+only unattempted, available thumbnails, atomically with the catalog update. Compatible
+artifacts and prior attempts are retained; failures and cancellations require explicit retry.
 
 Six tables hold domain state: `recordings`, `source_components`, `artifacts`,
 `jobs`, `catalog_state` and `preparation_targets`. Applied SQL migrations,
-currently through `0012_q8_ai_description.sql`, remain part of the upgrade path.
+currently through `0013_thumbnail.sql`, remain part of the upgrade path.
 
 Catalog and processing reads use saved projections, without source access per row.
-Each successful scan saves five preparation targets per recording. Planner or
+Each successful scan saves six preparation targets per recording. Planner or
 configuration changes require an explicit rescan; the worker revalidates inputs.
 
 The scan saves topic names, types and counts in `recordings.scan_details`.
@@ -64,7 +66,8 @@ ambiguous matches remain separate. Reconciliation changes metadata only.
 ## Preparation and jobs
 
 Preparation takes a bounded ordered recording list and a non-empty subset of
-`front_preview`, `ai_description`, `topdown_preview`, `imu_series` and `encoder_series`. Each output
+`front_preview`, `ai_description`, `topdown_preview`, `imu_series`, `encoder_series`
+and `thumbnail`. Each output
 independently reuses ready/active work, queues missing work or reports unavailability. Active
 identities cannot be duplicated. Retry resolves current inputs.
 
@@ -77,6 +80,23 @@ is Partially prepared, including after a rescan changes a camera target or adds
 an encoder target. Unavailable top-down, IMU and encoder inputs are optional;
 Analysis can review available output independently.
 
+Thumbnails are independent jobs reading the default eligible colour camera directly
+from immutable source SQLite, without preparing videos or AI descriptions. Timestamp-only
+queries select the first frame at or after the stream's record-time midpoint, keeping
+the last message at duplicate timestamps. At most 256 candidate streams are inspected;
+monochrome first frames are excluded before colour-image validation. Payloads are bounded
+and only candidate first frames and the chosen frame are decoded. Queries have a 30-second
+budget between control checkpoints. The PNG retains aspect ratio, has a maximum side of
+480 pixels and a 1 MiB limit, and is validated with dimensions, decoded content and a
+SHA-256 digest before publication and delivery.
+Unchanged catalog image validation is cached against full file facts and manifest identity
+in a bounded 10,000-entry cache; anchored path/manifest checks still run on each poll.
+Identity derives from saved front-source identity and the fixed thumbnail policy;
+no prepared preview is required. Thumbnail
+estimates use one work unit per image. Migration 0013 derives targets from saved front
+facts without source access or creating jobs; full rescan queues unattempted thumbnails,
+and Prepare Selected fills missing output or retries failed/cancelled attempts.
+
 AI descriptions are separate jobs after the front preview. They read its default
 stream through a validated, held file descriptor and sample six chronological PNG
 frames at a maximum side of 448 pixels. Qwen3-VL-2B-Instruct Q8_0 and the matching
@@ -86,7 +106,7 @@ completion over a private Unix socket; it exposes no TCP listener. The prompt an
 formatter retain the three required bunker cues: gravel-like terrain, dark
 curtains and artificial lighting. Four CPU inference threads are the default.
 
-Validated JSON is published atomically and exposed in recording details.
+Validated JSON is published atomically and exposed in recording details and the saved catalog.
 Inference errors leave existing artifacts intact. Migration 0012 derives current
 description targets from saved front targets without scanning sources or creating
 jobs; the new identity prevents reuse of old model/sampling output. Prepare
@@ -126,6 +146,7 @@ Queued work and recordings are preserved; recovery is in [Operations](OPERATIONS
 
 | Output | Format and identity |
 | --- | --- |
+| Thumbnail | `thumbnail-v1:default-colour:record-midpoint:side480:png`; validated PNG from one source image |
 | Front preview | `front-preview-v6`; validated MP4 per supported raw CDR Image stream |
 | Top-down preview | `topdown-preview-v2`; AVI frames timed by CSV Unix timestamps; H.264/yuv420p MP4 |
 | AI description | `ai-description-v2`; bounded JSON with the short description and bunker boolean, tied to front identity and fixed model/prompt/sampling policy |

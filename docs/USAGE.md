@@ -4,7 +4,7 @@
 
 1. In **Recordings**, browse folders or search the saved catalog.
 2. Select recordings and choose **Prepare Selected**, then confirm. This prepares
-   available camera previews, AI descriptions, IMU and wheel encoder data, reusing compatible output.
+   available thumbnails, camera previews, AI descriptions, IMU and wheel encoder data, reusing compatible output.
    **Go to Processing** is selected by default; clear it to stay in Recordings.
    Filter **Partially prepared**, select all, then prepare to fill missing or outdated
    outputs without regenerating compatible previews or telemetry.

@@ -5,6 +5,7 @@ import { bytes, duration, labels, outputNames, recording, seconds } from './api-
 import { emptyChannels, loadTelemetry, imuChannels, encoderChannels } from './telemetry';
 export function artifactUrl(id: number, kind: Kind, artifact: Artifact): string {
   const route = {
+    thumbnail: 'thumbnail/media',
     front_preview: 'front-preview/media',
     topdown_preview: 'topdown-preview/media',
     imu_series: 'imu-series/data',
@@ -199,7 +200,12 @@ export async function analysisRecording(
       .map((output) => ({
         name: outputNames[output.kind],
         size: bytes(output.artifact?.size_bytes),
-        format: ['imu_series', 'encoder_series'].includes(output.kind) ? 'JSON' : 'MP4 · H.264',
+        format:
+          output.kind === 'thumbnail'
+            ? 'PNG'
+            : ['imu_series', 'encoder_series'].includes(output.kind)
+              ? 'JSON'
+              : 'MP4 · H.264',
         status: labels[output.state] ?? 'Unavailable',
         identity:
           ['imu_series', 'encoder_series'].includes(output.kind) && output.artifact

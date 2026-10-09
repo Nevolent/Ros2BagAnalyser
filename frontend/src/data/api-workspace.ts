@@ -309,6 +309,7 @@ export function createApiWorkspace(): WorkspaceService {
           'topdown_preview',
           'imu_series',
           'encoder_series',
+          'thumbnail',
         ],
       }),
     cancelJobs: async (ids) => {

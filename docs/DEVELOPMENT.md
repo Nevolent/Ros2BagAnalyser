@@ -90,6 +90,11 @@ save current targets and generate bundles with the new eligibility policy.
 
 ## Frontend
 
+Thumbnail support requires migration `0013_thumbnail.sql`. Upgrade creates saved
+targets without source access or jobs. **Rescan Archive** queues available,
+unattempted thumbnails for existing and new recordings; Prepare Selected also includes
+thumbnails and reuses compatible output. No additional dependency or model is required.
+
 The React/TypeScript source is in `frontend/`. Use Node.js 22.12+ or 24:
 
 ```bash

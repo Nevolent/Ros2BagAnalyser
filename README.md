@@ -4,7 +4,7 @@ Browse ROS 2 recordings, prepare camera previews, IMU and wheel encoder data, an
 on a shared timeline. The web interface is called **Tectrace**.
 
 Original recordings stay read-only. PostgreSQL stores the catalog and job queue;
-a serial worker writes validated previews and telemetry to separate storage.
+a serial worker writes validated thumbnails, previews, AI descriptions and telemetry to separate storage.
 
 ## Use the application
 

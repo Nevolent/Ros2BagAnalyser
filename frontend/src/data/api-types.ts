@@ -1,7 +1,12 @@
 import type { RecordingTopic, TimingInspection } from './types';
 /** Wire contracts owned by src/rosbag_analyser/api/v1_schemas.py. */
 export type Kind =
-  'front_preview' | 'topdown_preview' | 'imu_series' | 'ai_description' | 'encoder_series';
+  | 'front_preview'
+  | 'topdown_preview'
+  | 'imu_series'
+  | 'ai_description'
+  | 'encoder_series'
+  | 'thumbnail';
 export interface Diagnostic {
   code: string;
   message: string;
@@ -30,6 +35,8 @@ export interface Output {
   artifact?: Artifact | null;
 }
 export interface CatalogRecording {
+  ai_description?: { description: string; bunker: boolean } | null;
+  thumbnail_url?: string | null;
   id: number;
   name: string;
   folder_path: string;

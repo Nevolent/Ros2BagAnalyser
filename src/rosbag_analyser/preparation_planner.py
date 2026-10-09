@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from rosbag_analyser.thumbnail import THUMBNAIL_PLANNER_IDENTITY, thumbnail_cache_identity
 import hashlib
 import json
 
@@ -44,6 +45,7 @@ from rosbag_analyser.imu_series import (
 )
 from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
+    THUMBNAIL_KIND,
     AI_DESCRIPTION_KIND,
     IMU_SERIES_KIND,
     ENCODER_SERIES_KIND,
@@ -62,6 +64,7 @@ PREPARATION_KINDS = (
     TOPDOWN_PREVIEW_KIND,
     IMU_SERIES_KIND,
     ENCODER_SERIES_KIND,
+    THUMBNAIL_KIND,
 )
 
 
@@ -109,7 +112,7 @@ class PreparationTargetPlan:
 
 
 class PreparationPlanner:
-    """Build the five current output targets from one parsed scan result."""
+    """Build the current output targets from one parsed scan result."""
 
     def __init__(
         self,
@@ -128,6 +131,7 @@ class PreparationPlanner:
         self.profile = profile
         self.encoder_identity = encoder_identity
         self._planner_identities = {
+            THUMBNAIL_KIND: THUMBNAIL_PLANNER_IDENTITY,
             AI_DESCRIPTION_KIND: DESCRIPTION_PLANNER_IDENTITY,
             FRONT_PREVIEW_KIND: _front_planner_identity(
                 front_topic=front_topic,
@@ -237,6 +241,15 @@ class PreparationPlanner:
             self._plan_topdown(source, recording, facts),
             self._plan_imu(source, recording, facts),
             self._plan_encoder(source, recording, facts),
+            PreparationTargetPlan(
+                kind=THUMBNAIL_KIND,
+                planner_identity=THUMBNAIL_PLANNER_IDENTITY,
+                target_state=front.target_state,
+                cache_identity=(None if front.cache_identity is None
+                                else thumbnail_cache_identity(front.cache_identity)),
+                diagnostic=front.diagnostic,
+                work_units=1 if front.target_state == "available" else None,
+            ),
         )
 
     def unavailable_targets(

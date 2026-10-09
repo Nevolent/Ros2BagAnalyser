@@ -96,6 +96,7 @@ for (const width of [1440, 390]) {
         'topdown_preview',
         'imu_series',
         'encoder_series',
+        'thumbnail',
       ],
     });
   });

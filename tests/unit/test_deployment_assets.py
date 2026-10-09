@@ -184,9 +184,11 @@ def test_release_scripts_fail_closed_and_do_not_run_migrations_on_startup() -> N
 
 
 def test_release_contract_matches_accepted_processor_and_schema_identities() -> None:
+    from rosbag_analyser.thumbnail import THUMBNAIL_POLICY
     contract = json.loads(read("release-contract.json"))
 
     assert contract["processors"] == {
+        "thumbnail": THUMBNAIL_POLICY,
         "ai_description": DESCRIPTION_POLICY,
         "front_preview": PROCESSOR_VERSION,
         "front_timing_policy": FRONT_TIMING_POLICY,
@@ -196,4 +198,4 @@ def test_release_contract_matches_accepted_processor_and_schema_identities() -> 
     }
     assert contract["artifact_contracts"]["imu_series_schema"] == SERIES_SCHEMA_VERSION
     assert contract["artifact_contracts"]["encoder_series_schema"] == SERIES_SCHEMA_VERSION
-    assert contract["database_schema"].endswith("0001-through-0012")
+    assert contract["database_schema"].endswith("0001-through-0013")

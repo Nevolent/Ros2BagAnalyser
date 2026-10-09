@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from contextlib import closing
+from collections import OrderedDict
+import threading
 from dataclasses import dataclass, replace
 from fractions import Fraction
 import hashlib
@@ -17,6 +19,7 @@ import subprocess
 import tempfile
 import time
 from typing import Any
+import av
 
 from rosbag_analyser.config import PreviewProfile
 from rosbag_analyser.job_control import JobControlToken
@@ -27,7 +30,7 @@ logger = logging.getLogger(__name__)
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_SERIES_ARTIFACT_BYTES = 64 * 1024 * 1024
 SUPPORTED_ARTIFACT_KINDS = frozenset(
-    {"front_preview", "topdown_preview", "imu_series", "encoder_series", "ai_description"}
+    {"front_preview", "topdown_preview", "imu_series", "encoder_series", "ai_description", "thumbnail"}
 )
 
 
@@ -104,6 +107,8 @@ class ArtifactStore:
         self.owned_root = self.derived_root / "rosbag-analyser"
         self.work_root = self.owned_root / "work"
         self.artifacts_root = self.owned_root / "artifacts" / artifact_kind
+        self._thumbnail_validation_cache: OrderedDict[tuple, None] = OrderedDict()
+        self._thumbnail_validation_lock = threading.Lock()
         self._ensure_directory(self.work_root)
         self._ensure_directory(self.artifacts_root)
 
@@ -490,6 +495,59 @@ class ArtifactStore:
         return self._publish_json(workspace, job_id, cache_identity, manifest,
                                   output_name="description.json", replace_conflicting=replace_conflicting)
 
+    def publish_thumbnail(self, workspace, job_id, cache_identity, manifest, *, replace_conflicting=False):
+        from rosbag_analyser.thumbnail import MAX_THUMBNAIL_BYTES, validate_thumbnail
+        self._assert_owned_workspace(workspace, job_id)
+        path = workspace / "thumbnail.png"
+        try:
+            if path.is_symlink() or not 0 < path.stat().st_size <= MAX_THUMBNAIL_BYTES:
+                raise ValueError("Invalid thumbnail file")
+            validate_thumbnail(path.read_bytes(), manifest)
+        except (OSError, ValueError, av.error.FFmpegError) as error:
+            raise ArtifactStoreError("thumbnail_invalid", "The generated thumbnail is invalid.") from error
+        return self._publish_json(workspace, job_id, cache_identity, manifest,
+                                  output_name="thumbnail.png", replace_conflicting=replace_conflicting)
+
+    def open_thumbnail(self, relative_path, expected_size, cache_identity, expected_manifest):
+        return self._open_thumbnail(relative_path, expected_size, cache_identity, expected_manifest)
+
+    def _open_thumbnail(self, relative_path, expected_size, cache_identity, expected_manifest, *, cached=False):
+        from rosbag_analyser.thumbnail import MAX_THUMBNAIL_BYTES, validate_thumbnail
+        opened = self._open_json(relative_path, expected_size, cache_identity, expected_manifest,
+                                 output_name="thumbnail.png")
+        try:
+            if not 0 < expected_size <= MAX_THUMBNAIL_BYTES:
+                raise ValueError("Invalid thumbnail size")
+            details = opened.stat_result
+            signature = (cache_identity, details.st_dev, details.st_ino, details.st_size,
+                         details.st_mtime_ns, details.st_ctime_ns,
+                         hashlib.sha256(json.dumps(expected_manifest, sort_keys=True).encode()).digest())
+            with self._thumbnail_validation_lock:
+                reusable = cached and signature in self._thumbnail_validation_cache
+                if reusable:
+                    self._thumbnail_validation_cache.move_to_end(signature)
+            if not reusable:
+                validate_thumbnail(os.pread(opened.descriptor, MAX_THUMBNAIL_BYTES + 1, 0), expected_manifest)
+                after = os.fstat(opened.descriptor)
+                if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (details.st_size, details.st_mtime_ns, details.st_ctime_ns):
+                    raise ValueError("Thumbnail changed during validation")
+                with self._thumbnail_validation_lock:
+                    self._thumbnail_validation_cache[signature] = None
+                    self._thumbnail_validation_cache.move_to_end(signature)
+                    while len(self._thumbnail_validation_cache) > 10000:
+                        self._thumbnail_validation_cache.popitem(last=False)
+            return opened
+        except (OSError, ValueError, av.error.FFmpegError) as error:
+            os.close(opened.descriptor)
+            raise ArtifactStoreError("thumbnail_invalid", "The prepared thumbnail is invalid.") from error
+
+    def validate_thumbnail_artifact(self, relative_path, expected_size, cache_identity, expected_manifest):
+        # Catalog polling checks held-file facts and manifests each time; only
+        # unchanged PNG content validation is cached. HTTP delivery always reads
+        # and validates the bytes again.
+        opened = self._open_thumbnail(relative_path, expected_size, cache_identity, expected_manifest, cached=True)
+        os.close(opened.descriptor)
+
     @staticmethod
     def _validate_description_file(path: Path, manifest: dict[str, object]) -> None:
         from rosbag_analyser.ai_description import MAX_DESCRIPTION_BYTES, validate_description_result, validate_description_manifest
@@ -534,7 +592,7 @@ class ArtifactStore:
         output_name: str = "series.json",
     ) -> PublishedArtifact:
         self._assert_owned_workspace(workspace, job_id)
-        if self.artifact_kind not in {"imu_series", "encoder_series", "ai_description"}:
+        if self.artifact_kind not in {"imu_series", "encoder_series", "ai_description", "thumbnail"}:
             raise ArtifactStoreError(
                 "artifact_kind_invalid", "The artifact kind is unsupported."
             )
@@ -800,7 +858,7 @@ class ArtifactStore:
         )
         relative = PurePosixPath(relative_path)
         if (
-            self.artifact_kind not in {"imu_series", "encoder_series", "ai_description"}
+            self.artifact_kind not in {"imu_series", "encoder_series", "ai_description", "thumbnail"}
             or len(cache_identity) != 64
             or any(character not in "0123456789abcdef" for character in cache_identity)
             or relative != expected_relative

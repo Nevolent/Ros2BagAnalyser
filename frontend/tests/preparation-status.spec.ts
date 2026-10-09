@@ -69,6 +69,7 @@ for (const missing of ['camera', 'encoders'] as const) {
           'topdown_preview',
           'imu_series',
           'encoder_series',
+          'thumbnail',
         ],
       },
     });

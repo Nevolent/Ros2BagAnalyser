@@ -4,9 +4,10 @@
     "encoder_series_schema": 2,
     "front_preview_manifest": 1,
     "imu_series_schema": 2,
-    "topdown_preview_manifest": 1
+    "topdown_preview_manifest": 1,
+    "thumbnail_manifest": 1
   },
-  "database_schema": "six-domain-tables-migrations-0001-through-0012",
+  "database_schema": "six-domain-tables-migrations-0001-through-0013",
   "platform": {
     "architecture": "amd64",
     "operating_system": "Ubuntu 22.04 LTS",
@@ -20,7 +21,8 @@
     "front_preview": "front-preview-v6",
     "front_timing_policy": "image_header_affine_or_all_zero_record_timestamp_v3",
     "imu_series": "imu-series-v2",
-    "topdown_preview": "topdown-preview-v2"
+    "topdown_preview": "topdown-preview-v2",
+    "thumbnail": "thumbnail-v1:default-colour:record-midpoint:side480:png"
   },
   "schema_version": 1
 }

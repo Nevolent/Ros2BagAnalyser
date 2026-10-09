@@ -2,6 +2,7 @@ import { diagnosticMessage } from './diagnostics';
 import type { ActiveJob, Folder, Job, Recording } from './types';
 import type { ApiJob, Catalog, CatalogRecording, Kind, Overview } from './api-types';
 export const outputNames: Record<Kind, string> = {
+  thumbnail: 'Thumbnail',
   front_preview: 'Front-camera preview',
   ai_description: 'AI description',
   topdown_preview: 'Top-down preview',
@@ -43,7 +44,20 @@ export function recording(row: CatalogRecording): Recording {
     !Array.isArray(row.outputs)
   )
     throw new Error('Invalid catalog response.');
+  const thumbnail = row.outputs.find((output) => output.kind === 'thumbnail');
+  if (
+    row.thumbnail_url &&
+    !new RegExp(`^/api/recordings/${row.id}/thumbnail/media/[1-9][0-9]*$`).test(row.thumbnail_url)
+  )
+    throw new Error('Invalid thumbnail URL.');
+  const description = row.outputs.find((output) => output.kind === 'ai_description');
   return {
+    aiDescription: description?.state === 'ready' ? row.ai_description : null,
+    thumbnail: {
+      state: thumbnail?.state ?? 'not_requested',
+      url: thumbnail?.state === 'ready' ? (row.thumbnail_url ?? undefined) : undefined,
+      issue: thumbnail?.diagnostic ? diagnosticMessage(thumbnail.diagnostic) : undefined,
+    },
     id: String(row.id),
     name: row.name,
     folderId: row.folder_path,

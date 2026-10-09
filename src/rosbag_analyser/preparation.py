@@ -10,6 +10,7 @@ from rosbag_analyser.catalog.types import SafeDiagnostic
 from rosbag_analyser.persistence.catalog_repository import CatalogRepository
 from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
+    THUMBNAIL_KIND,
     AI_DESCRIPTION_KIND,
     IMU_SERIES_KIND,
     ENCODER_SERIES_KIND,
@@ -301,7 +302,12 @@ class PreparationService:
                 "The generated output cannot be validated by this application instance.",
             )
         try:
-            if artifact.kind == AI_DESCRIPTION_KIND:
+            if artifact.kind == THUMBNAIL_KIND:
+                store.validate_thumbnail_artifact(
+                    artifact.output_relative_path, artifact.size_bytes,
+                    artifact.cache_identity, artifact.manifest,
+                )
+            elif artifact.kind == AI_DESCRIPTION_KIND:
                 store.validate_description_artifact(
                     artifact.output_relative_path, artifact.size_bytes,
                     artifact.cache_identity, artifact.manifest,
@@ -323,6 +329,20 @@ class PreparationService:
         except ArtifactStoreError as error:
             return SafeDiagnostic(error.code, error.safe_message)
         return None
+
+    def resolve_thumbnail(self, recording_id: int, artifact_id: int):
+        artifact = self.processing_repository.get_current_artifact_for_delivery(
+            recording_id, THUMBNAIL_KIND, artifact_id, self.planner.planner_identity(THUMBNAIL_KIND),
+        )
+        if artifact is None:
+            return None
+        try:
+            opened = self.artifact_stores[THUMBNAIL_KIND].open_thumbnail(
+                artifact.output_relative_path, artifact.size_bytes, artifact.cache_identity, artifact.manifest,
+            )
+        except ArtifactStoreError:
+            return None
+        return opened, artifact
 
     @staticmethod
     def _result_from_schedule(

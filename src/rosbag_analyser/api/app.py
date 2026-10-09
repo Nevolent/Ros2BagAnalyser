@@ -37,6 +37,7 @@ from rosbag_analyser.preparation import PreparationService
 from rosbag_analyser.preparation_planner import PreparationPlanner
 from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
+    THUMBNAIL_KIND,
     IMU_SERIES_KIND,
     ENCODER_SERIES_KIND,
     TOPDOWN_PREVIEW_KIND,
@@ -52,6 +53,7 @@ from rosbag_analyser.v1_catalog import V1CatalogService
 
 from .catalog_routes import router as catalog_router
 from .front_preview_routes import router as front_preview_router
+from .thumbnail_routes import router as thumbnail_router
 from .imu_series_routes import router as imu_series_router
 from .encoder_series_routes import router as encoder_series_router
 from .topdown_preview_routes import router as topdown_preview_router
@@ -175,6 +177,8 @@ def create_app(
                 processing_repository,
                 preparation_planner,
                 {
+                    THUMBNAIL_KIND: ArtifactStore(config.derived_root, config.ffmpeg_path,
+                                                  config.ffprobe_path, THUMBNAIL_KIND),
                     FRONT_PREVIEW_KIND: artifact_store,
                     TOPDOWN_PREVIEW_KIND: topdown_artifact_store,
                     IMU_SERIES_KIND: imu_artifact_store,
@@ -268,6 +272,7 @@ def create_app(
     )
     application.include_router(catalog_router)
     application.include_router(front_preview_router)
+    application.include_router(thumbnail_router)
     application.include_router(topdown_preview_router)
     application.include_router(imu_series_router)
     application.include_router(encoder_series_router)

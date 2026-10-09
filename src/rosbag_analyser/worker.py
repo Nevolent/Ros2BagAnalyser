@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 import logging
+import hashlib
 import os
 import signal
 import time
 from collections.abc import Callable
 
 from rosbag_analyser.ai_description import DESCRIPTION_POLICY, description_cache_identity
+from rosbag_analyser.thumbnail import THUMBNAIL_POLICY, thumbnail_cache_identity
+from rosbag_analyser.processors.thumbnail import ThumbnailProcessor
 from rosbag_analyser.preparation_planner import _front_planner_identity
 from rosbag_analyser.processors.ai_description import DescriptionProcessor, DescriptionProcessingError
 from rosbag_analyser.artifact_store import (
@@ -51,6 +54,7 @@ from rosbag_analyser.persistence.processing_repository import (
     ArtifactWrite,
     FRONT_PREVIEW_KIND,
     AI_DESCRIPTION_KIND,
+    THUMBNAIL_KIND,
     IMU_SERIES_KIND,
     ENCODER_SERIES_KIND,
     JobRecord,
@@ -103,6 +107,8 @@ class SerialWorker:
         encoder_artifact_store: ArtifactStore | None = None,
         description_processor: DescriptionProcessor | None = None,
         description_artifact_store: ArtifactStore | None = None,
+        thumbnail_processor: ThumbnailProcessor | None = None,
+        thumbnail_artifact_store: ArtifactStore | None = None,
         admission_check: Callable[[], SafeDiagnostic | None] | None = None,
     ) -> None:
         self.repository = repository
@@ -122,6 +128,8 @@ class SerialWorker:
         self.encoder_artifact_store = encoder_artifact_store
         self.description_processor = description_processor
         self.description_artifact_store = description_artifact_store
+        self.thumbnail_processor = thumbnail_processor
+        self.thumbnail_artifact_store = thumbnail_artifact_store
         self.admission_check = admission_check
         self._paused_code: str | None = None
 
@@ -150,6 +158,9 @@ class SerialWorker:
         return True
 
     def _run_job(self, job: JobRecord) -> None:
+        if job.kind == THUMBNAIL_KIND:
+            self._run_thumbnail_job(job)
+            return
         if job.kind == AI_DESCRIPTION_KIND:
             self._run_description_job(job)
             return
@@ -170,6 +181,62 @@ class SerialWorker:
             "artifact_kind_unsupported",
             "The requested artifact kind is unsupported.",
         )
+
+    def _run_thumbnail_job(self, job: JobRecord) -> None:
+        workspace = None
+        store = self.thumbnail_artifact_store
+        control = self._control_token(job)
+        try:
+            if control is not None:
+                control.checkpoint("setup", force=True)
+            if store is None or self.thumbnail_processor is None:
+                raise FrontPreviewProcessingError("thumbnail_processor_unavailable", "Thumbnail processing is unavailable.")
+            resolution = self.resolver.resolve(job.recording_id)
+            descriptor = resolution.descriptor
+            if descriptor is None or thumbnail_cache_identity(descriptor.cache_identity) != job.cache_identity:
+                raise FrontPreviewProcessingError("thumbnail_inputs_changed", "Thumbnail inputs changed or are unavailable. Rescan and prepare again.")
+            workspace = store.create_workspace(job.id)
+            path = workspace / "thumbnail.png"
+            result = self.thumbnail_processor.process(descriptor, path, control=control)
+            details = path.stat(follow_symlinks=False)
+            manifest = {
+                "schema_version": 1, "artifact_kind": THUMBNAIL_KIND,
+                "cache_identity": job.cache_identity, "processor_version": THUMBNAIL_POLICY,
+                "front_source_identity": descriptor.cache_identity,
+                "source": {"topic": result["topic"], "record_timestamp_ns": result["record_timestamp_ns"]},
+                "output": {"file_name": "thumbnail.png", "mime_type": "image/png",
+                           "size_bytes": details.st_size, "width": result["width"], "height": result["height"],
+                           "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                           "file_identity": {"device_id": details.st_dev, "inode": details.st_ino,
+                                             "mtime_ns": details.st_mtime_ns}},
+            }
+            current = self.resolver.resolve(job.recording_id).descriptor
+            if current is None or current != descriptor:
+                raise FrontPreviewProcessingError("thumbnail_inputs_changed", "Thumbnail inputs changed during generation. Rescan and prepare again.")
+            if control is not None:
+                control.publishing_gate()
+            published = store.publish_thumbnail(workspace, job.id, job.cache_identity, manifest, replace_conflicting=True)
+            self.repository.complete_job(job.id, ArtifactWrite(
+                recording_id=job.recording_id, kind=job.kind, cache_identity=job.cache_identity,
+                output_relative_path=published.output_relative_path, mime_type="image/png",
+                size_bytes=published.size_bytes, coverage_start_ns=result["coverage_ns"],
+                coverage_end_ns=result["coverage_ns"], manifest=manifest,
+            ))
+            logger.info("Thumbnail job %s succeeded.", job.id)
+        except JobCanceled:
+            workspace = self._finish_cancellation(job, workspace, store)
+        except (FrontPreviewProcessingError, ArtifactStoreError) as error:
+            self.repository.fail_job(job.id, error.code, error.safe_message)
+            logger.warning("Thumbnail job %s failed with code %s.", job.id, error.code)
+        except Exception:
+            self.repository.fail_job(job.id, "thumbnail_processing_failed", "Thumbnail generation failed unexpectedly. Retry preparation.")
+            logger.exception("Thumbnail job %s failed unexpectedly.", job.id)
+        finally:
+            if workspace is not None and workspace.exists() and store is not None:
+                try:
+                    store.clean_workspace(workspace, job.id)
+                except ArtifactStoreError:
+                    logger.exception("Owned workspace cleanup failed for thumbnail job %s.", job.id)
 
     def _description_front(self, job):
         outputs = self.repository.get_current_outputs((job.recording_id,))
@@ -901,6 +968,9 @@ def create_worker(
                                                    threads=config.description_threads),
         description_artifact_store=ArtifactStore(config.derived_root, config.ffmpeg_path,
                                                 config.ffprobe_path, AI_DESCRIPTION_KIND),
+        thumbnail_processor=ThumbnailProcessor(),
+        thumbnail_artifact_store=ArtifactStore(config.derived_root, config.ffmpeg_path,
+                                              config.ffprobe_path, THUMBNAIL_KIND),
         admission_check=admission_check,
     )
 

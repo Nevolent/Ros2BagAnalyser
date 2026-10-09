@@ -29,6 +29,8 @@ class FakePlanner:
 
 
 class ValidStore:
+    def validate_thumbnail_artifact(self, *args) -> None:
+        return None
     def validate_media(self, *args) -> None:
         return None
 
@@ -108,6 +110,7 @@ def test_per_output_precedence_starts_with_unavailable() -> None:
     analysis = _service()._analysis_for_group(7, current, GENERATION)
 
     assert [item.state for item in analysis.outputs] == [
+        "unavailable",
         "unavailable",
         "unavailable",
         "unavailable",
@@ -328,6 +331,7 @@ def test_low_space_admission_returns_unavailable_without_scheduling_work() -> No
     assert repository.diagnostic.code == "derived_space_low"
     assert not result.has_active_work
     assert [output.outcome for output in result.recordings[0].outputs] == [
+        "unavailable",
         "unavailable",
         "unavailable",
         "unavailable",

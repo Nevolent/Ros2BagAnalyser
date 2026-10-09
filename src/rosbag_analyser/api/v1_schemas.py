@@ -27,7 +27,7 @@ from rosbag_analyser.processing_view import (
 from rosbag_analyser.v1_catalog import V1CatalogView, V1RecordingDetail
 
 
-OutputKind = Literal["front_preview", "topdown_preview", "imu_series", "ai_description", "encoder_series"]
+OutputKind = Literal["front_preview", "topdown_preview", "imu_series", "ai_description", "encoder_series", "thumbnail"]
 OutputState = Literal[
     "unavailable", "ready", "processing", "queued", "failed", "not_requested"
 ]
@@ -80,7 +80,14 @@ class OutputFactResponse(BaseModel):
     diagnostic: DiagnosticResponse | None
 
 
+class DescriptionResponse(BaseModel):
+    description: str
+    bunker: bool
+
+
 class CatalogRecordingResponse(BaseModel):
+    ai_description: DescriptionResponse | None = None
+    thumbnail_url: str | None = None
     id: int
     name: str
     folder_path: str
@@ -163,11 +170,6 @@ class RecordingOutputResponse(OutputFactResponse):
     artifact: ReadyArtifactResponse | None
 
 
-class DescriptionResponse(BaseModel):
-    description: str
-    bunker: bool
-
-
 class RecordingDetailResponse(CatalogRecordingResponse):
     ai_description: DescriptionResponse | None = None
     topics: list[RecordingTopicResponse] | None = None
@@ -200,9 +202,10 @@ class PrepareSelectedRequest(BaseModel):
             "topdown_preview",
             "imu_series",
             "encoder_series",
+            "thumbnail",
         ],
         min_length=1,
-        max_length=5,
+        max_length=6,
     )
 
     @field_validator("recording_ids")
@@ -364,6 +367,20 @@ class BulkRetryResponse(BaseModel):
     server_time: datetime
 
 
+def _description(analysis: RecordingAnalysis) -> DescriptionResponse | None:
+    return next((DescriptionResponse(**output.artifact.manifest["result"])
+                 for output in analysis.outputs
+                 if output.kind == "ai_description" and output.state == "ready"
+                 and output.artifact is not None), None)
+
+
+def _thumbnail_url(recording_id: int, analysis: RecordingAnalysis) -> str | None:
+    return next((f"/api/recordings/{recording_id}/thumbnail/media/{output.artifact.id}"
+                 for output in analysis.outputs
+                 if output.kind == "thumbnail" and output.state == "ready"
+                 and output.artifact is not None), None)
+
+
 def catalog_response(view: V1CatalogView) -> CatalogResponse:
     return CatalogResponse(
         scan=_scan_response(view.scan),
@@ -394,6 +411,8 @@ def catalog_response(view: V1CatalogView) -> CatalogResponse:
                 presentation_health=item.presentation_health,
                 diagnostic=_diagnostic(item.recording.diagnostic),
                 analysis_state=item.analysis.analysis_state,
+                ai_description=_description(item.analysis),
+                thumbnail_url=_thumbnail_url(item.recording.id, item.analysis),
                 outputs=[_output_fact(output) for output in item.analysis.outputs],
             )
             for item in view.recordings
@@ -416,18 +435,13 @@ def recording_detail_response(detail: V1RecordingDetail) -> RecordingDetailRespo
         presentation_health=detail.presentation_health,
         diagnostic=_diagnostic(recording.diagnostic),
         analysis_state=detail.analysis.analysis_state,
+        thumbnail_url=_thumbnail_url(recording.id, detail.analysis),
         topics=(recording.scan_details or {}).get("topics"),
         timing=(recording.scan_details or {}).get("timing"),
         metadata_version=recording.metadata_version,
         message_count=_number_string(recording.message_count),
         source_present=recording.source_present,
-        ai_description=next(
-            (DescriptionResponse(**output.artifact.manifest["result"])
-             for output in detail.analysis.outputs
-             if output.kind == "ai_description" and output.state == "ready"
-             and output.artifact is not None),
-            None,
-        ),
+        ai_description=_description(detail.analysis),
         components=[_component(item) for item in detail.detail.components],
         outputs=[
             RecordingOutputResponse(
@@ -598,6 +612,8 @@ def _artifact_response(
 ) -> ReadyArtifactResponse:
     if artifact.kind == "front_preview":
         url = f"/api/recordings/{recording_id}/front-preview/media/{artifact.id}"
+    elif artifact.kind == "thumbnail":
+        url = f"/api/recordings/{recording_id}/thumbnail/media/{artifact.id}"
     elif artifact.kind == "topdown_preview":
         url = f"/api/recordings/{recording_id}/topdown-preview/media/{artifact.id}"
     elif artifact.kind == "encoder_series":

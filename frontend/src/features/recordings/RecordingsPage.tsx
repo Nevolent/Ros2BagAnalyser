@@ -13,6 +13,7 @@ import { Notice } from '../../components/Notice';
 import { Workspace } from '../../components/Workspace';
 import { FolderBrowser } from './FolderBrowser';
 import { StatusDiagnostic } from './StatusDiagnostic';
+import { RecordingThumbnail, RecordingDescription } from './RecordingThumbnail';
 import { SortableHeader } from '../../components/SortableHeader';
 import { useTableSort, durationInSeconds, sizeInBytes } from '../../lib/useTableSort';
 import { formatDateTime } from '../../lib/format';
@@ -84,6 +85,7 @@ export function RecordingsPage() {
   const [search, setSearch] = useRememberedState('recordings.search', '');
   const [health, setHealth] = useRememberedState('recordings.health', '');
   const [analysis, setAnalysis] = useRememberedState('recordings.analysis', '');
+  const [view, setView] = useRememberedState<'compact' | 'thumbnail'>('recordings.view', 'compact');
   const [selection, setSelection] = useRememberedState('recordings.selection', new Set<string>());
   useEffect(() => {
     setSelection((current) => {
@@ -128,6 +130,27 @@ export function RecordingsPage() {
       title="Recordings"
       actions={
         <div className="recordings-actions">
+          <div className="recordings-view" role="group" aria-label="Recording view">
+            {(['compact', 'thumbnail'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={view === mode}
+                aria-label={mode === 'compact' ? 'Compact' : 'Thumbnail'}
+                title={mode === 'compact' ? 'Compact' : 'Thumbnail'}
+                onClick={() => setView(mode)}
+              >
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" aria-hidden="true">
+                  {mode === 'compact' ? (
+                    <path d="M3 5h2m3 0h9M3 10h2m3 0h9M3 15h2m3 0h9" />
+                  ) : (
+                    <path d="M3 3h5v5H3zM3 12h5v5H3zM11 4h6m-6 3h4m-4 6h6m-6 3h4" />
+                  )}
+                </svg>
+                <span>{mode === 'compact' ? 'Compact' : 'Thumbnail'}</span>
+              </button>
+            ))}
+          </div>
           <Button
             className="prepare-selected"
             data-prepare-selected=""
@@ -216,7 +239,7 @@ export function RecordingsPage() {
               </EmptyState>
             }
           >
-            <table className="bag-table">
+            <table className={`bag-table ${view === 'thumbnail' ? 'bag-table-thumbnails' : ''}`}>
               <caption className="sr-only">
                 ROS bags with recording time, duration in minutes, seconds and milliseconds, file
                 size, health and analysis status.
@@ -295,13 +318,38 @@ export function RecordingsPage() {
                       />
                     </td>
                     <th scope="row">
-                      <a
-                        className="bag-name recording-link"
-                        href={`#/analysis/${recording.id}`}
-                        title={recording.name}
-                      >
-                        {recording.name}
-                      </a>
+                      {view === 'thumbnail' ? (
+                        <div className="recording-thumbnail-row">
+                          <RecordingThumbnail recording={recording} />
+                          <div className="recording-thumbnail-copy">
+                            <a
+                              className="bag-name recording-link"
+                              href={`#/analysis/${recording.id}`}
+                              title={recording.name}
+                            >
+                              {recording.name}
+                            </a>
+                            {recording.aiDescription?.description && (
+                              <RecordingDescription
+                                description={recording.aiDescription.description}
+                              />
+                            )}
+                            {recording.aiDescription?.bunker && (
+                              <div className="recording-tags">
+                                <span>Bunker</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <a
+                          className="bag-name recording-link"
+                          href={`#/analysis/${recording.id}`}
+                          title={recording.name}
+                        >
+                          {recording.name}
+                        </a>
+                      )}
                     </th>
                     <td className="bag-recorded">
                       <time dateTime={recording.recordedAt}>
@@ -361,7 +409,8 @@ export function RecordingsPage() {
           </span>
         </header>
         <p id="prepare-description">
-          Prepares front and top camera views and an IMU data bundle, where available.
+          Prepares thumbnails, camera previews, AI descriptions, IMU and wheel encoder data, where
+          available. Compatible outputs are reused.
         </p>
         <ul className="prepare-bag-list" aria-label="Selected recordings">
           {selected.map((recording) => (

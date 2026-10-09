@@ -3,11 +3,17 @@
 ## Review a recording
 
 1. In **Recordings**, browse folders or search the saved catalog.
+   **Compact** keeps the dense list; **Thumbnail** adds a camera image, the full
+   AI description and a **Bunker** tag when identified. Descriptions use one line
+   with ellipsis when space is limited; only cut-off text offers a hover/focus popup
+   to read it in full. The view choice persists during navigation.
    Opening or refreshing the page silently discovers new readable bags. Known
    recordings stay unchanged; for source changes, moved/removed bags or a complete
    inspection, use the bottom-left **Settings** icon and **Do a full rescan**.
    Discovery queues thumbnails for new bags; full rescan also queues unattempted
-   recordings. These checks do not prepare full videos, descriptions or telemetry.
+   recordings. These checks do not prepare full videos, descriptions or telemetry. Thumbnail placeholders
+   show No Thumbnail, Queued, Processing or Thumbnail failed. Failed or cancelled
+   thumbnails can be retried in Processing or through Prepare Selected.
 2. Select recordings and choose **Prepare Selected**, then confirm. This prepares
    available thumbnails, camera previews, AI descriptions, IMU and wheel encoder data, reusing compatible output.
    **Go to Processing** is selected by default; clear it to stay in Recordings.

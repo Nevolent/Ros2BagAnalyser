@@ -260,3 +260,147 @@
 .recordings-workspace .bag-panel-header {
   justify-content: flex-start;
 }
+
+.recordings-view {
+  display: flex;
+  flex: none;
+  padding: 3px;
+  border-radius: var(--radius-control);
+  background: var(--secondary);
+}
+.recordings-view button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: calc(var(--recordings-action-height) - 6px);
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  cursor: pointer;
+}
+.recordings-view button[aria-pressed='true'] {
+  background: var(--background);
+  color: var(--foreground);
+}
+.recordings-view svg {
+  width: 14px;
+  height: 14px;
+}
+.recordings-view button:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: 1px;
+}
+.bag-table-thumbnails tbody th,
+.bag-table-thumbnails tbody td {
+  height: 124px;
+}
+.bag-table-thumbnails .recording-thumbnail-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 0;
+  min-width: 0;
+}
+.recording-thumbnail {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 168px;
+  height: 94.5px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--background) 25%, transparent);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 400;
+}
+.recording-thumbnail img {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.recording-thumbnail:has(.thumbnail-loading) img {
+  visibility: hidden;
+}
+.recording-thumbnail .thumbnail-diagnostic {
+  max-width: 100%;
+  font-size: 11px;
+}
+.recording-thumbnail-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+}
+.recording-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+  font-weight: 400;
+  font-size: 12px;
+}
+.recording-description .recording-description-trigger {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  white-space: nowrap;
+  font-size: inherit;
+  line-height: inherit;
+}
+.recording-tags {
+  display: flex;
+  gap: 5px;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.recording-tags span {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  line-height: 18px;
+}
+@media (max-width: 600px) {
+  .recordings-content .page-header {
+    flex-wrap: nowrap;
+    gap: var(--space-2);
+    height: var(--page-header-height);
+    flex: none;
+  }
+  .recordings-content .page-header > h1 {
+    flex: none;
+  }
+  .recordings-actions {
+    flex: 1;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .recordings-content .prepare-selected {
+    flex-shrink: 0;
+  }
+  .recordings-view button {
+    gap: 0;
+    padding-inline: 8px;
+  }
+  .recordings-view button span {
+    display: none;
+  }
+  .bag-table-thumbnails .recording-thumbnail-row {
+    gap: 10px;
+  }
+  .recording-thumbnail {
+    width: 128px;
+    height: 72px;
+  }
+}

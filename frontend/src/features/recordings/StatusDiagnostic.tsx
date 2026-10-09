@@ -11,11 +11,15 @@ export function StatusDiagnostic({
   issues,
   tone = 'error',
   outputs,
+  className = '',
+  raw = false,
 }: {
   status: string;
   issues: string[];
-  tone?: 'error' | 'success';
+  tone?: 'error' | 'success' | 'muted';
   outputs?: Recording['analysisOutputs'];
+  className?: string;
+  raw?: boolean;
 }) {
   const visibleOutputs = outputs?.filter((output) => output.state !== 'unavailable');
   const id = useId();
@@ -90,7 +94,7 @@ export function StatusDiagnostic({
       <button
         type="button"
         ref={target}
-        className={`bag-status status-${tone} recording-status-diagnostic`}
+        className={`bag-status status-${tone} recording-status-diagnostic ${className}`}
         tabIndex={0}
         aria-describedby={open ? id : undefined}
         onPointerEnter={show}
@@ -128,7 +132,9 @@ export function StatusDiagnostic({
                     </span>
                   </p>
                 ))
-              : conciseIssues(issues).map((issue, index) => <p key={index}>{issue}</p>)}
+              : (raw ? issues : conciseIssues(issues)).map((issue, index) => (
+                  <p key={index}>{issue}</p>
+                ))}
           </div>,
           document.body,
         )}

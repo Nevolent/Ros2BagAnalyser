@@ -61,8 +61,8 @@ analysis position persist while switching pages during the browser session.
 | Failed | Front input is unavailable or an output failed |
 | Worker offline | Saved jobs are waiting for the worker |
 
-Hover or focus a red status for its diagnostic, or **Partially prepared** for a
-list of prepared outputs in green and available pending outputs in grey.
+Hover or focus a red status for its diagnostic, or **Ready** / **Partially prepared**
+for a fixed-order list with prepared outputs in green and available pending outputs in grey.
 Unavailable inputs are omitted. Analysis has Details and Topics
 views. Details shows the short AI description after the source components, with a
 **Bunker** tag only when the model identifies all required visual cues. Diagnostics

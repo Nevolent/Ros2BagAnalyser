@@ -36,24 +36,30 @@ function Status({
   issues?: string[];
   outputs?: Recording['analysisOutputs'];
 }) {
-  if (['Failed', 'Damaged', 'Review', 'Partially prepared'].includes(status))
+  const preparation = status === 'Partially prepared' || status === 'Ready';
+  if (
+    ['Failed', 'Damaged', 'Review', 'Partially prepared', 'Ready'].includes(status) &&
+    (status !== 'Ready' || outputs?.some((output) => output.state === 'ready'))
+  )
     return (
       <StatusDiagnostic
         status={status}
-        tone={status === 'Partially prepared' ? 'success' : 'error'}
-        outputs={status === 'Partially prepared' ? outputs : undefined}
+        tone={preparation ? 'success' : 'error'}
+        outputs={preparation ? outputs : undefined}
         issues={
-          issues.length
-            ? issues
-            : [
-                status === 'Damaged'
-                  ? 'The source recording could not be read. No diagnostic was provided.'
-                  : status === 'Review'
-                    ? 'Recording metadata needs review. No diagnostic was provided.'
-                    : status === 'Partially prepared'
-                      ? 'Some outputs still need preparation.'
-                      : 'Processing failed. No diagnostic was provided.',
-              ]
+          status === 'Ready'
+            ? []
+            : issues.length
+              ? issues
+              : [
+                  status === 'Damaged'
+                    ? 'The source recording could not be read. No diagnostic was provided.'
+                    : status === 'Review'
+                      ? 'Recording metadata needs review. No diagnostic was provided.'
+                      : status === 'Partially prepared'
+                        ? 'Some outputs still need preparation.'
+                        : 'Processing failed. No diagnostic was provided.',
+                ]
         }
       />
     );

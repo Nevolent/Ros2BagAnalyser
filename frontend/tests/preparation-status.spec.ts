@@ -39,6 +39,13 @@ for (const missing of ['camera', 'encoders'] as const) {
     );
     await expect(tooltip).not.toContainText('Not prepared');
     const prepared = tooltip.locator('[data-output-state=ready]');
+    await expect(tooltip.locator('[data-output-state]')).toContainText([
+      'Front-camera preview',
+      'Top-down preview',
+      'IMU data bundle',
+      'AI description',
+      ...(missing === 'encoders' ? ['Wheel encoder data bundle'] : []),
+    ]);
     await expect(prepared.filter({ hasText: 'IMU data bundle' })).toBeVisible();
     expect(await prepared.first().evaluate((el) => getComputedStyle(el).color)).toBe(
       await status.evaluate((el) => getComputedStyle(el).color),
@@ -107,6 +114,34 @@ test('preparation hover omits unavailable inputs and uses grey for available pen
   await expect(tooltip.locator('[data-output-state=ready]')).toHaveCount(3);
   await expect(tooltip).not.toContainText('Not prepared');
   await tooltip.screenshot({ path: test.info().outputPath('preparation-outputs.png') });
+  await status.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+});
+
+test('Ready shows the actual prepared outputs on hover and keyboard focus', async ({ page }) => {
+  const api = await apiFixture(page);
+  api.recording.analysis_state = 'ready';
+  api.catalog.recordings = [api.recording];
+  await page.goto('/');
+  const status = page.getByRole('button', { name: 'Ready', exact: true });
+  await status.hover();
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip.locator('p')).toHaveCount(4);
+  await expect(tooltip.locator('[data-output-state=ready]')).toContainText([
+    'Front-camera preview',
+    'Top-down preview',
+    'IMU data bundle',
+    'AI description',
+  ]);
+  await expect(tooltip.locator('[data-output-state=pending]')).toHaveCount(0);
+  await expect(tooltip.locator('p')).toHaveClass([
+    'status-success',
+    'status-success',
+    'status-success',
+    'status-success',
+  ]);
+  await status.focus();
+  await expect(tooltip).toBeVisible();
   await status.press('Escape');
   await expect(tooltip).toHaveCount(0);
 });

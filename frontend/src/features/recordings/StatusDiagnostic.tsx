@@ -1,11 +1,23 @@
 import { conciseIssues } from '../../data/diagnostics';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import type { Recording } from '../../data/types';
 
 let activeDiagnostic: { id: string; close: () => void } | null = null;
 
 /** Keep diagnostics outside the scrolling table so the left-hand popup is never clipped. */
-export function StatusDiagnostic({ status, issues }: { status: string; issues: string[] }) {
+export function StatusDiagnostic({
+  status,
+  issues,
+  tone = 'error',
+  outputs,
+}: {
+  status: string;
+  issues: string[];
+  tone?: 'error' | 'success';
+  outputs?: Recording['analysisOutputs'];
+}) {
+  const visibleOutputs = outputs?.filter((output) => output.state !== 'unavailable');
   const id = useId();
   const target = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
@@ -44,7 +56,7 @@ export function StatusDiagnostic({ status, issues }: { status: string; issues: s
     );
     popup.current.style.left = `${left}px`;
     popup.current.style.top = `${top}px`;
-  }, [open, issues]);
+  }, [open, issues, outputs]);
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
@@ -78,7 +90,7 @@ export function StatusDiagnostic({ status, issues }: { status: string; issues: s
       <button
         type="button"
         ref={target}
-        className="bag-status status-error recording-status-diagnostic"
+        className={`bag-status status-${tone} recording-status-diagnostic`}
         tabIndex={0}
         aria-describedby={open ? id : undefined}
         onPointerEnter={show}
@@ -98,13 +110,25 @@ export function StatusDiagnostic({ status, issues }: { status: string; issues: s
             ref={popup}
             id={id}
             role="tooltip"
-            className="recording-diagnostic-tooltip"
+            className={`recording-diagnostic-tooltip status-${tone}`}
             onPointerEnter={show}
             onPointerLeave={leave}
           >
-            {conciseIssues(issues).map((issue, index) => (
-              <p key={index}>{issue}</p>
-            ))}
+            {visibleOutputs?.length
+              ? visibleOutputs.map((output) => (
+                  <p
+                    key={output.name}
+                    data-output-state={output.state}
+                    className={output.state === 'ready' ? 'status-success' : 'status-muted'}
+                  >
+                    {output.name}
+                    <span className="sr-only">
+                      {' '}
+                      — {output.state === 'ready' ? 'Prepared' : 'Needs preparation'}
+                    </span>
+                  </p>
+                ))
+              : conciseIssues(issues).map((issue, index) => <p key={index}>{issue}</p>)}
           </div>,
           document.body,
         )}

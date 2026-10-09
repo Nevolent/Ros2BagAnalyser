@@ -45,7 +45,6 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   background: var(--popover);
-  color: var(--status-error);
   box-shadow: 0 4px 16px #0003;
   font-size: 13px;
   line-height: 20px;

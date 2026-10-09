@@ -30,14 +30,18 @@ const recordingSort = {
 function Status({
   status,
   issues = [],
+  outputs,
 }: {
   status: RecordingStatus | Recording['health'];
   issues?: string[];
+  outputs?: Recording['analysisOutputs'];
 }) {
-  if (status === 'Failed' || status === 'Damaged' || status === 'Review')
+  if (['Failed', 'Damaged', 'Review', 'Partially prepared'].includes(status))
     return (
       <StatusDiagnostic
         status={status}
+        tone={status === 'Partially prepared' ? 'success' : 'error'}
+        outputs={status === 'Partially prepared' ? outputs : undefined}
         issues={
           issues.length
             ? issues
@@ -46,7 +50,9 @@ function Status({
                   ? 'The source recording could not be read. No diagnostic was provided.'
                   : status === 'Review'
                     ? 'Recording metadata needs review. No diagnostic was provided.'
-                    : 'Processing failed. No diagnostic was provided.',
+                    : status === 'Partially prepared'
+                      ? 'Some outputs still need preparation.'
+                      : 'Processing failed. No diagnostic was provided.',
               ]
         }
       />
@@ -312,6 +318,7 @@ export function RecordingsPage() {
                     <td>
                       <Status
                         status={recording.analysis}
+                        outputs={recording.analysisOutputs}
                         issues={
                           recording.analysisIssues?.length
                             ? recording.analysisIssues

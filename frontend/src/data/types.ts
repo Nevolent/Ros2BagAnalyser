@@ -12,6 +12,7 @@ export interface Recording {
   analysis: RecordingStatus;
   healthIssues?: string[];
   analysisIssues?: string[];
+  analysisOutputs?: { name: string; state: 'ready' | 'pending' | 'unavailable' }[];
 }
 export interface Folder {
   id: string;

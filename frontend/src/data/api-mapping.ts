@@ -71,6 +71,15 @@ export function recording(row: CatalogRecording): Recording {
               : `${labels[output.state] ?? output.state}. No diagnostic was provided.`
           }`,
       ),
+    analysisOutputs: row.outputs.map((output) => ({
+      name: outputNames[output.kind],
+      state:
+        output.state === 'ready'
+          ? 'ready'
+          : output.state === 'unavailable'
+            ? 'unavailable'
+            : 'pending',
+    })),
     health: !['readable', 'review'].includes(row.presentation_health)
       ? 'Damaged'
       : row.presentation_health === 'review' || row.duration_ns === '0'

@@ -26,7 +26,7 @@ processors decode and transcode. Startup does not scan, prepare or migrate.
 | `preparation_planner.py`, `preparation.py` | Output identity, prerequisites, reuse and scheduling |
 | `processing_view.py`, `estimation.py`, `job_control.py` | Queue views, runtime, estimates and controls |
 | `persistence/` | PostgreSQL repositories and ordered migrations |
-| `processors/`, `front_preview.py`, `topdown_preview.py`, `imu_series.py` | Output processing |
+| `processors/`, `front_preview.py`, `topdown_preview.py`, `imu_series.py`, `encoder_series.py` | Output processing |
 | `artifact_store.py`, `timeline.py` | Publication, validation, coverage and time mapping |
 | `api/`, `worker.py`, `web/` | HTTP delivery, worker and packaged frontend |
 | `config.py`, `deployment.py`, `preflight.py`, `health.py` | Configuration, mount/capacity checks and service health |
@@ -39,10 +39,10 @@ last successful catalog or mark unseen recordings missing. Scanning creates no j
 
 Six tables hold domain state: `recordings`, `source_components`, `artifacts`,
 `jobs`, `catalog_state` and `preparation_targets`. Applied SQL migrations,
-currently through `0010_ai_description.sql`, remain part of the upgrade path.
+currently through `0011_encoder_series.sql`, remain part of the upgrade path.
 
 Catalog and processing reads use saved projections, without source access per row.
-Each successful scan saves four preparation targets per recording. Planner or
+Each successful scan saves five preparation targets per recording. Planner or
 configuration changes require an explicit rescan; the worker revalidates inputs.
 
 The scan saves topic names, types and counts in `recordings.scan_details`.
@@ -62,7 +62,7 @@ ambiguous matches remain separate. Reconciliation changes metadata only.
 ## Preparation and jobs
 
 Preparation takes a bounded ordered recording list and a non-empty subset of
-`front_preview`, `ai_description`, `topdown_preview` and `imu_series`. Each output
+`front_preview`, `ai_description`, `topdown_preview`, `imu_series` and `encoder_series`. Each output
 independently reuses ready/active work, queues missing work or reports unavailability. Active
 identities cannot be duplicated. Retry resolves current inputs.
 
@@ -70,8 +70,8 @@ The recording state precedence is failed, processing, queued, ready, partially
 prepared, not planned.
 Any failed output or unavailable front input makes it Failed. Ready requires a
 validated front preview and AI description, with no active or failed output.
-A ready front preview without a ready description is Partially prepared. Top-down
-and IMU are optional; Analysis can review available output independently.
+A ready front preview without a ready description is Partially prepared. Top-down,
+IMU and encoders are optional; Analysis can review available output independently.
 
 AI descriptions are separate jobs after the front preview. They read its default
 stream through a validated, held file descriptor and sample 12 chronological frames
@@ -119,6 +119,7 @@ Queued work and recordings are preserved; recovery is in [Operations](OPERATIONS
 | Top-down preview | `topdown-preview-v2`; AVI frames timed by CSV Unix timestamps; H.264/yuv420p MP4 |
 | AI description | `ai-description-v1`; bounded JSON with the short description and bunker boolean, tied to front identity and fixed model/prompt/sampling policy |
 | IMU | `imu-series-v2`; schema-2 JSON with three angular-velocity and three linear-acceleration axes |
+| Encoders | `encoder-series-v1`; schema-2 JSON with six RPM channels in FL, FR, ML, MR, RL, RR order |
 
 Front discovery accepts nonempty CDR ROS Image streams with `bgr8`/`rgb8`
 encoding. All eligible topics form one job and bundle, ordered by message count
@@ -126,7 +127,11 @@ then name. The busiest supported stream is the default; skipped encodings retain
 diagnostics. Each MP4 is timed and validated independently before atomic bundle
 publication. Stream URLs use artifact identity and numeric manifest index, never
 a topic name as a path. IMU selection uses a valid configured preference or one
-unique standard IMU stream; ambiguous streams are not combined.
+unique standard IMU stream; ambiguous streams are not combined. Encoder selection
+uses a configured preference or one unique CDR `kuupkulgur_msgs/msg/EncodersStamped`
+stream. Its bounded decoder reads `Header` plus `Float64MultiArray` with exactly
+six values, following RD01. No custom ROS message package is required. Migration
+0011 adds the optional kind; an explicit rescan discovers its targets.
 
 Incomplete output stays in a contained job workspace. Publication follows
 validation; failed replacement preserves valid output. Files, manifest, identity
@@ -157,17 +162,19 @@ all exactly zero use ROS record cadence directly. Mixed, missing, invalid or
 unordered headers fail. Duplicate front record times keep the last frame;
 no fixed frame rate or interpolated frames are invented.
 
-IMU uses database record time and preserves source order. Nanoseconds are decimal
+IMU and encoder series use database record time and preserve source order. Nanoseconds are decimal
 strings; lookup selects the last sample at or before the clock, including duplicate
-times. Non-finite values are per-axis null gaps. JSON is capped at 64 MiB and
+times. Non-finite values are per-channel null gaps. JSON is capped at 64 MiB and
 validated row by row. The browser streams parsing and reduces visible points while
 preserving spikes and gaps; large sample bundles stay outside subscribed UI state.
 
-One bag-relative clock drives cameras and IMU. Cameras correct drift at 100 ms
-and hide outside measured coverage; numeric IMU readouts clear outside coverage.
-The graph may visually hold a finite final sample to the recording/camera end
+One bag-relative clock drives cameras, IMU and encoders. Cameras correct drift at 100 ms
+and hide outside measured coverage; numeric telemetry readouts clear outside coverage.
+The individual IMU graph may visually hold a finite final sample to the recording/camera end
 without changing samples or readout coverage. Zoom changes the view, not time.
-Without IMU, the clock uses recording metadata Unix time, or relative seconds.
+Encoder traces stop at measured coverage and share one RPM axis in the six-wheel
+view; individual wheel selection uses the same samples. Without IMU, the clock
+uses recording metadata Unix time, or relative seconds.
 
 The dense SVG trace is memoized and composited separately from the HTML cursor.
 The cursor uses fractional transforms each animation frame; React readouts and
@@ -201,7 +208,7 @@ Successful siblings stay with failed recordings; retries submit only failed job
 IDs. History groups latest successful outputs for recordings without failures.
 
 `/api/v1` provides catalog, explicit rescan, details, preparation and job controls.
-`/api/recordings/...` delivers identity-bound media and IMU. React routes are
+`/api/recordings/...` delivers identity-bound media, IMU and encoder series. React routes are
 `#/recordings`, `#/processing` and `#/analysis/{id}`; the server also accepts
 `/`, `/processing` and `/recordings/{id}`. API schemas live in `api/`.
 

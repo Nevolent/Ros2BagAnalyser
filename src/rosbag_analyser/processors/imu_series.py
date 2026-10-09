@@ -55,6 +55,16 @@ ImuValueDecoder = Callable[[bytes], Sequence[float]]
 
 
 class ImuSeriesProcessor:
+    message_type = IMU_MESSAGE_TYPE
+    definitions = IMU_SERIES_DEFINITIONS
+    series_by_component = IMU_SERIES_BY_COMPONENT
+    max_serialized_bytes = MAX_SERIALIZED_IMU_BYTES
+    label = "IMU"
+    prefix = "imu"
+
+    def _write_bounded(self, output: BinaryIO, payload: bytes, written: int) -> int:
+        return _write_bounded(output, payload, written, label=self.label, prefix=self.prefix)
+
     def __init__(self, value_decoder: ImuValueDecoder | None = None) -> None:
         self.value_decoder = value_decoder or deserialize_imu_values
 
@@ -65,24 +75,24 @@ class ImuSeriesProcessor:
         *,
         control: JobControlToken | None = None,
     ) -> ImuSeriesResult:
-        if descriptor.component not in IMU_SERIES_BY_COMPONENT:
+        if descriptor.component not in self.series_by_component:
             raise ImuSeriesProcessingError(
-                "imu_component_unsupported",
-                "The configured IMU component is unsupported.",
+                f"{self.prefix}_component_unsupported",
+                f"The configured {self.label} component is unsupported.",
             )
         sample_count = 0
         duplicate_count = 0
         first_timestamp: int | None = None
         last_timestamp: int | None = None
         previous_timestamp: int | None = None
-        finite_counts = [0] * len(IMU_SERIES_DEFINITIONS)
-        non_finite_counts = [0] * len(IMU_SERIES_DEFINITIONS)
-        minimum_values: list[float | None] = [None] * len(IMU_SERIES_DEFINITIONS)
-        maximum_values: list[float | None] = [None] * len(IMU_SERIES_DEFINITIONS)
+        finite_counts = [0] * len(self.definitions)
+        non_finite_counts = [0] * len(self.definitions)
+        minimum_values: list[float | None] = [None] * len(self.definitions)
+        maximum_values: list[float | None] = [None] * len(self.definitions)
 
         try:
             with output_path.open("xb") as output:
-                written = _write_bounded(
+                written = self._write_bounded(
                     output,
                     b'{"schema_version":'
                     + str(SERIES_SCHEMA_VERSION).encode("ascii")
@@ -90,28 +100,32 @@ class ImuSeriesProcessor:
                     0,
                 )
                 first_sample = True
-                for record_timestamp, serialized in _iter_topic_messages(descriptor):
+                for record_timestamp, serialized in _iter_topic_messages(
+                    descriptor, message_type=self.message_type,
+                    max_serialized_bytes=self.max_serialized_bytes,
+                    label=self.label, prefix=self.prefix,
+                ):
                     if control is not None:
                         control.checkpoint("processing")
                     try:
                         values = tuple(
                             float(value) for value in self.value_decoder(serialized)
                         )
-                        if len(values) != len(IMU_SERIES_DEFINITIONS):
-                            raise ValueError("unexpected IMU value count")
+                        if len(values) != len(self.definitions):
+                            raise ValueError(f"unexpected {self.label} value count")
                     except ImuSeriesProcessingError:
                         raise
                     except Exception as error:
                         raise ImuSeriesProcessingError(
-                            "imu_deserialization_failed",
-                            "An IMU message could not be decoded.",
+                            f"{self.prefix}_deserialization_failed",
+                            f"An {self.label} message could not be decoded.",
                         ) from error
 
                     if previous_timestamp is not None:
                         if record_timestamp < previous_timestamp:
                             raise ImuSeriesProcessingError(
-                                "imu_timestamps_invalid",
-                                "IMU record timestamps are not ordered.",
+                                f"{self.prefix}_timestamps_invalid",
+                                f"{self.label} record timestamps are not ordered.",
                             )
                         if record_timestamp == previous_timestamp:
                             duplicate_count += 1
@@ -154,7 +168,7 @@ class ImuSeriesProcessor:
                         + "]"
                     )
                     prefix = "" if first_sample else ","
-                    written = _write_bounded(
+                    written = self._write_bounded(
                         output,
                         (prefix + sample).encode("utf-8"),
                         written,
@@ -163,23 +177,23 @@ class ImuSeriesProcessor:
                     sample_count += 1
                 if control is not None:
                     control.checkpoint("processing", force=True)
-                _write_bounded(output, b"]}", written)
+                self._write_bounded(output, b"]}", written)
         except ImuSeriesProcessingError:
             raise
         except OSError as error:
             raise ImuSeriesProcessingError(
-                "imu_series_write_failed",
-                "The derived IMU series could not be written.",
+                f"{self.prefix}_series_write_failed",
+                f"The derived {self.label} series could not be written.",
             ) from error
 
         if first_timestamp is None or last_timestamp is None or sample_count == 0:
             raise ImuSeriesProcessingError(
-                "imu_topic_empty", "The configured IMU topic contains no samples."
+                f"{self.prefix}_topic_empty", f"The configured {self.label} topic contains no samples."
             )
         if not any(finite_counts):
             raise ImuSeriesProcessingError(
-                "imu_values_unavailable",
-                "The IMU stream contains no finite supported values.",
+                f"{self.prefix}_values_unavailable",
+                f"The {self.label} stream contains no finite supported values.",
             )
 
         coverage_start = first_timestamp - descriptor.bag_start_ns
@@ -210,7 +224,7 @@ class ImuSeriesProcessor:
                     minimum_value=minimum_values[index],
                     maximum_value=maximum_values[index],
                 )
-                for index, definition in enumerate(IMU_SERIES_DEFINITIONS)
+                for index, definition in enumerate(self.definitions)
             ),
             warnings=tuple(warnings),
         )
@@ -243,13 +257,16 @@ def deserialize_imu_values(serialized: bytes) -> tuple[float, ...]:
 
 def _iter_topic_messages(
     descriptor: ImuSourceDescriptor,
+    *, message_type: str = IMU_MESSAGE_TYPE,
+    max_serialized_bytes: int = MAX_SERIALIZED_IMU_BYTES,
+    label: str = "IMU", prefix: str = "imu",
 ) -> Iterator[tuple[int, bytes]]:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         file_descriptor = os.open(descriptor.database_path, flags)
     except OSError as error:
         raise ImuSeriesProcessingError(
-            "imu_database_open_failed", "The ROS database could not be opened safely."
+            f"{prefix}_database_open_failed", "The ROS database could not be opened safely."
         ) from error
     connection: sqlite3.Connection | None = None
     try:
@@ -260,8 +277,8 @@ def _iter_topic_messages(
             or before_identity != descriptor.database_identity
         ):
             raise ImuSeriesProcessingError(
-                "imu_source_changed",
-                "The ROS database changed before IMU extraction.",
+                f"{prefix}_source_changed",
+                f"The ROS database changed before {label} extraction.",
             )
         uri = f"file:/proc/self/fd/{file_descriptor}?mode=ro&immutable=1"
         connection = sqlite3.connect(uri, uri=True)
@@ -277,14 +294,14 @@ def _iter_topic_messages(
         ).fetchall()
         if len(topic_rows) != 1:
             raise ImuSeriesProcessingError(
-                "imu_topic_unavailable",
-                "The configured IMU topic is unavailable in the database.",
+                f"{prefix}_topic_unavailable",
+                f"The configured {label} topic is unavailable in the database.",
             )
-        topic_id, message_type, serialization = topic_rows[0]
-        if message_type != IMU_MESSAGE_TYPE or serialization != "cdr":
+        topic_id, stored_message_type, serialization = topic_rows[0]
+        if stored_message_type != message_type or serialization != "cdr":
             raise ImuSeriesProcessingError(
-                "imu_topic_contract_changed",
-                "The IMU topic no longer matches its catalogued type.",
+                f"{prefix}_topic_contract_changed",
+                f"The {label} topic no longer matches its catalogued type.",
             )
         cursor = connection.execute(
             """
@@ -294,22 +311,22 @@ def _iter_topic_messages(
             WHERE topic_id = ?
             ORDER BY timestamp, id
             """,
-            (MAX_SERIALIZED_IMU_BYTES, topic_id),
+            (max_serialized_bytes, topic_id),
         )
         for timestamp, serialized_size, data in cursor:
             if (
                 not isinstance(serialized_size, int)
                 or serialized_size <= 0
-                or serialized_size > MAX_SERIALIZED_IMU_BYTES
+                or serialized_size > max_serialized_bytes
             ):
                 raise ImuSeriesProcessingError(
-                    "imu_serialized_payload_invalid",
-                    "An IMU message exceeds the supported serialized size.",
+                    f"{prefix}_serialized_payload_invalid",
+                    f"An {label} message exceeds the supported serialized size.",
                 )
             if data is None:
                 raise ImuSeriesProcessingError(
-                    "imu_database_read_failed",
-                    "The IMU stream could not be read from the ROS database.",
+                    f"{prefix}_database_read_failed",
+                    f"The {label} stream could not be read from the ROS database.",
                 )
             if not isinstance(data, bytes):
                 data = bytes(data)
@@ -317,12 +334,12 @@ def _iter_topic_messages(
         after = os.fstat(file_descriptor)
         if source_file_identity(after) != before_identity:
             raise ImuSeriesProcessingError(
-                "imu_source_changed", "The ROS database changed during IMU extraction."
+                f"{prefix}_source_changed", f"The ROS database changed during {label} extraction."
             )
     except sqlite3.Error as error:
         raise ImuSeriesProcessingError(
-            "imu_database_read_failed",
-            "The IMU stream could not be read from the ROS database.",
+            f"{prefix}_database_read_failed",
+            f"The {label} stream could not be read from the ROS database.",
         ) from error
     finally:
         if connection is not None:
@@ -330,12 +347,15 @@ def _iter_topic_messages(
         os.close(file_descriptor)
 
 
-def _write_bounded(output: BinaryIO, payload: bytes, written: int) -> int:
+def _write_bounded(
+    output: BinaryIO, payload: bytes, written: int,
+    *, label: str = "IMU", prefix: str = "imu",
+) -> int:
     new_size = written + len(payload)
     if new_size > MAX_SERIES_BYTES:
         raise ImuSeriesProcessingError(
-            "imu_series_too_large",
-            "The derived IMU series exceeds the supported size.",
+            f"{prefix}_series_too_large",
+            f"The derived {label} series exceeds the supported size.",
         )
     output.write(payload)
     return new_size

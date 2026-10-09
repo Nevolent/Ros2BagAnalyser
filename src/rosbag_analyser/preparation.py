@@ -12,6 +12,7 @@ from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
     AI_DESCRIPTION_KIND,
     IMU_SERIES_KIND,
+    ENCODER_SERIES_KIND,
     PROCESSING_KINDS,
     ArtifactRecord,
     CurrentOutputRecord,
@@ -305,7 +306,7 @@ class PreparationService:
                     artifact.output_relative_path, artifact.size_bytes,
                     artifact.cache_identity, artifact.manifest,
                 )
-            elif artifact.kind == IMU_SERIES_KIND:
+            elif artifact.kind in {IMU_SERIES_KIND, ENCODER_SERIES_KIND}:
                 store.validate_series_artifact(
                     artifact.output_relative_path,
                     artifact.size_bytes,

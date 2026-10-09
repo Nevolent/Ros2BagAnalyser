@@ -27,6 +27,7 @@ from rosbag_analyser.front_preview import (
     encoder_identity,
 )
 from rosbag_analyser.imu_series import ImuSeriesService, ImuSourceResolver
+from rosbag_analyser.encoder_series import EncoderSeriesService, EncoderSourceResolver
 from rosbag_analyser.health import ApplicationHealthService, HealthService
 from rosbag_analyser.maintenance import deployment_in_progress
 from rosbag_analyser.persistence.database import validate_catalog_schema
@@ -37,6 +38,7 @@ from rosbag_analyser.preparation_planner import PreparationPlanner
 from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
     IMU_SERIES_KIND,
+    ENCODER_SERIES_KIND,
     TOPDOWN_PREVIEW_KIND,
     WORKER_LOCK_NAME,
 )
@@ -51,6 +53,7 @@ from rosbag_analyser.v1_catalog import V1CatalogService
 from .catalog_routes import router as catalog_router
 from .front_preview_routes import router as front_preview_router
 from .imu_series_routes import router as imu_series_router
+from .encoder_series_routes import router as encoder_series_router
 from .topdown_preview_routes import router as topdown_preview_router
 from .v1_routes import router as v1_router
 
@@ -71,6 +74,7 @@ def create_app(
     processing_view_service: ProcessingViewService | None = None,
     prepare_max_recordings: int = 100,
     health_service: HealthService | None = None,
+    encoder_series_service: EncoderSeriesService | None = None,
 ) -> FastAPI:
     bootstrap_deployment = DeploymentSettings.from_environment()
 
@@ -89,6 +93,7 @@ def create_app(
             preparation_planner = PreparationPlanner(
                 front_topic=config.front_topic,
                 imu_topic=config.imu_topic,
+                encoder_topic=config.encoder_topic,
                 imu_component=config.imu_component,
                 profile=config.preview_profile,
                 encoder_identity=media_encoder_identity,
@@ -157,6 +162,14 @@ def create_app(
                 imu_artifact_store,
                 preparation_planner.planner_identity(IMU_SERIES_KIND),
             )
+            encoder_artifact_store = ArtifactStore(
+                config.derived_root, config.ffmpeg_path, config.ffprobe_path, ENCODER_SERIES_KIND,
+            )
+            application.state.encoder_series_service = EncoderSeriesService(
+                EncoderSourceResolver(config.archive_root, processing_repository, config.encoder_topic),
+                processing_repository, encoder_artifact_store,
+                preparation_planner.planner_identity(ENCODER_SERIES_KIND),
+            )
             application.state.preparation_service = PreparationService(
                 catalog_repository,
                 processing_repository,
@@ -165,6 +178,7 @@ def create_app(
                     FRONT_PREVIEW_KIND: artifact_store,
                     TOPDOWN_PREVIEW_KIND: topdown_artifact_store,
                     IMU_SERIES_KIND: imu_artifact_store,
+                    ENCODER_SERIES_KIND: encoder_artifact_store,
                     "ai_description": ArtifactStore(config.derived_root, config.ffmpeg_path,
                                                     config.ffprobe_path, "ai_description"),
                 },
@@ -197,6 +211,8 @@ def create_app(
                 application.state.front_preview_service = front_preview_service
             if topdown_preview_service is not None:
                 application.state.topdown_preview_service = topdown_preview_service
+            if encoder_series_service is not None:
+                application.state.encoder_series_service = encoder_series_service
             if imu_series_service is not None:
                 application.state.imu_series_service = imu_series_service
             if v1_catalog_service is not None:
@@ -254,6 +270,7 @@ def create_app(
     application.include_router(front_preview_router)
     application.include_router(topdown_preview_router)
     application.include_router(imu_series_router)
+    application.include_router(encoder_series_router)
     application.include_router(v1_router)
     application.mount(
         "/assets", StaticFiles(directory=REACT_ROOT / "assets"), name="assets"

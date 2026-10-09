@@ -1,5 +1,5 @@
 import { useRememberedState } from '../../app/WorkspaceProvider';
-import { graph } from '../../data/telemetry';
+import { graph, channelLabel, encoderChannels } from '../../data/telemetry';
 import { stopCamera, syncCamera } from './camera-clock';
 import { flushSync } from 'react-dom';
 import {
@@ -15,15 +15,18 @@ import {
   type RefObject,
 } from 'react';
 import { useWorkspacePanel } from '../../components/Workspace';
-import type { AnalysisBundle, Channel } from '../../data/types';
+import type { AnalysisBundle, Channel, Signal } from '../../data/types';
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const top = 26;
 const bottom = 10;
+type GraphChoice = Channel | 'encoders';
+const wheelColors = ['#4f9dd9', '#db8b46', '#43a890', '#a484d6', '#c96e94', '#b3a33e'];
+const wheelDashes = ['', '', '6 3', '6 3', '2 3', '2 3'];
 type TimelineState = {
   time: number;
   playing: boolean;
-  channel: Channel;
+  channel: GraphChoice;
   start: number;
   span: number;
 };
@@ -87,13 +90,20 @@ export const Timeline = memo(function Timeline({
   const pointerDownOnTrigger = useRef(false);
   const help = useRef<HTMLDivElement>(null);
   const helpTrigger = useRef<HTMLButtonElement>(null);
-  const options = useRef(new Map<Channel, HTMLButtonElement>());
+  const options = useRef(new Map<GraphChoice, HTMLButtonElement>());
   const interaction = useRef<Interaction | null>(null);
   const videos = useRef<HTMLVideoElement[]>([]);
-  const channelNames = (Object.keys(channels) as Channel[]).filter(
+  const availableChannelNames = (Object.keys(channels) as Channel[]).filter(
     (name) => channels[name].available ?? !!channels[name].values.length,
   );
+  const encoderNames = encoderChannels.filter((name) => availableChannelNames.includes(name));
+  const channelNames: GraphChoice[] = [
+    ...availableChannelNames.filter((name) => !name.startsWith('encoder.')),
+    ...(encoderNames.length ? ['encoders' as const, ...encoderNames] : []),
+  ];
   const hasTelemetry = channelNames.length > 0;
+  const multiWheel = state.channel === 'encoders';
+  const encoderGraph = state.channel.startsWith('encoder');
   const formatUnix = (seconds: number) =>
     bundle.absoluteTime === false ? `${seconds.toFixed(3)} s` : (startUnix + seconds).toFixed(3);
   function update(next: Partial<TimelineState> | ((previous: TimelineState) => TimelineState)) {
@@ -440,7 +450,16 @@ export const Timeline = memo(function Timeline({
         break;
       case 'ArrowRight':
       case 'ArrowLeft':
-        index = (index + 3) % channelNames.length;
+        {
+          const selected = channelNames[index];
+          const group = channelNames.filter(
+            (name) => name.startsWith('encoder') === selected.startsWith('encoder'),
+          );
+          const step = selected.startsWith('encoder') ? (event.key === 'ArrowRight' ? 1 : -1) : 3;
+          index = channelNames.indexOf(
+            group[(group.indexOf(selected) + step + group.length) % group.length],
+          );
+        }
         break;
       case 'Home':
         index = 0;
@@ -454,21 +473,37 @@ export const Timeline = memo(function Timeline({
     event.preventDefault();
     options.current.get(channelNames[index])?.focus();
   }
-  const signal = channels[state.channel];
-  const sample = (seconds: number): number | null => {
-    if (signal.samples) {
+  const combinedSignal = useMemo((): Signal => {
+    const available = encoderChannels
+      .map((name) => channels[name])
+      .filter((s) => s.available ?? !!s.values.length);
+    const high = Math.max(1, ...available.map((s) => s.ticks[0]));
+    const low = Math.min(0, ...available.map((s) => s.ticks.at(-1)!));
+    return {
+      available: available.length > 0,
+      values: [],
+      ticks: Array.from({ length: 5 }, (_, i) => high - ((high - low) * i) / 4),
+      unit: 'RPM',
+      spokenUnit: 'revolutions per minute',
+    };
+  }, [channels]);
+  const signal = multiWheel
+    ? combinedSignal
+    : (channels[state.channel as Channel] ?? channels['angular_velocity.z']);
+  const sample = (seconds: number, source: Signal = signal): number | null => {
+    if (source.samples) {
       if (
-        seconds < (signal.coverageStart ?? Infinity) ||
-        seconds > (signal.coverageEnd ?? -Infinity)
+        seconds < (source.coverageStart ?? Infinity) ||
+        seconds > (source.coverageEnd ?? -Infinity)
       )
         return null;
-      return graph.sampleAtOrBefore(signal.samples, seconds)?.value ?? null;
+      return graph.sampleAtOrBefore(source.samples, seconds)?.value ?? null;
     }
-    if (!signal.values.length || duration <= 0) return null;
-    const position = clamp(seconds / duration, 0, 1) * (signal.values.length - 1);
+    if (!source.values.length || duration <= 0) return null;
+    const position = clamp(seconds / duration, 0, 1) * (source.values.length - 1);
     const i = Math.floor(position),
-      next = Math.min(i + 1, signal.values.length - 1);
-    return signal.values[i] + (signal.values[next] - signal.values[i]) * (position - i);
+      next = Math.min(i + 1, source.values.length - 1);
+    return source.values[i] + (source.values[next] - source.values[i]) * (position - i);
   };
   const x = (seconds: number) => ((seconds - state.start) / state.span) * size.width;
   const y = (value: number) =>
@@ -482,7 +517,12 @@ export const Timeline = memo(function Timeline({
     const visible = graph.visibleTraceSegments(samples, state.start, end, size.width);
     const last = samples.at(-1);
     // Visual hold only: raw samples and the numeric readout retain measured coverage.
-    if (last?.value != null && last.timeSeconds < end && duration > last.timeSeconds) {
+    if (
+      !encoderGraph &&
+      last?.value != null &&
+      last.timeSeconds < end &&
+      duration > last.timeSeconds
+    ) {
       const tail = { ...last, timeSeconds: end };
       const final = visible.at(-1);
       if (final?.at(-1) === last) visible[visible.length - 1] = [...final, tail];
@@ -490,7 +530,7 @@ export const Timeline = memo(function Timeline({
         visible.push([{ ...last, timeSeconds: state.start }, tail]);
     }
     return visible;
-  }, [signal, state.start, state.span, size.width, duration]);
+  }, [signal, state.start, state.span, size.width, duration, encoderGraph]);
   const path = useMemo(() => {
     if (!hasTelemetry) return `M0,${top}L${size.width},${top}`;
     if (segments)
@@ -533,6 +573,49 @@ export const Timeline = memo(function Timeline({
           : `${path}L${size.width},${size.height - bottom}L0,${size.height - bottom}Z`,
     [segments, path, size, state.start, state.span, signal, hasTelemetry],
   );
+  const wheelTraces = useMemo(() => {
+    if (!multiWheel) return [];
+    const xPoint = (time: number) => ((time - state.start) / state.span) * size.width;
+    const yPoint = (value: number) =>
+      top +
+      ((signal.ticks[0] - value) / (signal.ticks[0] - signal.ticks.at(-1)!)) *
+        (size.height - top - bottom);
+    return encoderChannels
+      .filter((name) => channels[name].available ?? !!channels[name].values.length)
+      .map((name) => {
+        const source = channels[name];
+        const points = source.samples
+          ? graph.visibleTraceSegments(
+              source.samples,
+              state.start,
+              state.start + state.span,
+              size.width,
+            )
+          : [
+              source.values.map((value, i) => ({
+                timeNs: 0n,
+                timeSeconds: (i / (source.values.length - 1)) * duration,
+                value,
+              })),
+            ];
+        return {
+          name,
+          path: points
+            .map((segment) =>
+              segment
+                .map(
+                  (point, i) =>
+                    `${i ? 'L' : 'M'}${xPoint(point.timeSeconds).toFixed(3)},${yPoint(point.value!).toFixed(3)}`,
+                )
+                .join(''),
+            )
+            .join(''),
+          singleSamples: points
+            .filter((segment) => segment.length === 1)
+            .map(([point]) => ({ x: xPoint(point.timeSeconds), y: yPoint(point.value!) })),
+        };
+      });
+  }, [multiWheel, channels, signal, state.start, state.span, size, duration]);
   const value = sample(state.time);
   const singleSamples = useMemo(() => {
     const byPixel = new Map<number, { x: number; y: number }>();
@@ -554,7 +637,13 @@ export const Timeline = memo(function Timeline({
       className="cn-card analysis-timeline bg-secondary shadow-none ring-0 dark:bg-secondary/50"
       data-slot="card"
       data-component="imu-timeline"
-      aria-label={hasTelemetry ? 'IMU timeline' : 'Recording timeline'}
+      aria-label={
+        hasTelemetry
+          ? state.channel.startsWith('encoder')
+            ? 'Encoder timeline'
+            : 'IMU timeline'
+          : 'Recording timeline'
+      }
       style={{ '--timeline-plot-bottom': `${bottom}px` } as CSSProperties}
     >
       <div className="analysis-graph-header" data-slot="card-header">
@@ -608,7 +697,7 @@ export const Timeline = memo(function Timeline({
                 }}
               >
                 <span data-channel-label="">
-                  {channelNames.length ? state.channel : 'Recording timeline'}
+                  {channelNames.length ? channelLabel(state.channel) : 'Recording timeline'}
                 </span>
                 <svg
                   viewBox="0 0 16 16"
@@ -639,47 +728,55 @@ export const Timeline = memo(function Timeline({
                     setMenuOpen(false);
                 }}
               >
-                {(['angular_velocity', 'linear_acceleration'] as const).map((group) => (
-                  <div
-                    key={group}
-                    className="timeline-channel-group"
-                    role="group"
-                    aria-label={
-                      group === 'angular_velocity' ? 'Angular velocity' : 'Linear acceleration'
-                    }
-                  >
-                    {channelNames
-                      .filter((name) => name.startsWith(group))
-                      .map((name) => (
-                        <button
-                          key={name}
-                          ref={(element) => {
-                            if (element) options.current.set(name, element);
-                            else options.current.delete(name);
-                          }}
-                          type="button"
-                          role="menuitemradio"
-                          aria-label={name}
-                          aria-checked={state.channel === name}
-                          data-channel={name}
-                          tabIndex={state.channel === name ? 0 : -1}
-                          onClick={() => {
-                            update({ channel: name });
-                            setMenuOpen(false);
-                            trigger.current?.focus();
-                          }}
-                        >
-                          <span>{name}</span>
-                          <span className="timeline-channel-unit">{channels[name].unit}</span>
-                        </button>
-                      ))}
-                  </div>
-                ))}
+                {(['angular_velocity', 'linear_acceleration', 'encoder'] as const)
+                  .filter((group) => channelNames.some((name) => name.startsWith(group)))
+                  .map((group) => (
+                    <div
+                      key={group}
+                      className="timeline-channel-group"
+                      role="group"
+                      aria-label={
+                        group === 'angular_velocity'
+                          ? 'Angular velocity'
+                          : group === 'encoder'
+                            ? 'Wheel encoders'
+                            : 'Linear acceleration'
+                      }
+                    >
+                      {channelNames
+                        .filter((name) => name.startsWith(group))
+                        .map((name) => (
+                          <button
+                            key={name}
+                            ref={(element) => {
+                              if (element) options.current.set(name, element);
+                              else options.current.delete(name);
+                            }}
+                            type="button"
+                            role="menuitemradio"
+                            aria-label={channelLabel(name)}
+                            aria-checked={state.channel === name}
+                            data-channel={name}
+                            tabIndex={state.channel === name ? 0 : -1}
+                            onClick={() => {
+                              update({ channel: name });
+                              setMenuOpen(false);
+                              trigger.current?.focus();
+                            }}
+                          >
+                            <span>{channelLabel(name)}</span>
+                            <span className="timeline-channel-unit">
+                              {name === 'encoders' ? 'RPM' : channels[name].unit}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  ))}
               </div>
             </div>
           ) : (
             <span className="timeline-channel-label" data-channel-label="">
-              {hasTelemetry ? state.channel : 'Recording timeline'}
+              {hasTelemetry ? channelLabel(state.channel) : 'Recording timeline'}
             </span>
           )}
         </div>
@@ -789,7 +886,7 @@ export const Timeline = memo(function Timeline({
           aria-valuenow={Number(state.time.toFixed(3))}
           aria-valuetext={
             hasTelemetry
-              ? `Unix time ${formatUnix(state.time)}, ends at ${formatUnix(duration)}, ${state.channel}: ${value === null ? '—' : value.toFixed(3)} ${signal.spokenUnit}`
+              ? `Unix time ${formatUnix(state.time)}, ends at ${formatUnix(duration)}, ${multiWheel ? encoderNames.map((name) => `${channelLabel(name)}: ${sample(state.time, channels[name])?.toFixed(3) ?? '—'} RPM`).join(', ') : `${channelLabel(state.channel)}: ${value === null ? '—' : value.toFixed(3)} ${signal.spokenUnit}`}`
               : `Recording position ${state.time.toFixed(1)} of ${duration.toFixed(1)} seconds`
           }
           aria-orientation="horizontal"
@@ -911,7 +1008,11 @@ export const Timeline = memo(function Timeline({
                 </text>
               ))}
             </g>
-            <Trace path={path} area={area} singleSamples={singleSamples} />
+            {multiWheel ? (
+              <WheelTraces traces={wheelTraces} />
+            ) : (
+              <Trace path={path} area={area} singleSamples={singleSamples} />
+            )}
           </svg>
           <svg
             data-timeline-svg=""
@@ -967,13 +1068,15 @@ export const Timeline = memo(function Timeline({
             aria-hidden="true"
             style={{ top, bottom }}
           />
-          {hasTelemetry && (
+          {hasTelemetry && !multiWheel && (
             <div
               ref={measurement}
               className="timeline-measurement"
               title={
                 state.time > (signal.coverageEnd ?? Infinity)
-                  ? 'Outside IMU coverage. The line holds the final sample visually.'
+                  ? encoderGraph
+                    ? 'Outside sensor coverage.'
+                    : 'Outside sensor coverage. The line holds the final sample visually.'
                   : undefined
               }
             >
@@ -982,6 +1085,33 @@ export const Timeline = memo(function Timeline({
             </div>
           )}
         </div>
+        {multiWheel && (
+          <div className="encoder-legend" role="group" aria-label="Wheel encoder readings">
+            {encoderChannels.map((name, index) => {
+              const value = sample(state.time, channels[name]);
+              return (
+                <span key={name} className="encoder-reading" title={channelLabel(name)}>
+                  <svg width="18" height="8" aria-hidden="true">
+                    <line
+                      x1="0"
+                      x2="18"
+                      y1="4"
+                      y2="4"
+                      stroke={wheelColors[index]}
+                      strokeWidth="2"
+                      strokeDasharray={wheelDashes[index]}
+                    />
+                  </svg>
+                  <span>{name.slice(8)}</span>
+                  <strong data-encoder-value={name}>
+                    {value === null ? '—' : value.toFixed(3)}
+                  </strong>
+                  <span>RPM</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
         {duration > 0 && (
           <div
             className="timeline-axis"
@@ -1050,6 +1180,35 @@ const Trace = memo(function Trace({
           fill="var(--timeline-line)"
         />
       ))}
+    </g>
+  );
+});
+
+const WheelTraces = memo(function WheelTraces({
+  traces,
+}: {
+  traces: { name: Channel; path: string; singleSamples: { x: number; y: number }[] }[];
+}) {
+  return (
+    <g mask="url(#timeline-area-edge-mask)">
+      {traces.map((trace) => {
+        const index = encoderChannels.indexOf(trace.name as (typeof encoderChannels)[number]);
+        return (
+          <g key={trace.name} data-encoder-trace={trace.name}>
+            <path
+              d={trace.path}
+              fill="none"
+              stroke={wheelColors[index]}
+              strokeWidth="1.5"
+              strokeDasharray={wheelDashes[index]}
+              vectorEffect="non-scaling-stroke"
+            />
+            {trace.singleSamples.map((point, i) => (
+              <circle key={i} cx={point.x} cy={point.y} r="1.5" fill={wheelColors[index]} />
+            ))}
+          </g>
+        );
+      })}
     </g>
   );
 });

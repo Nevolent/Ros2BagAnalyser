@@ -6,6 +6,7 @@ export const outputNames: Record<Kind, string> = {
   ai_description: 'AI description',
   topdown_preview: 'Top-down preview',
   imu_series: 'IMU data bundle',
+  encoder_series: 'Wheel encoder data bundle',
 };
 export const labels: Record<string, string> = {
   ready: 'Ready',

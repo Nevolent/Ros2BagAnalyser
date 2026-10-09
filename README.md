@@ -1,6 +1,6 @@
 # ROS 2 Bag Analyser
 
-Browse ROS 2 recordings, prepare camera previews and IMU data, and review them
+Browse ROS 2 recordings, prepare camera previews, IMU and wheel encoder data, and review them
 on a shared timeline. The web interface is called **Tectrace**.
 
 Original recordings stay read-only. PostgreSQL stores the catalog and job queue;
@@ -10,7 +10,7 @@ a serial worker writes validated previews and telemetry to separate storage.
 
 1. Find a recording in **Recordings**.
 2. Choose **Prepare Selected** and follow the work in **Processing**.
-3. Open **Analysis** to review cameras and IMU data.
+3. Open **Analysis** to review cameras, IMU and six wheel RPM traces.
 
 See [Usage](docs/USAGE.md) for controls, status meanings and supported formats.
 

@@ -27,7 +27,7 @@ from rosbag_analyser.processing_view import (
 from rosbag_analyser.v1_catalog import V1CatalogView, V1RecordingDetail
 
 
-OutputKind = Literal["front_preview", "topdown_preview", "imu_series", "ai_description"]
+OutputKind = Literal["front_preview", "topdown_preview", "imu_series", "ai_description", "encoder_series"]
 OutputState = Literal[
     "unavailable", "ready", "processing", "queued", "failed", "not_requested"
 ]
@@ -199,9 +199,10 @@ class PrepareSelectedRequest(BaseModel):
             "ai_description",
             "topdown_preview",
             "imu_series",
+            "encoder_series",
         ],
         min_length=1,
-        max_length=4,
+        max_length=5,
     )
 
     @field_validator("recording_ids")
@@ -599,6 +600,8 @@ def _artifact_response(
         url = f"/api/recordings/{recording_id}/front-preview/media/{artifact.id}"
     elif artifact.kind == "topdown_preview":
         url = f"/api/recordings/{recording_id}/topdown-preview/media/{artifact.id}"
+    elif artifact.kind == "encoder_series":
+        url = f"/api/recordings/{recording_id}/encoder-series/data/{artifact.id}"
     else:
         url = f"/api/recordings/{recording_id}/imu-series/data/{artifact.id}"
     timing = artifact.manifest.get("timing")

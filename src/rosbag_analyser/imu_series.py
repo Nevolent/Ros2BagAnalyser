@@ -144,6 +144,15 @@ class ImuSeriesDisplay:
 
 
 class ImuSourceResolver:
+    kind = IMU_SERIES_KIND
+    message_type = IMU_MESSAGE_TYPE
+    definitions = IMU_SERIES_DEFINITIONS
+    series_by_component = IMU_SERIES_BY_COMPONENT
+    processor_version = PROCESSOR_VERSION
+    label = "IMU"
+    prefix = "imu"
+    stream_description = "a standard IMU stream"
+
     def __init__(
         self,
         archive_root: Path,
@@ -160,35 +169,35 @@ class ImuSourceResolver:
         record = self.repository.get_source(recording_id)
         if record is None:
             return ImuSourceResolution(recording_exists=False)
-        if self.component not in IMU_SERIES_BY_COMPONENT:
+        if self.component not in self.series_by_component:
             return self._unavailable(
                 record,
-                "imu_component_unsupported",
-                "The configured IMU component is unsupported.",
+                f"{self.prefix}_component_unsupported",
+                f"The configured {self.label} component is unsupported.",
             )
         if record.duration_ns is None or record.start_time_ns is None:
             return self._unavailable(
                 record,
                 "bag_timing_unavailable",
-                "The recording has no trustworthy bag timing for IMU alignment.",
+                f"The recording has no trustworthy bag timing for {self.label} alignment.",
             )
         if record.ros_health != "readable":
             return self._unavailable(
                 record,
-                "imu_ros_source_unavailable",
-                "The ROS recording is not readable enough to extract IMU data.",
+                f"{self.prefix}_ros_source_unavailable",
+                f"The ROS recording is not readable enough to extract {self.label} data.",
             )
         if record.metadata is None or record.metadata.condition != "readable":
             return self._unavailable(
                 record,
-                "imu_metadata_unavailable",
-                "The recording metadata is unavailable for IMU extraction.",
+                f"{self.prefix}_metadata_unavailable",
+                f"The recording metadata is unavailable for {self.label} extraction.",
             )
         if record.database is None or record.database.condition != "readable":
             return self._unavailable(
                 record,
-                "imu_database_unavailable",
-                "The ROS database is unavailable for IMU extraction.",
+                f"{self.prefix}_database_unavailable",
+                f"The ROS database is unavailable for {self.label} extraction.",
             )
 
         try:
@@ -217,36 +226,36 @@ class ImuSourceResolver:
                     "catalog_source_changed",
                     "The recording changed after its last scan. Rescan before processing.",
                 )
-            topic = select_topic(metadata.topics, self.topic_name, IMU_MESSAGE_TYPE)
+            topic = select_topic(metadata.topics, self.topic_name, self.message_type)
             if topic is None:
                 return self._unavailable(
                     record,
-                    "imu_topic_unavailable",
-                    "No unique IMU stream was found. Configure a preference if several IMUs are present.",
+                    f"{self.prefix}_topic_unavailable",
+                    f"No unique {self.label} stream was found. Configure a preference if several {self.label}s are present.",
                 )
-            if topic.message_type != IMU_MESSAGE_TYPE:
+            if topic.message_type != self.message_type:
                 return self._unavailable(
                     record,
-                    "imu_topic_type_unsupported",
-                    "The configured IMU topic is not a standard IMU stream.",
+                    f"{self.prefix}_topic_type_unsupported",
+                    f"The configured {self.label} topic is not {self.stream_description}.",
                 )
             if topic.serialization_format != CDR_SERIALIZATION:
                 return self._unavailable(
                     record,
-                    "imu_serialization_unsupported",
-                    "The IMU serialization format is unsupported.",
+                    f"{self.prefix}_serialization_unsupported",
+                    f"The {self.label} serialization format is unsupported.",
                 )
             if topic.message_count <= 0:
                 return self._unavailable(
                     record,
-                    "imu_topic_empty",
-                    "The configured IMU topic contains no samples.",
+                    f"{self.prefix}_topic_empty",
+                    f"The configured {self.label} topic contains no samples.",
                 )
         except (OSError, MetadataError, UnsafeSourcePath, ValueError, IndexError):
             return self._unavailable(
                 record,
-                "imu_source_uninspectable",
-                "The IMU source could not be resolved safely.",
+                f"{self.prefix}_source_uninspectable",
+                f"The {self.label} source could not be resolved safely.",
             )
 
         identity = _cache_identity(
@@ -256,6 +265,9 @@ class ImuSourceResolver:
             topic,
             self.topic_name,
             self.component,
+            kind=self.kind,
+            processor_version=self.processor_version,
+            definitions=self.definitions,
         )
         return ImuSourceResolution(
             recording_exists=True,
@@ -347,7 +359,7 @@ class ImuSeriesService:
         descriptor = resolution.descriptor
         current = self.repository.get_current_state(
             descriptor.recording_id,
-            IMU_SERIES_KIND,
+            self.resolver.kind,
             descriptor.cache_identity,
         )
         artifact = current.artifact
@@ -382,15 +394,15 @@ class ImuSeriesService:
                 "failed",
                 descriptor.bag_duration_ns,
                 diagnostic=SafeDiagnostic(
-                    failed.error_code or "imu_series_failed",
-                    failed.error_message or "IMU series generation failed.",
+                    failed.error_code or f"{self.resolver.prefix}_series_failed",
+                    failed.error_message or f"{self.resolver.label} series generation failed.",
                 ),
             )
         if not request_if_needed:
             return ImuSeriesDisplay(True, "not_requested", descriptor.bag_duration_ns)
         outcome = self.repository.request_job(
             descriptor.recording_id,
-            IMU_SERIES_KIND,
+            self.resolver.kind,
             descriptor.cache_identity,
             invalid_artifact_id=invalid_artifact_id,
         )
@@ -416,7 +428,7 @@ class ImuSeriesService:
                 artifact=outcome.artifact,
             )
         if outcome.job is None:
-            raise RuntimeError("The IMU request returned no job or artifact.")
+            raise RuntimeError(f"The {self.resolver.label} request returned no job or artifact.")
         return _display_for_job(outcome.job, descriptor.bag_duration_ns)
 
     def resolve_series(
@@ -424,7 +436,7 @@ class ImuSeriesService:
     ) -> tuple[OpenedMedia, ArtifactRecord] | None:
         artifact = self.repository.get_current_artifact_for_delivery(
             recording_id,
-            IMU_SERIES_KIND,
+            self.resolver.kind,
             artifact_id,
             self.planner_identity,
         )
@@ -457,10 +469,14 @@ def _cache_identity(
     topic: TopicFact,
     configured_topic: str,
     component: str,
+    *,
+    kind: str = IMU_SERIES_KIND,
+    processor_version: str = PROCESSOR_VERSION,
+    definitions: tuple[ImuSeriesDefinition, ...] = IMU_SERIES_DEFINITIONS,
 ) -> str:
     document = {
-        "artifact_kind": IMU_SERIES_KIND,
-        "processor_version": PROCESSOR_VERSION,
+        "artifact_kind": kind,
+        "processor_version": processor_version,
         "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
         "series_schema_version": SERIES_SCHEMA_VERSION,
         "recording": {
@@ -480,7 +496,7 @@ def _cache_identity(
         },
         "default_component": component,
         "series": [
-            definition.identity_values() for definition in IMU_SERIES_DEFINITIONS
+            definition.identity_values() for definition in definitions
         ],
         "non_finite_policy": NON_FINITE_POLICY,
         "duplicate_timestamp_policy": DUPLICATE_TIMESTAMP_POLICY,

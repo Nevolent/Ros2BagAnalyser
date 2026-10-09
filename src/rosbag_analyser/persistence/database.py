@@ -342,7 +342,7 @@ EXPECTED_CATALOG_CONSTRAINTS = {
     (
         "artifacts",
         "c",
-        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview', 'imu_series', 'ai_description']))",
+        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview', 'imu_series', 'ai_description', 'encoder_series']))",
     ),
     ("artifacts", "c", "CHECK (char_length(cache_identity) = 64)"),
     ("artifacts", "c", "CHECK (output_relative_path <> '')"),
@@ -372,7 +372,7 @@ EXPECTED_CATALOG_CONSTRAINTS = {
     (
         "jobs",
         "c",
-        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview', 'imu_series', 'ai_description']))",
+        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview', 'imu_series', 'ai_description', 'encoder_series']))",
     ),
     ("jobs", "c", "CHECK (char_length(cache_identity) = 64)"),
     (
@@ -464,7 +464,7 @@ EXPECTED_CATALOG_CONSTRAINTS = {
     (
         "preparation_targets",
         "c",
-        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview', 'imu_series', 'ai_description']))",
+        "CHECK (kind = ANY (ARRAY['front_preview', 'topdown_preview', 'imu_series', 'ai_description', 'encoder_series']))",
     ),
     ("preparation_targets", "c", "CHECK (scan_generation >= 0)"),
     (

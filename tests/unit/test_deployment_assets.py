@@ -5,6 +5,7 @@ from pathlib import Path
 
 from rosbag_analyser.ai_description import DESCRIPTION_POLICY
 from rosbag_analyser.front_preview import FRONT_TIMING_POLICY, PROCESSOR_VERSION
+from rosbag_analyser.encoder_series import PROCESSOR_VERSION as ENCODER_PROCESSOR_VERSION
 from rosbag_analyser.imu_series import (
     PROCESSOR_VERSION as IMU_PROCESSOR_VERSION,
     SERIES_SCHEMA_VERSION,
@@ -190,7 +191,9 @@ def test_release_contract_matches_accepted_processor_and_schema_identities() -> 
         "front_preview": PROCESSOR_VERSION,
         "front_timing_policy": FRONT_TIMING_POLICY,
         "imu_series": IMU_PROCESSOR_VERSION,
+        "encoder_series": ENCODER_PROCESSOR_VERSION,
         "topdown_preview": TOPDOWN_PROCESSOR_VERSION,
     }
     assert contract["artifact_contracts"]["imu_series_schema"] == SERIES_SCHEMA_VERSION
-    assert contract["database_schema"].endswith("0001-through-0010")
+    assert contract["artifact_contracts"]["encoder_series_schema"] == SERIES_SCHEMA_VERSION
+    assert contract["database_schema"].endswith("0001-through-0011")

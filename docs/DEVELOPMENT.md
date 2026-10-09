@@ -50,6 +50,13 @@ can use the installed `rosbag-analyser`, `rosbag-analyser-worker` and
 `rosbag-analyser-migrate` commands with explicit settings. Migrate a development
 database before starting it. Configuration validation lives in `config.py`.
 
+Encoder support requires migration `0011_encoder_series.sql`, followed by an
+explicit rescan to save the new preparation targets. Prepare Selected reuses
+existing compatible output and queues missing encoder work. The optional
+`ROS_BAG_ANALYSER_ENCODER_TOPIC` chooses a specific custom encoder stream; empty
+selects one unique supported stream automatically. Restart services after
+configuration changes, then rescan.
+
 ## Frontend
 
 The React/TypeScript source is in `frontend/`. Use Node.js 22.12+ or 24:
@@ -74,7 +81,7 @@ To run the committed build without backend infrastructure, from the repository r
 ```
 
 `?synthetic=1` also works in Vite. It uses in-memory recordings, jobs and shared
-camera/IMU fixtures; reloading resets it. `?demo=1` selects fixed visual fixtures
+camera/IMU/encoder fixtures; reloading resets it. `?demo=1` selects fixed visual fixtures
 in the Vite development server only. Neither mode verifies real processing.
 
 From `frontend/`, build the production assets before committing a UI change:

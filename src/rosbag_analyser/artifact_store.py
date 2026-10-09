@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_SERIES_ARTIFACT_BYTES = 64 * 1024 * 1024
 SUPPORTED_ARTIFACT_KINDS = frozenset(
-    {"front_preview", "topdown_preview", "imu_series", "ai_description"}
+    {"front_preview", "topdown_preview", "imu_series", "encoder_series", "ai_description"}
 )
 
 
@@ -369,8 +369,8 @@ class ArtifactStore:
                 raise OSError("invalid series file")
         except OSError as error:
             raise ArtifactStoreError(
-                "imu_series_validation_failed",
-                "The generated IMU series could not be validated.",
+                f"{self.artifact_kind}_validation_failed",
+                "The generated telemetry series could not be validated.",
             ) from error
 
         try:
@@ -385,7 +385,7 @@ class ArtifactStore:
             minimum_values: list[float | None] = [None] * len(expected_columns)
             maximum_values: list[float | None] = [None] * len(expected_columns)
             sample_count = 0
-            with closing(_iter_series_samples(series_path, expected_schema_version)) as samples:
+            with closing(_iter_series_samples(series_path, expected_schema_version, kind=self.artifact_kind)) as samples:
                 for sample in samples:
                     sample_count += 1
                     if sample_count > expected_sample_count:
@@ -456,8 +456,8 @@ class ArtifactStore:
         except (OSError, UnicodeError, RecursionError, json.JSONDecodeError,
                 TypeError, ValueError, OverflowError) as error:
             raise ArtifactStoreError(
-                "imu_series_validation_mismatch",
-                "The generated IMU series does not match its expected data.",
+                f"{self.artifact_kind}_validation_mismatch",
+                "The generated telemetry series does not match its expected data.",
             ) from error
 
         if control is not None:
@@ -534,7 +534,7 @@ class ArtifactStore:
         output_name: str = "series.json",
     ) -> PublishedArtifact:
         self._assert_owned_workspace(workspace, job_id)
-        if self.artifact_kind not in {"imu_series", "ai_description"}:
+        if self.artifact_kind not in {"imu_series", "encoder_series", "ai_description"}:
             raise ArtifactStoreError(
                 "artifact_kind_invalid", "The artifact kind is unsupported."
             )
@@ -800,7 +800,7 @@ class ArtifactStore:
         )
         relative = PurePosixPath(relative_path)
         if (
-            self.artifact_kind not in {"imu_series", "ai_description"}
+            self.artifact_kind not in {"imu_series", "encoder_series", "ai_description"}
             or len(cache_identity) != 64
             or any(character not in "0123456789abcdef" for character in cache_identity)
             or relative != expected_relative
@@ -1238,15 +1238,15 @@ def _probe_timeout_seconds(file_size: int) -> float:
     return min(3600.0, 30.0 + file_size / (512 * 1024))
 
 
-def _iter_series_samples(path: Path, schema_version: int):
+def _iter_series_samples(path: Path, schema_version: int, *, kind: str = "imu_series"):
     """Validate the fixed series envelope while decoding one row at a time."""
     try:
         yield from _iter_series_samples_unchecked(path, schema_version)
     except (OSError, UnicodeError, ValueError, RecursionError,
             json.JSONDecodeError) as error:
         raise ArtifactStoreError(
-            "imu_series_validation_failed",
-            "The generated IMU series could not be validated.",
+            f"{kind}_validation_failed",
+            "The generated telemetry series could not be validated.",
         ) from error
 
 

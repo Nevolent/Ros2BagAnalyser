@@ -1,4 +1,5 @@
 import type { Channel, Signal } from '../types';
+import { emptyChannels, encoderChannels } from '../telemetry';
 // Local preview fixture. Replace this bundle with timestamped IMU samples when
 // archive outputs are connected; the clock and both camera adapters stay shared.
 export const duration = 754.56;
@@ -21,6 +22,20 @@ const linear = (values: number[]): Signal => ({
   spokenUnit: 'metres per second squared',
 });
 export const channels: Record<Channel, Signal> = {
+  ...emptyChannels(),
+  ...Object.fromEntries(
+    encoderChannels.map((name, index) => [
+      name,
+      {
+        values: referenceY.map(
+          (_, i) => 16 + Math.sin(i * 0.45 + (index % 2) * 0.5) * 8 + Math.floor(index / 2) * 0.25,
+        ),
+        ticks: [30, 22.5, 15, 7.5, 0],
+        unit: 'RPM',
+        spokenUnit: 'revolutions per minute',
+      },
+    ]),
+  ),
   'angular_velocity.x': angular(
     referenceY.map((y, i) => Math.sin(i * 0.55) * 0.85 + (55 - y) / 40),
   ),

@@ -63,7 +63,9 @@ class ImuSeriesResponse(BaseModel):
 
 
 def imu_series_response(
-    recording_id: int, display: ImuSeriesDisplay
+    recording_id: int, display: ImuSeriesDisplay,
+    *, definitions=IMU_SERIES_DEFINITIONS, default_component="angular_velocity.z",
+    route="imu-series", label="IMU",
 ) -> ImuSeriesResponse:
     artifact = None
     if display.artifact is not None:
@@ -71,14 +73,12 @@ def imu_series_response(
         source = _mapping(manifest.get("source"))
         samples = _mapping(manifest.get("samples"))
         reduction = _mapping(manifest.get("reduction"))
-        series = _series_responses(manifest.get("series"))
+        series = _series_responses(manifest.get("series"), definitions)
         default_component = _text(
-            source.get("default_component"), "angular_velocity.z"
+            source.get("default_component"), default_component
         )
-        default_definition = IMU_SERIES_BY_COMPONENT.get(
-            default_component,
-            IMU_SERIES_BY_COMPONENT["angular_velocity.z"],
-        )
+        by_component = {definition.component: definition for definition in definitions}
+        default_definition = by_component.get(default_component, definitions[0])
         default_series_id = _text(
             source.get("default_series_id"), default_definition.id
         )
@@ -98,7 +98,7 @@ def imu_series_response(
         warnings: list[DiagnosticResponse] = []
         if isinstance(raw_warnings, list):
             warnings = [
-                diagnostic_response(SafeDiagnostic(code, WARNING_MESSAGES[code]))
+                diagnostic_response(SafeDiagnostic(code, WARNING_MESSAGES[code].replace("IMU", label)))
                 for code in raw_warnings
                 if isinstance(code, str) and code in WARNING_MESSAGES
             ]
@@ -109,7 +109,7 @@ def imu_series_response(
             coverage_end_ns=str(display.artifact.coverage_end_ns),
             timestamp_provenance="ros_record_timestamp",
             bounds="measured",
-            topic=_text(source.get("topic"), "Configured IMU topic"),
+            topic=_text(source.get("topic"), f"Configured {label} topic"),
             default_series_id=default_series_id,
             source_sample_count=str(_integer(samples.get("source"))),
             delivered_sample_count=str(_integer(samples.get("delivered"))),
@@ -120,7 +120,7 @@ def imu_series_response(
             reduction_method=_text(reduction.get("method"), "none"),
             warnings=warnings,
             data_url=(
-                f"/api/recordings/{recording_id}/imu-series/data/"
+                f"/api/recordings/{recording_id}/{route}/data/"
                 f"{display.artifact.id}"
             ),
         )
@@ -157,7 +157,7 @@ def _optional_number(value: object) -> float | None:
     return float(value)
 
 
-def _series_responses(value: object) -> list[ImuSeriesOptionResponse]:
+def _series_responses(value: object, definitions=IMU_SERIES_DEFINITIONS) -> list[ImuSeriesOptionResponse]:
     raw_items = value if isinstance(value, list) else []
     by_id = {
         item.get("id"): item
@@ -165,7 +165,7 @@ def _series_responses(value: object) -> list[ImuSeriesOptionResponse]:
         if isinstance(item, dict) and isinstance(item.get("id"), str)
     }
     responses: list[ImuSeriesOptionResponse] = []
-    for definition in IMU_SERIES_DEFINITIONS:
+    for definition in definitions:
         item = by_id.get(definition.id, {})
         finite_count = _integer(item.get("finite"))
         non_finite_count = _integer(item.get("non_finite"))

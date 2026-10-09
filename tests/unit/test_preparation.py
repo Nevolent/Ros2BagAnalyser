@@ -110,6 +110,7 @@ def test_per_output_precedence_starts_with_unavailable() -> None:
         "unavailable",
         "unavailable",
         "unavailable",
+        "unavailable",
     ]
     assert analysis.analysis_state == "failed"
 
@@ -286,6 +287,7 @@ def test_low_space_admission_returns_unavailable_without_scheduling_work() -> No
     assert repository.diagnostic.code == "derived_space_low"
     assert not result.has_active_work
     assert [output.outcome for output in result.recordings[0].outputs] == [
+        "unavailable",
         "unavailable",
         "unavailable",
         "unavailable",

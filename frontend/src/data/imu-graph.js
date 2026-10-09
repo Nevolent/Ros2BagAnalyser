@@ -1,22 +1,22 @@
 function parseDecimalNanoseconds(value) {
   if (typeof value !== 'string' || !/^-?(0|[1-9]\d*)$/.test(value)) {
-    throw new Error('The IMU series contains an invalid timestamp.');
+    throw new Error('The telemetry series contains an invalid timestamp.');
   }
   const nanoseconds = BigInt(value);
   const limit = BigInt(Number.MAX_SAFE_INTEGER);
   if (nanoseconds < -limit || nanoseconds > limit) {
-    throw new Error('The IMU series timestamp is outside the browser range.');
+    throw new Error('The telemetry series timestamp is outside the browser range.');
   }
   return nanoseconds;
 }
 
 function parseCount(value, label) {
   if (typeof value !== 'string' || !/^\d+$/.test(value)) {
-    throw new Error(`The IMU ${label} count is invalid.`);
+    throw new Error(`The telemetry ${label} count is invalid.`);
   }
   const count = Number(value);
   if (!Number.isSafeInteger(count)) {
-    throw new Error(`The IMU ${label} count is outside the browser range.`);
+    throw new Error(`The telemetry ${label} count is outside the browser range.`);
   }
   return count;
 }
@@ -31,13 +31,13 @@ function parseSeries(document, artifact) {
     !Array.isArray(artifact.series) ||
     artifact.series.length === 0
   ) {
-    throw new Error('The IMU series format is unsupported.');
+    throw new Error('The telemetry series format is unsupported.');
   }
   const coverageStartNs = parseDecimalNanoseconds(artifact.coverage_start_ns);
   const coverageEndNs = parseDecimalNanoseconds(artifact.coverage_end_ns);
   const deliveredCount = parseCount(artifact.delivered_sample_count, 'delivered sample');
   if (document.samples.length !== deliveredCount) {
-    throw new Error('The IMU series sample count does not match its metadata.');
+    throw new Error('The telemetry series sample count does not match its metadata.');
   }
 
   const seenIds = new Set();
@@ -59,7 +59,7 @@ function parseSeries(document, artifact) {
       seenColumns.has(definition.column_index) ||
       typeof definition.available !== 'boolean'
     ) {
-      throw new Error('The IMU series definition is invalid.');
+      throw new Error('The telemetry series definition is invalid.');
     }
     seenIds.add(definition.id);
     seenColumns.add(definition.column_index);
@@ -83,7 +83,7 @@ function parseSeries(document, artifact) {
       (finiteCount === 0 &&
         (definition.minimum_value !== null || definition.maximum_value !== null))
     ) {
-      throw new Error('The IMU series definition does not match its samples.');
+      throw new Error('The telemetry series definition does not match its samples.');
     }
     return {
       id: definition.id,
@@ -99,7 +99,7 @@ function parseSeries(document, artifact) {
     };
   });
   if (seenColumns.size !== series.length) {
-    throw new Error('The IMU series columns are invalid.');
+    throw new Error('The telemetry series columns are invalid.');
   }
 
   let previousNs = null;
@@ -109,11 +109,11 @@ function parseSeries(document, artifact) {
   const actualMaximum = series.map(() => null);
   const rows = document.samples.map((sample) => {
     if (!Array.isArray(sample) || sample.length !== series.length + 1) {
-      throw new Error('The IMU series contains an invalid sample.');
+      throw new Error('The telemetry series contains an invalid sample.');
     }
     const timeNs = parseDecimalNanoseconds(sample[0]);
     if (previousNs !== null && timeNs < previousNs) {
-      throw new Error('The IMU series timestamps are not ordered.');
+      throw new Error('The telemetry series timestamps are not ordered.');
     }
     previousNs = timeNs;
     const values = series.map((definition, index) => {
@@ -123,7 +123,7 @@ function parseSeries(document, artifact) {
         return null;
       }
       if (typeof value !== 'number' || !Number.isFinite(value)) {
-        throw new Error('The IMU series contains an invalid value.');
+        throw new Error('The telemetry series contains an invalid value.');
       }
       actualFinite[index] += 1;
       actualMinimum[index] =
@@ -150,11 +150,11 @@ function parseSeries(document, artifact) {
         actualMaximum[index] !== definition.maximumValue,
     )
   ) {
-    throw new Error('The IMU series does not match its declared coverage.');
+    throw new Error('The telemetry series does not match its declared coverage.');
   }
   const defaultSeries = series.find((definition) => definition.id === artifact.default_series_id);
   if (!defaultSeries?.available) {
-    throw new Error('The default IMU series is unavailable.');
+    throw new Error('The default telemetry series is unavailable.');
   }
   return {
     rows,
@@ -178,7 +178,7 @@ async function parseSeriesStream(body, artifact) {
       if (state === 'prefix') {
         const match = /^\{\s*"schema_version"\s*:\s*2\s*,\s*"samples"\s*:\s*\[/.exec(pending);
         if (!match) {
-          if (pending.length > 1024) throw new Error('The IMU series format is unsupported.');
+          if (pending.length > 1024) throw new Error('The telemetry series format is unsupported.');
           return;
         }
         pending = pending.slice(match[0].length);
@@ -188,12 +188,12 @@ async function parseSeriesStream(body, artifact) {
         pending = pending.trimStart();
         if (!pending) return;
         if (pending[0] === ']') {
-          if (!first) throw new Error('The IMU series contains a trailing separator.');
+          if (!first) throw new Error('The telemetry series contains a trailing separator.');
           pending = pending.slice(1);
           state = 'suffix';
           continue;
         }
-        if (pending[0] !== '[') throw new Error('The IMU series contains an invalid sample.');
+        if (pending[0] !== '[') throw new Error('The telemetry series contains an invalid sample.');
         let depth = 0;
         let quoted = false;
         let escaped = false;
@@ -221,7 +221,7 @@ async function parseSeriesStream(body, artifact) {
         }
         if (end < 0) {
           if (pending.length > 2 * 1024 * 1024)
-            throw new Error('The IMU series sample is too large.');
+            throw new Error('The telemetry series sample is too large.');
           return;
         }
         samples.push(JSON.parse(pending.slice(0, end)));
@@ -242,17 +242,17 @@ async function parseSeriesStream(body, artifact) {
           state = 'suffix';
           continue;
         }
-        throw new Error('The IMU series contains an invalid separator.');
+        throw new Error('The telemetry series contains an invalid separator.');
       }
       if (state === 'suffix') {
         pending = pending.trimStart();
         if (!pending) return;
-        if (pending[0] !== '}') throw new Error('The IMU series format is unsupported.');
+        if (pending[0] !== '}') throw new Error('The telemetry series format is unsupported.');
         pending = pending.slice(1);
         state = 'done';
       }
       if (state === 'done') {
-        if (pending.trim()) throw new Error('The IMU series contains trailing data.');
+        if (pending.trim()) throw new Error('The telemetry series contains trailing data.');
         pending = '';
         return;
       }
@@ -267,7 +267,7 @@ async function parseSeriesStream(body, artifact) {
     }
     pending += decoder.decode();
     consume();
-    if (state !== 'done') throw new Error('The IMU series is incomplete.');
+    if (state !== 'done') throw new Error('The telemetry series is incomplete.');
     return parseSeries({ schema_version: 2, samples }, artifact);
   } finally {
     reader.releaseLock();
@@ -277,7 +277,7 @@ async function parseSeriesStream(body, artifact) {
 function selectSeries(parsed, seriesId) {
   const definition = parsed.series.find((candidate) => candidate.id === seriesId);
   if (!definition?.available) {
-    throw new Error('The selected IMU series is unavailable.');
+    throw new Error('The selected telemetry series is unavailable.');
   }
   const seriesIndex = parsed.series.indexOf(definition);
   return {

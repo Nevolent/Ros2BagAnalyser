@@ -4,14 +4,15 @@
 
 1. In **Recordings**, browse folders or search the saved catalog.
 2. Select recordings and choose **Prepare Selected**, then confirm. This prepares
-   available camera previews, AI descriptions and IMU data, reusing compatible output.
+   available camera previews, AI descriptions, IMU and wheel encoder data, reusing compatible output.
    **Go to Processing** is selected by default; clear it to stay in Recordings.
    Filter **Partially prepared**, select all, then prepare to fill missing descriptions
    without regenerating compatible previews or telemetry.
 3. In **Processing**, follow the queue, cancel or reorder waiting work, and
    retry failures. One output runs at a time.
 4. Open a recording in **Analysis**. Play, pause or seek on the shared timeline;
-   select an IMU axis and zoom the graph.
+   select an IMU axis, an individual wheel or **Encoders · six wheels**, and zoom
+   the graph. The six-wheel view shares an RPM axis and shows each wheel at the cursor.
 
 Space plays or pauses; arrow keys seek one second, or ten seconds with Shift.
 Playback stops when leaving Analysis. Filters, panel settings and the last
@@ -49,11 +50,14 @@ The application reads uncompressed, single-file ROS 2 SQLite recordings.
 Front previews support raw ROS Image streams with `rgb8` or `bgr8` encoding;
 top-down previews use companion AVI/CSV files. IMU data has six raw angular
 velocity (`rad/s`) and linear acceleration (`m/s²`) axes. Multiple IMU topics
-require an operator preference.
+require an operator preference. Encoders support the custom KuupKulgur
+`EncodersStamped` message, with six RPM values ordered front left/right (FL/FR),
+middle left/right (ML/MR), rear left/right (RL/RR). Values are plotted as recorded;
+matching wheel values can overlap.
 
-Top-down and IMU inputs are optional. Cameras and numeric IMU values clear
+Top-down, IMU and encoder inputs are optional. Cameras and numeric telemetry values clear
 outside measured coverage. A final IMU value extended visually to the graph's
-end is not additional recorded data.
+end is not additional recorded data. Encoder traces stop at measured coverage.
 
 For support, include the recording/job ID, visible error, browser, and time
 with timezone. Keep recordings, private paths and credentials out of reports.

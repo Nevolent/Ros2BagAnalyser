@@ -124,7 +124,13 @@ test('prepare dismisses immediately, reports background failures and never fabri
   await expect(page.getByRole('alert')).toHaveText('Worker storage unavailable.');
   expect(api.posts[0].body).toEqual({
     recording_ids: [42],
-    output_kinds: ['front_preview', 'ai_description', 'topdown_preview', 'imu_series'],
+    output_kinds: [
+      'front_preview',
+      'ai_description',
+      'topdown_preview',
+      'imu_series',
+      'encoder_series',
+    ],
   });
   await expect(page.locator('.recordings-notice')).toHaveCount(0);
   api.override = null;

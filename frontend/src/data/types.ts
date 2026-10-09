@@ -69,7 +69,9 @@ export interface WorkspaceSnapshot {
   history: Job[];
   active: ActiveJob;
 }
-export type Channel = `${'angular_velocity' | 'linear_acceleration'}.${'x' | 'y' | 'z'}`;
+export type Wheel = 'FL' | 'FR' | 'ML' | 'MR' | 'RL' | 'RR';
+export type Channel =
+  `${'angular_velocity' | 'linear_acceleration'}.${'x' | 'y' | 'z'}` | `encoder.${Wheel}`;
 export interface Sample {
   timeNs: bigint;
   timeSeconds: number;

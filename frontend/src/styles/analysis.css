@@ -772,3 +772,39 @@
   font-size: 11px;
   line-height: 16px;
 }
+
+.timeline-channel-group:has([data-channel='encoders']) {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.timeline-channel-group [data-channel='encoders'] {
+  grid-column: 1 / -1;
+}
+.encoder-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 6px 0;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.encoder-reading {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.encoder-reading strong {
+  color: var(--foreground);
+  font-weight: 500;
+}
+@media (max-width: 720px) {
+  .encoder-legend {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .timeline-channel-group:has([data-channel='encoders']) {
+    grid-template-columns: 1fr;
+  }
+}

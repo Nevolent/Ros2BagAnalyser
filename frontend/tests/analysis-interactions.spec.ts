@@ -184,7 +184,16 @@ test('all six channels update units and keep the clock, with keyboard access acr
   await page.goto('/?demo=1#/analysis');
   const trigger = page.getByRole('button', { name: 'Choose sensor graph' });
   await trigger.click();
-  await expect(page.getByRole('menuitemradio')).toHaveCount(6);
+  await expect(page.getByRole('menuitemradio')).toHaveCount(13);
+  await expect(
+    page.getByRole('group', { name: 'Angular velocity' }).getByRole('menuitemradio'),
+  ).toHaveCount(3);
+  await expect(
+    page.getByRole('group', { name: 'Linear acceleration' }).getByRole('menuitemradio'),
+  ).toHaveCount(3);
+  await expect(
+    page.getByRole('group', { name: 'Wheel encoders' }).getByRole('menuitemradio'),
+  ).toHaveCount(7);
   await page.getByRole('menuitemradio', { name: 'linear_acceleration.z', exact: true }).click();
   await expect(page.locator('[data-timeline-unit]')).toHaveText('m/s²');
   await expect(page.locator('[data-timeline-time]')).toHaveText('1771027200.000');

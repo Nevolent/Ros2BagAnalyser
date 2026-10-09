@@ -303,7 +303,13 @@ export function createApiWorkspace(): WorkspaceService {
     prepare: (ids) =>
       mutate('/api/v1/recordings/prepare', {
         recording_ids: [...ids].map(numericId),
-        output_kinds: ['front_preview', 'ai_description', 'topdown_preview', 'imu_series'],
+        output_kinds: [
+          'front_preview',
+          'ai_description',
+          'topdown_preview',
+          'imu_series',
+          'encoder_series',
+        ],
       }),
     cancelJobs: async (ids) => {
       if (snapshot.busy) return false;

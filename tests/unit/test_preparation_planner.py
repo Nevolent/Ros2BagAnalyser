@@ -48,6 +48,10 @@ def _scanned_recording(tmp_path: Path):
             "message_count": 25,
         }
     )
+    document["rosbag2_bagfile_information"]["topics_with_message_count"].append({
+        "topic_metadata": {"name": "/wheels/encoders", "type": "kuupkulgur_msgs/msg/EncodersStamped", "serialization_format": "cdr", "offered_qos_profiles": ""},
+        "message_count": 50,
+    })
     create_recording(
         archive,
         "run",
@@ -56,7 +60,7 @@ def _scanned_recording(tmp_path: Path):
     return CatalogScanner(archive).scan().recordings[0]
 
 
-def test_plans_all_four_available_targets_from_one_scan(tmp_path: Path) -> None:
+def test_plans_all_five_available_targets_from_one_scan(tmp_path: Path) -> None:
     recording = _scanned_recording(tmp_path)
 
     targets = _planner().plan_recording(11, recording)

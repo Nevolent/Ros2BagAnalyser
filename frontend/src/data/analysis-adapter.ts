@@ -2,12 +2,13 @@ import { diagnosticMessage } from './diagnostics';
 import type { AnalysisRecording } from './types';
 import type { Artifact, Detail, Kind } from './api-types';
 import { bytes, duration, labels, outputNames, recording, seconds } from './api-mapping';
-import { emptyChannels, loadTelemetry } from './telemetry';
+import { emptyChannels, loadTelemetry, imuChannels, encoderChannels } from './telemetry';
 export function artifactUrl(id: number, kind: Kind, artifact: Artifact): string {
   const route = {
     front_preview: 'front-preview/media',
     topdown_preview: 'topdown-preview/media',
     imu_series: 'imu-series/data',
+    encoder_series: 'encoder-series/data',
     ai_description: '',
   }[kind];
   if (
@@ -55,6 +56,7 @@ export async function analysisRecording(
             o.state === 'unavailable' &&
             [
               'imu_topic_unavailable',
+              'encoder_topic_unavailable',
               'topdown_video_unavailable',
               'topdown_timestamps_unavailable',
             ].includes(o.diagnostic?.code ?? '')
@@ -124,32 +126,54 @@ export async function analysisRecording(
     cameras.push(camera);
   }
   bundle.mediaVersion = JSON.stringify(cameras.map(({ src, start, end }) => [src, start, end]));
-  const imu = detail.outputs.find((o) => o.kind === 'imu_series');
-  // Missing optional IMU is a normal camera-only recording, not a load error.
-  bundle.message =
-    cameras.some((camera) => camera.src) && (!imu || imu.state === 'unavailable')
+  const telemetryOutputs = detail.outputs.filter((o) =>
+    ['imu_series', 'encoder_series'].includes(o.kind),
+  );
+  const pendingTelemetry = telemetryOutputs.find((output) =>
+    ['not_requested', 'queued', 'processing', 'failed'].includes(output.state),
+  );
+  bundle.message = pendingTelemetry
+    ? outputMessage(pendingTelemetry.state)
+    : cameras.some((camera) => camera.src)
       ? ''
-      : outputMessage(imu?.state);
-  if (imu?.state === 'ready' && imu.artifact) {
+      : outputMessage(telemetryOutputs.find((o) => o.state !== 'unavailable')?.state);
+  for (const kind of ['imu_series', 'encoder_series'] as const) {
+    const output = telemetryOutputs.find((o) => o.kind === kind);
+    if (output?.state !== 'ready' || !output.artifact) continue;
+    const label = kind === 'encoder_series' ? 'Encoder' : 'IMU';
     try {
-      artifactUrl(detail.id, 'imu_series', imu.artifact);
-      const identity = `imu-${imu.artifact.id}`;
+      artifactUrl(detail.id, kind, output.artifact);
+      const identity = `${kind}-${output.artifact.id}`;
+      const names = kind === 'encoder_series' ? encoderChannels : imuChannels;
       const old =
         previous?.id === String(detail.id)
-          ? previous.outputs.find((o) => o.name === outputNames.imu_series)
+          ? previous.outputs.find((o) => o.name === outputNames[kind])
           : undefined;
-      bundle.channels =
-        previous && old?.identity === identity && !previous.bundle.message
+      const channels =
+        previous &&
+        old?.identity === identity &&
+        names.some((name) => previous.bundle.channels[name].available)
           ? previous.bundle.channels
-          : await loadTelemetry(detail.id, imu.artifact, signal);
-      bundle.duration = Math.max(bundle.duration, seconds(imu.artifact.coverage_end_ns));
+          : await loadTelemetry(detail.id, output.artifact, signal, kind);
+      for (const name of names) bundle.channels[name] = channels[name];
+      bundle.duration = Math.max(bundle.duration, seconds(output.artifact.coverage_end_ns));
       bundle.message = '';
     } catch (error) {
       if (signal.aborted) throw error;
-      bundle.message = 'IMU data is unavailable.';
-      errors.push(error instanceof Error ? error.message : 'IMU data could not be loaded.');
+      bundle.message = `${label} data is unavailable.`;
+      errors.push(error instanceof Error ? error.message : `${label} data could not be loaded.`);
     }
   }
+  if (
+    previous?.id === String(detail.id) &&
+    Object.keys(bundle.channels).every(
+      (name) =>
+        bundle.channels[name as keyof typeof bundle.channels] ===
+        previous.bundle.channels[name as keyof typeof bundle.channels],
+    )
+  )
+    bundle.channels = previous.bundle.channels;
+
   return {
     id: String(detail.id),
     aiDescription,
@@ -174,10 +198,12 @@ export async function analysisRecording(
       .map((output) => ({
         name: outputNames[output.kind],
         size: bytes(output.artifact?.size_bytes),
-        format: output.kind === 'imu_series' ? 'JSON' : 'MP4 · H.264',
+        format: ['imu_series', 'encoder_series'].includes(output.kind) ? 'JSON' : 'MP4 · H.264',
         status: labels[output.state] ?? 'Unavailable',
         identity:
-          output.kind === 'imu_series' && output.artifact ? `imu-${output.artifact.id}` : undefined,
+          ['imu_series', 'encoder_series'].includes(output.kind) && output.artifact
+            ? `${output.kind}-${output.artifact.id}`
+            : undefined,
       })),
     sources: detail.components.map((component) => ({
       name:

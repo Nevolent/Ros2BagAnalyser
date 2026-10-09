@@ -17,6 +17,7 @@ DERIVED_ROOT_ENV = "ROS_BAG_ANALYSER_DERIVED_ROOT"
 DATABASE_URL_ENV = "ROS_BAG_ANALYSER_DATABASE_URL"
 FRONT_TOPIC_ENV = "ROS_BAG_ANALYSER_FRONT_TOPIC"
 IMU_TOPIC_ENV = "ROS_BAG_ANALYSER_IMU_TOPIC"
+ENCODER_TOPIC_ENV = "ROS_BAG_ANALYSER_ENCODER_TOPIC"
 IMU_COMPONENT_ENV = "ROS_BAG_ANALYSER_IMU_COMPONENT"
 PREVIEW_PROFILE_ENV = "ROS_BAG_ANALYSER_PREVIEW_PROFILE"
 FFMPEG_ENV = "ROS_BAG_ANALYSER_FFMPEG"
@@ -114,6 +115,7 @@ class AppConfig:
     prepare_max_recordings: int
     description_python: Path | None = None
     description_model_root: Path | None = None
+    encoder_topic: str = ""
 
     @classmethod
     def from_environment(
@@ -137,6 +139,7 @@ class AppConfig:
             derived_value,
             database_url,
             imu_topic=imu_topic,
+            encoder_topic=values.get(ENCODER_TOPIC_ENV, ""),
             front_topic=values.get(FRONT_TOPIC_ENV, DEFAULT_FRONT_TOPIC),
             imu_component=values.get(IMU_COMPONENT_ENV, DEFAULT_IMU_COMPONENT),
             preview_profile=values.get(
@@ -203,6 +206,7 @@ class AppConfig:
         derived_root_writable: bool = True,
         description_python: str | Path | None = None,
         description_model_root: str | Path | None = None,
+        encoder_topic: str = "",
     ) -> "AppConfig":
         archive = _validated_directory(Path(archive_root), "archive root", writable=False)
         derived = _validated_directory(
@@ -254,6 +258,7 @@ class AppConfig:
             database_url=database_url,
             front_topic=front,
             imu_topic=imu,
+            encoder_topic=_validated_topic(encoder_topic, "encoder") if encoder_topic else "",
             imu_component=component,
             preview_profile=profile,
             ffmpeg_path=ffmpeg,

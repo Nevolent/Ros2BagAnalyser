@@ -7,7 +7,7 @@ interface ImuMetadata {
   artifact: { data_url: string; size_bytes: string; series: unknown[] } | null;
 }
 export { graph };
-export const channelNames = [
+export const imuChannels = [
   'angular_velocity.x',
   'angular_velocity.y',
   'angular_velocity.z',
@@ -15,6 +15,28 @@ export const channelNames = [
   'linear_acceleration.y',
   'linear_acceleration.z',
 ] as const;
+export const encoderChannels = [
+  'encoder.FL',
+  'encoder.FR',
+  'encoder.ML',
+  'encoder.MR',
+  'encoder.RL',
+  'encoder.RR',
+] as const;
+export const channelNames = [...imuChannels, ...encoderChannels];
+export const wheelLabels = {
+  'encoder.FL': 'Front left (FL)',
+  'encoder.FR': 'Front right (FR)',
+  'encoder.ML': 'Middle left (ML)',
+  'encoder.MR': 'Middle right (MR)',
+  'encoder.RL': 'Rear left (RL)',
+  'encoder.RR': 'Rear right (RR)',
+};
+export function channelLabel(channel: Channel | 'encoders') {
+  return channel === 'encoders'
+    ? 'Encoders · six wheels'
+    : (wheelLabels[channel as keyof typeof wheelLabels] ?? channel);
+}
 export function emptyChannels(): Record<Channel, Signal> {
   return Object.fromEntries(
     channelNames.map((name) => [
@@ -24,8 +46,12 @@ export function emptyChannels(): Record<Channel, Signal> {
         samples: [],
         available: false,
         ticks: [1, 0.5, 0, -0.5, -1],
-        unit: name.startsWith('angular') ? 'rad/s' : 'm/s²',
-        spokenUnit: name.startsWith('angular') ? 'radians per second' : 'meters per second squared',
+        unit: name.startsWith('encoder') ? 'RPM' : name.startsWith('angular') ? 'rad/s' : 'm/s²',
+        spokenUnit: name.startsWith('encoder')
+          ? 'revolutions per minute'
+          : name.startsWith('angular')
+            ? 'radians per second'
+            : 'meters per second squared',
       },
     ]),
   ) as unknown as Record<Channel, Signal>;
@@ -34,25 +60,30 @@ export async function loadTelemetry(
   id: number,
   expected: Artifact,
   signal: AbortSignal,
+  kind: 'imu_series' | 'encoder_series' = 'imu_series',
 ): Promise<AnalysisBundle['channels']> {
-  const metadata = await request<ImuMetadata>(`/api/recordings/${id}/imu-series`, signal);
+  const label = kind === 'encoder_series' ? 'Encoder' : 'IMU';
+  const route = kind === 'encoder_series' ? 'encoder-series' : 'imu-series';
+  const expectedChannels: readonly Channel[] =
+    kind === 'encoder_series' ? encoderChannels : imuChannels;
+  const metadata = await request<ImuMetadata>(`/api/recordings/${id}/${route}`, signal);
   if (
     metadata.state !== 'ready' ||
     !metadata.artifact ||
     metadata.artifact.data_url !== expected.url
   )
-    throw new Error('IMU artifact identity changed. Reloading recording details is required.');
+    throw new Error(`${label} artifact identity changed. Reloading recording details is required.`);
   const maximum = 64 * 1024 * 1024;
   if (Number(expected.size_bytes) > maximum || Number(metadata.artifact.size_bytes) > maximum)
-    throw new Error('IMU data exceeds the 64 MiB limit.');
+    throw new Error(`${label} data exceeds the 64 MiB limit.`);
   const response = await fetch(expected.url, { signal, credentials: 'same-origin' });
-  if (!response.ok || !response.body) throw new Error('IMU data could not be loaded.');
+  if (!response.ok || !response.body) throw new Error(`${label} data could not be loaded.`);
   let size = 0;
   const bounded = response.body.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         size += chunk.byteLength;
-        if (size > maximum) throw new Error('IMU data exceeds the 64 MiB limit.');
+        if (size > maximum) throw new Error(`${label} data exceeds the 64 MiB limit.`);
         controller.enqueue(chunk);
       },
     }),
@@ -64,11 +95,21 @@ export async function loadTelemetry(
     await bounded.cancel().catch(() => {});
     throw error;
   }
+  if (
+    parsed.series.length !== expectedChannels.length ||
+    parsed.series.some(
+      (definition, index) =>
+        definition.component !== expectedChannels[index] ||
+        definition.columnIndex !== index + 1 ||
+        definition.units !== (kind === 'encoder_series' ? 'RPM' : index < 3 ? 'rad/s' : 'm/s²'),
+    )
+  )
+    throw new Error(`${label} channel definitions do not match the supported wheel/axis order.`);
   const channels = emptyChannels();
   const samplesBySeries = new Map<string, Sample[]>();
   for (const definition of parsed.series) {
-    if (!channelNames.includes(definition.component as Channel))
-      throw new Error('Unsupported IMU channel.');
+    if (!expectedChannels.includes(definition.component as Channel))
+      throw new Error(`Unsupported ${label} channel.`);
     if (!definition.available) continue;
     const name = definition.component as Channel;
     const min = definition.minimumValue!,
@@ -84,7 +125,7 @@ export async function loadTelemetry(
         if (!samples) {
           samples = graph.selectSeries(parsed, definition.id).samples;
           samplesBySeries.set(definition.id, samples);
-          if (samplesBySeries.size > 3)
+          if (samplesBySeries.size > (kind === 'encoder_series' ? 6 : 3))
             samplesBySeries.delete(samplesBySeries.keys().next().value!);
         }
         return samples;

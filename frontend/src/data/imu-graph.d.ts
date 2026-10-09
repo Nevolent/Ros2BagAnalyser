@@ -3,6 +3,7 @@ import type { Sample } from './types';
 interface Definition {
   id: string;
   component: string;
+  columnIndex: number;
   available: boolean;
   minimumValue: number | null;
   maximumValue: number | null;

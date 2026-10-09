@@ -1,6 +1,7 @@
 import type { RecordingTopic, TimingInspection } from './types';
 /** Wire contracts owned by src/rosbag_analyser/api/v1_schemas.py. */
-export type Kind = 'front_preview' | 'topdown_preview' | 'imu_series' | 'ai_description';
+export type Kind =
+  'front_preview' | 'topdown_preview' | 'imu_series' | 'ai_description' | 'encoder_series';
 export interface Diagnostic {
   code: string;
   message: string;

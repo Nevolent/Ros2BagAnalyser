@@ -30,6 +30,11 @@ from rosbag_analyser.front_preview import (
     FrontSourceResolver,
     encoder_identity,
 )
+from rosbag_analyser.encoder_series import (
+    ENCODER_SERIES_DEFINITIONS, ENCODER_SERIES_BY_COMPONENT, EncoderSourceResolver,
+    PROCESSOR_VERSION as ENCODER_PROCESSOR_VERSION,
+)
+from rosbag_analyser.processors.encoder_series import EncoderSeriesProcessor
 from rosbag_analyser.imu_series import (
     DUPLICATE_TIMESTAMP_POLICY,
     IMU_SERIES_BY_COMPONENT,
@@ -47,6 +52,7 @@ from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
     AI_DESCRIPTION_KIND,
     IMU_SERIES_KIND,
+    ENCODER_SERIES_KIND,
     JobRecord,
     ProcessingRepository,
     TOPDOWN_PREVIEW_KIND,
@@ -91,6 +97,9 @@ class SerialWorker:
         imu_resolver: ImuSourceResolver | None = None,
         imu_processor: ImuSeriesProcessor | None = None,
         imu_artifact_store: ArtifactStore | None = None,
+        encoder_resolver: EncoderSourceResolver | None = None,
+        encoder_processor: EncoderSeriesProcessor | None = None,
+        encoder_artifact_store: ArtifactStore | None = None,
         description_processor: DescriptionProcessor | None = None,
         description_artifact_store: ArtifactStore | None = None,
         admission_check: Callable[[], SafeDiagnostic | None] | None = None,
@@ -107,6 +116,9 @@ class SerialWorker:
         self.imu_resolver = imu_resolver
         self.imu_processor = imu_processor
         self.imu_artifact_store = imu_artifact_store
+        self.encoder_resolver = encoder_resolver
+        self.encoder_processor = encoder_processor
+        self.encoder_artifact_store = encoder_artifact_store
         self.description_processor = description_processor
         self.description_artifact_store = description_artifact_store
         self.admission_check = admission_check
@@ -145,6 +157,9 @@ class SerialWorker:
             return
         if job.kind == TOPDOWN_PREVIEW_KIND:
             self._run_topdown_job(job)
+            return
+        if job.kind == ENCODER_SERIES_KIND:
+            self._run_imu_job(job, encoder=True)
             return
         if job.kind == IMU_SERIES_KIND:
             self._run_imu_job(job)
@@ -602,29 +617,34 @@ class SerialWorker:
                         "Owned workspace cleanup failed for top-down job %s.", job.id
                     )
 
-    def _run_imu_job(self, job: JobRecord) -> None:
+    def _run_imu_job(self, job: JobRecord, *, encoder: bool = False) -> None:
         workspace = None
         started = time.monotonic()
-        resolver = self.imu_resolver
-        processor = self.imu_processor
-        artifact_store = self.imu_artifact_store
+        resolver = self.encoder_resolver if encoder else self.imu_resolver
+        processor = self.encoder_processor if encoder else self.imu_processor
+        artifact_store = self.encoder_artifact_store if encoder else self.imu_artifact_store
+        definitions = ENCODER_SERIES_DEFINITIONS if encoder else IMU_SERIES_DEFINITIONS
+        series_by_component = ENCODER_SERIES_BY_COMPONENT if encoder else IMU_SERIES_BY_COMPONENT
+        processor_version = ENCODER_PROCESSOR_VERSION if encoder else IMU_PROCESSOR_VERSION
+        label = "Encoder" if encoder else "IMU"
+        prefix = "encoder" if encoder else "imu"
         control = self._control_token(job)
         try:
             if control is not None:
                 control.checkpoint("setup", force=True)
             if resolver is None or processor is None or artifact_store is None:
                 raise ImuSeriesProcessingError(
-                    "imu_processor_unavailable", "IMU series processing is unavailable."
+                    f"{prefix}_processor_unavailable", f"{label} series processing is unavailable."
                 )
             resolution = resolver.resolve(job.recording_id)
             if resolution.descriptor is None:
                 message = (
-                    "IMU series prerequisites are no longer available."
+                    f"{label} series prerequisites are no longer available."
                     if resolution.diagnostic is None
                     else resolution.diagnostic.message
                 )
                 code = (
-                    "imu_prerequisites_changed"
+                    f"{prefix}_prerequisites_changed"
                     if resolution.diagnostic is None
                     else resolution.diagnostic.code
                 )
@@ -632,8 +652,8 @@ class SerialWorker:
             descriptor = resolution.descriptor
             if descriptor.cache_identity != job.cache_identity:
                 raise ImuSeriesProcessingError(
-                    "imu_inputs_changed",
-                    "IMU series inputs changed after this job was requested.",
+                    f"{prefix}_inputs_changed",
+                    f"{label} series inputs changed after this job was requested.",
                 )
 
             workspace = artifact_store.create_workspace(job.id)
@@ -658,18 +678,18 @@ class SerialWorker:
                         minimum_value=result_by_id[definition.id].minimum_value,
                         maximum_value=result_by_id[definition.id].maximum_value,
                     )
-                    for definition in IMU_SERIES_DEFINITIONS
+                    for definition in definitions
                 ),
                 expected_coverage_start_ns=result.coverage_start_ns,
                 expected_coverage_end_ns=result.coverage_end_ns,
                 control=control,
             )
-            default_series = IMU_SERIES_BY_COMPONENT[descriptor.component]
+            default_series = series_by_component[descriptor.component]
             manifest: dict[str, object] = {
                 "schema_version": 2,
-                "artifact_kind": IMU_SERIES_KIND,
+                "artifact_kind": job.kind,
                 "cache_identity": job.cache_identity,
-                "processor_version": IMU_PROCESSOR_VERSION,
+                "processor_version": processor_version,
                 "series_schema_version": SERIES_SCHEMA_VERSION,
                 "source": {
                     "topic": descriptor.topic.name,
@@ -689,7 +709,7 @@ class SerialWorker:
                         "maximum": result_by_id[definition.id].maximum_value,
                         "available": result_by_id[definition.id].finite_count > 0,
                     }
-                    for definition in IMU_SERIES_DEFINITIONS
+                    for definition in definitions
                 ],
                 "timing": {
                     "timestamp_provenance": "ros_record_timestamp",
@@ -723,7 +743,7 @@ class SerialWorker:
                 or current.descriptor.cache_identity != job.cache_identity
             ):
                 raise ImuSeriesProcessingError(
-                    "imu_inputs_changed", "IMU series inputs changed during generation."
+                    f"{prefix}_inputs_changed", f"{label} series inputs changed during generation."
                 )
             if control is not None:
                 control.publishing_gate()
@@ -749,7 +769,7 @@ class SerialWorker:
                 ),
             )
             logger.info(
-                "IMU series job %s succeeded in %.3f seconds (%s samples, %s bytes).",
+                f"{label} series job %s succeeded in %.3f seconds (%s samples, %s bytes).",
                 job.id,
                 time.monotonic() - started,
                 result.sample_count,
@@ -760,7 +780,7 @@ class SerialWorker:
         except (ImuSeriesProcessingError, ArtifactStoreError) as error:
             self.repository.fail_job(job.id, error.code, error.safe_message)
             logger.warning(
-                "IMU series job %s failed with code %s.",
+                f"{label} series job %s failed with code %s.",
                 job.id,
                 error.code,
                 exc_info=True,
@@ -768,17 +788,17 @@ class SerialWorker:
         except Exception:
             self.repository.fail_job(
                 job.id,
-                "imu_processing_failed",
-                "IMU series generation failed unexpectedly. Request it again.",
+                f"{prefix}_processing_failed",
+                f"{label} series generation failed unexpectedly. Request it again.",
             )
-            logger.exception("IMU series job %s failed unexpectedly.", job.id)
+            logger.exception(f"{label} series job %s failed unexpectedly.", job.id)
         finally:
             if workspace is not None and workspace.exists() and artifact_store is not None:
                 try:
                     artifact_store.clean_workspace(workspace, job.id)
                 except ArtifactStoreError:
                     logger.exception(
-                        "Owned workspace cleanup failed for IMU job %s.", job.id
+                        f"Owned workspace cleanup failed for {label} job %s.", job.id
                     )
 
     def _control_token(self, job: JobRecord) -> JobControlToken | None:
@@ -871,6 +891,10 @@ def create_worker(
         imu_resolver=imu_resolver,
         imu_processor=ImuSeriesProcessor(),
         imu_artifact_store=imu_artifact_store,
+        encoder_resolver=EncoderSourceResolver(config.archive_root, repository, config.encoder_topic),
+        encoder_processor=EncoderSeriesProcessor(),
+        encoder_artifact_store=ArtifactStore(config.derived_root, config.ffmpeg_path,
+                                             config.ffprobe_path, ENCODER_SERIES_KIND),
         description_processor=DescriptionProcessor(config.description_python, config.description_model_root,
                                                    config.ffmpeg_path, config.ffprobe_path),
         description_artifact_store=ArtifactStore(config.derived_root, config.ffmpeg_path,

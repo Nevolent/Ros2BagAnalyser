@@ -29,6 +29,10 @@ from rosbag_analyser.front_preview import (
     PROCESSOR_VERSION as FRONT_PROCESSOR_VERSION,
     _cache_identity as front_cache_identity,
 )
+from rosbag_analyser.encoder_series import (
+    ENCODER_MESSAGE_TYPE, ENCODER_COMPONENT, ENCODER_SERIES_DEFINITIONS,
+    PROCESSOR_VERSION as ENCODER_PROCESSOR_VERSION, encoder_cache_identity,
+)
 from rosbag_analyser.imu_series import (
     DUPLICATE_TIMESTAMP_POLICY,
     IMU_MESSAGE_TYPE,
@@ -42,6 +46,7 @@ from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
     AI_DESCRIPTION_KIND,
     IMU_SERIES_KIND,
+    ENCODER_SERIES_KIND,
     TOPDOWN_PREVIEW_KIND,
     ProcessingSourceRecord,
 )
@@ -56,6 +61,7 @@ PREPARATION_KINDS = (
     AI_DESCRIPTION_KIND,
     TOPDOWN_PREVIEW_KIND,
     IMU_SERIES_KIND,
+    ENCODER_SERIES_KIND,
 )
 
 
@@ -103,7 +109,7 @@ class PreparationTargetPlan:
 
 
 class PreparationPlanner:
-    """Build the four current output targets from one parsed scan result."""
+    """Build the five current output targets from one parsed scan result."""
 
     def __init__(
         self,
@@ -113,8 +119,10 @@ class PreparationPlanner:
         imu_component: str,
         profile: PreviewProfile,
         encoder_identity: str,
+        encoder_topic: str = "",
     ) -> None:
         self.front_topic = front_topic
+        self.encoder_topic = encoder_topic
         self.imu_topic = imu_topic
         self.imu_component = imu_component
         self.profile = profile
@@ -150,6 +158,26 @@ class PreparationPlanner:
                     "series": [
                         definition.identity_values()
                         for definition in IMU_SERIES_DEFINITIONS
+                    ],
+                    "non_finite_policy": NON_FINITE_POLICY,
+                    "duplicate_timestamp_policy": DUPLICATE_TIMESTAMP_POLICY,
+                    "reduction": "none",
+                }
+            ),
+            ENCODER_SERIES_KIND: _digest(
+                {
+                    "kind": ENCODER_SERIES_KIND,
+                    "processor_version": ENCODER_PROCESSOR_VERSION,
+                    "source_identity_policy": SOURCE_CACHE_IDENTITY_POLICY,
+                    "series_schema_version": SERIES_SCHEMA_VERSION,
+                    "topic": encoder_topic,
+                    "topic_selection": TOPIC_SELECTION_POLICY,
+                    "message_type": ENCODER_MESSAGE_TYPE,
+                    "serialization": CDR_SERIALIZATION,
+                    "default_component": ENCODER_COMPONENT,
+                    "series": [
+                        definition.identity_values()
+                        for definition in ENCODER_SERIES_DEFINITIONS
                     ],
                     "non_finite_policy": NON_FINITE_POLICY,
                     "duplicate_timestamp_policy": DUPLICATE_TIMESTAMP_POLICY,
@@ -208,6 +236,7 @@ class PreparationPlanner:
             ),
             self._plan_topdown(source, recording, facts),
             self._plan_imu(source, recording, facts),
+            self._plan_encoder(source, recording, facts),
         )
 
     def unavailable_targets(
@@ -350,6 +379,43 @@ class PreparationPlanner:
             facts.database_identity.size_bytes,
         )
 
+    def _plan_encoder(
+        self,
+        source: ProcessingSourceRecord,
+        recording: RecordingScanResult,
+        facts: RecordingPreparationFacts,
+    ) -> PreparationTargetPlan:
+        common = self._ros_prerequisite(recording, facts)
+        if common is not None:
+            return self._unavailable(ENCODER_SERIES_KIND, common.code, common.message)
+        topic = select_topic(facts.metadata.topics, self.encoder_topic, ENCODER_MESSAGE_TYPE)
+        diagnostic = _topic_diagnostic(
+            topic,
+            expected_type=ENCODER_MESSAGE_TYPE,
+            missing_code="encoder_topic_unavailable",
+            type_code="encoder_topic_type_unsupported",
+            serialization_code="encoder_serialization_unsupported",
+            empty_code="encoder_topic_empty",
+            label="encoder",
+        )
+        if diagnostic is not None:
+            return self._unavailable(ENCODER_SERIES_KIND, diagnostic.code, diagnostic.message)
+        assert topic is not None
+        assert facts.metadata_identity is not None
+        assert facts.database_identity is not None
+        cache_identity = encoder_cache_identity(
+            source,
+            facts.metadata_identity,
+            facts.database_identity,
+            topic,
+            self.encoder_topic,
+        )
+        return self._available(
+            ENCODER_SERIES_KIND,
+            cache_identity,
+            facts.database_identity.size_bytes,
+        )
+
     @staticmethod
     def _ros_prerequisite(
         recording: RecordingScanResult,
@@ -427,7 +493,10 @@ def _topic_diagnostic(
         return SafeDiagnostic(
             missing_code,
             "No unique IMU stream was found. Configure a preference if several IMUs are present."
-            if label == "IMU" else "No usable raw image stream was found.",
+            if label == "IMU" else (
+                "No unique encoder stream was found. Configure a preference if several encoder topics are present."
+                if label == "encoder" else "No usable raw image stream was found."
+            ),
         )
     if topic.message_type != expected_type:
         return SafeDiagnostic(type_code, f"The configured {label} topic type is unsupported.")

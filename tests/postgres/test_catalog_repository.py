@@ -61,12 +61,14 @@ PLANNER_IDENTITIES = {
     "topdown_preview": "2" * 64,
     "imu_series": "3" * 64,
     "ai_description": "4" * 64,
+    "encoder_series": "5" * 64,
 }
 TARGET_IDENTITIES = {
     "front_preview": "a" * 64,
     "topdown_preview": "b" * 64,
     "imu_series": "c" * 64,
     "ai_description": "d" * 64,
+    "encoder_series": "e" * 64,
 }
 
 
@@ -205,6 +207,11 @@ def _planner_archive(tmp_path: Path) -> tuple[Path, Path, PreparationPlanner]:
             "message_count": 25,
         }
     )
+    information["message_count"] += 50
+    information["topics_with_message_count"].append({
+        "topic_metadata": {"name": "/rover/encoders", "type": "kuupkulgur_msgs/msg/EncodersStamped", "serialization_format": "cdr", "offered_qos_profiles": ""},
+        "message_count": 50,
+    })
     metadata_path.write_text(
         yaml.safe_dump(document, sort_keys=False), encoding="utf-8"
     )
@@ -233,7 +240,7 @@ def _insert_current_artifact_history(
             """,
             (recording_id,),
         ).fetchall()
-        assert len(targets) == 4
+        assert len(targets) == 5
         for target in targets:
             kind = str(target["kind"])
             cache_identity = str(target["cache_identity"])
@@ -253,7 +260,7 @@ def _insert_current_artifact_history(
                     kind,
                     cache_identity,
                     f"{kind}/{cache_identity}/output",
-                    "application/json" if kind == "imu_series" else "video/mp4",
+                    "application/json" if kind in {"imu_series", "encoder_series", "ai_description"} else "video/mp4",
                     json.dumps({"cache_identity": cache_identity}),
                 ),
             )
@@ -300,7 +307,7 @@ def _make_targets_available(
                     generation,
                     PLANNER_IDENTITIES[kind],
                     identities[kind],
-                    {"front_preview": 100, "topdown_preview": 200, "imu_series": 300, "ai_description": 400}[kind],
+                    {"front_preview": 100, "topdown_preview": 200, "imu_series": 300, "ai_description": 400, "encoder_series": 500}[kind],
                     recording_id,
                     kind,
                 ),
@@ -481,7 +488,7 @@ def test_artifact_delivery_requires_current_generation_target_and_planner(
 
 
 @pytest.mark.postgres
-def test_front_topdown_and_imu_kinds_are_allowed_and_isolated(
+def test_output_kinds_are_allowed_and_isolated(
     postgres_url: str,
 ) -> None:
     catalog = CatalogRepository(postgres_url)
@@ -493,12 +500,14 @@ def test_front_topdown_and_imu_kinds_are_allowed_and_isolated(
     front = repository.request_job(recording_id, "front_preview", identity)
     topdown = repository.request_job(recording_id, "topdown_preview", identity)
     imu = repository.request_job(recording_id, "imu_series", identity)
+    encoder = repository.request_job(recording_id, "encoder_series", identity)
 
     assert front.job is not None
     assert topdown.job is not None
     assert imu.job is not None
+    assert encoder.job is not None
     assert front.job.id != topdown.job.id
-    assert imu.job.id not in {front.job.id, topdown.job.id}
+    assert len({front.job.id, topdown.job.id, imu.job.id, encoder.job.id}) == 4
     with pytest.raises(psycopg.errors.CheckViolation):
         with open_connection(postgres_url) as connection:
             connection.execute(
@@ -1185,7 +1194,7 @@ def test_generation_missing_and_reappearing_preserves_identity_and_history(
     assert reappeared.ros_health == "readable"
     assert reappeared.last_seen_generation == 3
     assert job_count == 1
-    assert targets == {"count": 4, "minimum": 3, "maximum": 3}
+    assert targets == {"count": 5, "minimum": 3, "maximum": 3}
 
 
 @pytest.mark.postgres
@@ -1363,7 +1372,7 @@ def test_physical_parent_move_preserves_ready_targets_and_history(
     assert source.identity_recording_id == original.id
     assert source.identity_relative_path == "run"
     assert {str(row["kind"]): str(row["cache_identity"]) for row in targets} == identities
-    assert current_ready == 4
+    assert current_ready == 5
     assert job_recording_ids == [{"recording_id": original.id}]
 
 
@@ -1438,7 +1447,7 @@ def test_rescan_repairs_one_unambiguous_pre_feature_split_without_file_rewrite(
     assert {str(row["kind"]): str(row["cache_identity"]) for row in targets} == identities
     assert artifact_owners == [{"recording_id": split_current_id}]
     assert job_owners == [{"recording_id": split_current_id}]
-    assert matching_ready == 4
+    assert matching_ready == 5
 
 
 @pytest.mark.postgres
@@ -1506,11 +1515,12 @@ def test_prepare_outputs_independently_and_remains_concurrently_idempotent(
         "queued",
         "queued",
         "unavailable",
+        "queued",
     ]
     with open_connection(postgres_url) as connection:
         assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
             "count"
-        ] == 3
+        ] == 4
         connection.execute("DELETE FROM jobs")
 
     _make_targets_available(postgres_url, recording_id)
@@ -1531,12 +1541,12 @@ def test_prepare_outputs_independently_and_remains_concurrently_idempotent(
             "SELECT id, kind FROM jobs ORDER BY id"
         ).fetchall()
     assert [row["kind"] for row in jobs] == list(PROCESSING_KINDS)
-    assert len(jobs) == 4
+    assert len(jobs) == 5
     outcomes = [
         [item.outcome for item in result.outputs] for result in (first, second)
     ]
     assert sorted(outcomes) == sorted(
-        [["queued"] * 4, ["active_reused"] * 4]
+        [["queued"] * 5, ["active_reused"] * 5]
     )
 
 
@@ -1578,12 +1588,13 @@ def test_prepare_output_scheduling_failure_does_not_rollback_siblings(
             "queued",
             "queued",
             "request_failed",
+            "queued",
         ]
         assert scheduled.outputs[3].diagnostic_code == "preparation_schedule_failed"
         with open_connection(postgres_url) as connection:
             assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
                 "count"
-            ] == 3
+            ] == 4
     finally:
         with open_connection(postgres_url) as connection:
             connection.execute("DROP TRIGGER reject_synthetic_imu_job ON jobs")
@@ -1595,11 +1606,12 @@ def test_prepare_output_scheduling_failure_does_not_rollback_siblings(
         "active_reused",
         "active_reused",
         "queued",
+        "active_reused",
     ]
     with open_connection(postgres_url) as connection:
         assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
             "count"
-        ] == 4
+        ] == 5
 
 
 @pytest.mark.postgres
@@ -1621,17 +1633,17 @@ def test_capacity_admission_creates_no_stale_jobs(
         ),
     )
 
-    assert [output.outcome for output in paused.outputs] == ["unavailable"] * 4
+    assert [output.outcome for output in paused.outputs] == ["unavailable"] * 5
     assert [output.diagnostic_code for output in paused.outputs] == [
         "derived_space_low"
-    ] * 4
+    ] * 5
     with open_connection(postgres_url) as connection:
         assert connection.execute("SELECT count(*) AS count FROM jobs").fetchone()[
             "count"
         ] == 0
 
     resumed = repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
-    assert [output.outcome for output in resumed.outputs] == ["queued"] * 4
+    assert [output.outcome for output in resumed.outputs] == ["queued"] * 5
 
 
 @pytest.mark.postgres
@@ -1685,7 +1697,7 @@ def test_concurrent_claim_is_fifo_and_global_single_running_with_worker_probe(
     repository = ProcessingRepository(postgres_url)
     schedule = repository.prepare_recording(recording_id, PLANNER_IDENTITIES)
     queued_ids = [item.job.id for item in schedule.outputs if item.job is not None]
-    assert len(queued_ids) == 4
+    assert len(queued_ids) == 5
     start = threading.Barrier(2)
 
     def claim():
@@ -1705,7 +1717,7 @@ def test_concurrent_claim_is_fifo_and_global_single_running_with_worker_probe(
     overview = repository.processing_overview(queue_limit=10)
     assert overview.running_count == 1
     assert [item.job.id for item in overview.queue] == queued_ids[1:]
-    assert [item.queue_position for item in overview.queue] == [1, 2, 3]
+    assert [item.queue_position for item in overview.queue] == [1, 2, 3, 4]
     assert repository.worker_online(WORKER_LOCK_NAME) is False
     assert repository.worker_online(WORKER_LOCK_NAME) is False
 
@@ -2366,7 +2378,7 @@ def test_maximum_synthetic_catalog_bulk_queries_and_response_are_bounded(
     processing_ms = int((perf_counter() - processing_started) * 1000)
 
     assert len(view.recordings) == 5000
-    assert sum(len(item.analysis.outputs) for item in view.recordings) == 20000
+    assert sum(len(item.analysis.outputs) for item in view.recordings) == 25000
     assert len(encoded.encode("utf-8")) < 8 * 1024 * 1024
     assert overview.running_count == 1
     assert overview.queued_count == 1000
@@ -2402,12 +2414,23 @@ async def test_v1_nested_synthetic_operational_acceptance(
         metadata_path = recording_root / "metadata.yaml"
         document = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
         information = document["rosbag2_bagfile_information"]
-        information["message_count"] = 84
+        information["message_count"] = 126
         information["topics_with_message_count"].append(
             {
                 "topic_metadata": {
                     "name": "/imu/data",
                     "type": "sensor_msgs/msg/Imu",
+                    "serialization_format": "cdr",
+                    "offered_qos_profiles": "",
+                },
+                "message_count": 42,
+            }
+        )
+        information["topics_with_message_count"].append(
+            {
+                "topic_metadata": {
+                    "name": "/rover/encoders",
+                    "type": "kuupkulgur_msgs/msg/EncodersStamped",
                     "serialization_format": "cdr",
                     "offered_qos_profiles": "",
                 },
@@ -2526,7 +2549,7 @@ async def test_v1_nested_synthetic_operational_acceptance(
                             cache_identity,
                             f"{kind}/synthetic/output",
                             "application/json"
-                            if kind == "imu_series"
+                            if kind in {"imu_series", "encoder_series", "ai_description"}
                             else "video/mp4",
                             json.dumps(
                                 {
@@ -2630,17 +2653,18 @@ async def test_v1_nested_synthetic_operational_acceptance(
             assert [item["recording_id"] for item in prepared_rows] == selected_ids
             assert [item["outcome"] for item in prepared_rows[0]["outputs"]] == [
                 "ready_reused"
-            ] * 4
+            ] * 5
             assert [item["outcome"] for item in prepared_rows[1]["outputs"]] == [
                 "queued"
-            ] * 4
+            ] * 5
             assert [item["outcome"] for item in prepared_rows[2]["outputs"]] == [
                 "retry_queued"
-            ] * 4
+            ] * 5
             assert [item["outcome"] for item in prepared_rows[3]["outputs"]] == [
                 "queued",
                 "queued",
                 "unavailable",
+                "queued",
                 "queued",
             ]
 
@@ -2659,7 +2683,7 @@ async def test_v1_nested_synthetic_operational_acceptance(
 
             queue = await client.get("/api/v1/processing/jobs?view=queued&limit=20")
             assert [item["queue_position"] for item in queue.json()["items"]] == list(
-                range(1, 12)
+                range(1, 15)
             )
             running = processing_repository.claim_next_job()
             assert running is not None
@@ -2753,13 +2777,15 @@ def test_recording_progress_keeps_completed_siblings_across_output_handoffs(
     assert second.id == ids[1]
     after = repository.processing_overview(queue_limit=None)
     assert {item.job.id for item in after.recording_jobs} == set(ids)
-    assert sum(item.job.estimated_total_ms for item in after.recording_jobs) == 40000
+    assert sum(item.job.estimated_total_ms for item in after.recording_jobs) == 50000
 
     repository.fail_job(second.id, "synthetic_failure", "Synthetic test failure.")
     third = repository.claim_next_job()
     repository.fail_job(third.id, "synthetic_failure", "Synthetic test failure.")
     fourth = repository.claim_next_job()
     repository.fail_job(fourth.id, "synthetic_failure", "Synthetic test failure.")
+    fifth = repository.claim_next_job()
+    repository.fail_job(fifth.id, "synthetic_failure", "Synthetic test failure.")
     # A later retry must not inherit elapsed time or estimates from the older run.
     retried = repository.retry_failed_job(first.id, PLANNER_IDENTITIES)
     retry_job = repository.claim_next_job()
@@ -2896,3 +2922,35 @@ def test_saved_topics_and_gap_inspection_survive_scan_upserts(postgres_url):
     assert repository.get_recording(row.id).recording.scan_details == inspection
     repository.apply_snapshot(snapshot)
     assert repository.get_recording(row.id).recording.scan_details == inspection
+
+
+@pytest.mark.postgres
+def test_repeated_migration_preserves_encoder_targets_jobs_and_artifacts(postgres_url: str) -> None:
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    _make_targets_available(postgres_url, recording_id)
+    repository = ProcessingRepository(postgres_url)
+    identity = TARGET_IDENTITIES["encoder_series"]
+    requested = repository.request_job(recording_id, "encoder_series", identity)
+    running = repository.claim_next_job()
+    assert running.id == requested.job.id
+    assert repository.enter_publishing(running.id).execution_phase == "publishing"
+    artifact = repository.complete_job(running.id, ArtifactWrite(
+        recording_id=recording_id, kind="encoder_series", cache_identity=identity,
+        output_relative_path=f"encoder_series/{identity}/series.json",
+        mime_type="application/json", size_bytes=100, coverage_start_ns=0,
+        coverage_end_ns=1000, manifest={"cache_identity": identity},
+    ))
+    def saved():
+        with open_connection(postgres_url) as connection:
+            return tuple(connection.execute(f"SELECT * FROM {table} ORDER BY id" if table != "preparation_targets" else "SELECT * FROM preparation_targets ORDER BY recording_id, kind").fetchall()
+                         for table in ("jobs", "artifacts", "preparation_targets"))
+    before = saved()
+    apply_catalog_migration(postgres_url)
+    apply_catalog_migration(postgres_url)
+    assert saved() == before
+    reused = repository.request_job(recording_id, "encoder_series", identity)
+    assert reused.artifact == artifact and reused.job is None
+    assert repository.get_current_artifact_for_delivery(recording_id, "encoder_series", artifact.id,
+        PLANNER_IDENTITIES["encoder_series"]) == artifact

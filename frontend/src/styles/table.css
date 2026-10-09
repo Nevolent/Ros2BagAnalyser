@@ -90,6 +90,12 @@
 .data-table-panel .bag-table {
   min-width: 900px;
 }
+.data-table-panel .bag-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--table-surface);
+}
 .data-table-panel .bag-table thead tr:last-child th {
   top: 0;
   background: var(--table-surface);

@@ -157,6 +157,22 @@ test('scrolling keeps filters and headers visible without shifting table columns
   await expect.poll(async () => (await thumb.boundingBox())?.y).toBeGreaterThan(thumbBefore!.y);
   await expect(search).toBeInViewport();
   await expect(nameHeader).toBeInViewport();
+  // The whole header, including its checkbox and rounded corners, covers scrolled rows.
+  const head = page.locator('.bag-table thead');
+  const headBox = (await head.boundingBox())!;
+  const selectAll = (await page
+    .getByRole('checkbox', { name: 'Select all visible bags' })
+    .boundingBox())!;
+  expect(selectAll.y).toBeGreaterThanOrEqual(headBox.y);
+  expect(selectAll.y + selectAll.height).toBeLessThanOrEqual(headBox.y + headBox.height);
+  expect(
+    await head.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return [box.left + 1, box.left + 18, box.right - 1].every((x) =>
+        element.contains(document.elementFromPoint(x, box.top + 2)),
+      );
+    }),
+  ).toBe(true);
   await expect(page.locator('.bag-table tbody tr').last()).toBeInViewport();
   await expect(page.locator('.bag-table tbody tr').last().locator('td').last()).toHaveCSS(
     'border-bottom-width',

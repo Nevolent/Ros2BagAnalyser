@@ -49,7 +49,6 @@
   left: 10px;
   right: 10px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: var(--space-2);
   color: #fff;
@@ -499,7 +498,7 @@
   transition: none;
 }
 .timeline-measurement[data-lifted='true'] {
-  transform: translateY(-4px);
+  transform: translateY(-6px);
 }
 .timeline-line {
   fill: none;
@@ -621,15 +620,20 @@
   padding: 0;
   border: 0;
   background: transparent;
-  cursor: help;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .timeline-spike-fill {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: var(--status-error);
-  opacity: 0.22;
+  background: #ff2525;
+  opacity: 0.38;
   pointer-events: none;
+}
+.timeline-spike-marker[data-spike-thin='true'] .timeline-spike-fill {
+  opacity: 0.7;
 }
 .timeline-spike-marker:focus-visible {
   outline: 2px solid var(--ring);
@@ -649,7 +653,8 @@
   overflow: auto;
 }
 .timeline-axis {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   /* Center labels between the last graph line and the card's bottom edge. */
   flex: 0 0 calc(24px + var(--timeline-plot-bottom));
   margin-top: calc(-1 * var(--timeline-plot-bottom));
@@ -662,6 +667,17 @@
   white-space: nowrap;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
+}
+.timeline-axis > time:last-child {
+  text-align: right;
+}
+.timeline-pan {
+  display: flex;
+  gap: 2px;
+}
+.timeline-pan .analysis-graph-button {
+  width: 22px;
+  height: 22px;
 }
 @media (max-width: 600px) {
   .analysis-workspace,

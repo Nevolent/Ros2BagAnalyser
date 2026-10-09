@@ -32,7 +32,8 @@ The vertical scale fits the selected data in the visible time window with a smal
 margin and five evenly spaced ticks. All selected axes or wheels share the same scale; overlapping traces
 use modest transparency. Brief extreme spikes appear
 as translucent red bands across the graph, narrowing to lines when zoomed out;
-hover or focus a band to inspect the original value.
+hover or focus a band to inspect the original value, or click it (Enter with keyboard
+focus) to seek to the event. Playback keeps its current state; Space plays or pauses.
 These suspected glitches are excluded from the scale and show a warning in the
 readout. Sustained changes remain plotted. The five dotted lines stay in place.
 With every checkbox cleared, the dotted grid and timeline remain without values.
@@ -41,6 +42,8 @@ small break in the dotted line behind the text.
 
 Space plays or pauses; arrow keys seek one second, or ten seconds with Shift.
 Hold Shift and drag on the graph to zoom in; hover or focus **?** for this hint.
+The arrows between the timestamps move the visible window earlier or later by
+20% of its width, without seeking. Zoom in for smaller steps.
 When multiple colour-camera previews are prepared, use the dropdown beside
 **Front** to switch streams without moving the shared timeline. A clearly
 front-named stream is selected first; otherwise the busiest stream wins, with

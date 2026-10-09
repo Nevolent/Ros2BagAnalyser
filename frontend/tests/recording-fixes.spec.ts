@@ -165,7 +165,7 @@ test('timeline cursor remains a continuous line during playback and scrubbing', 
     );
     if (lifted) {
       expect(cursor.y - (readout.y + readout.height)).toBeGreaterThanOrEqual(1);
-      expect(readout.y - box.y).toBeCloseTo(2, 1);
+      expect(readout.y - box.y).toBeCloseTo(4, 1);
     }
     const capture = PNG.sync.read(await page.screenshot());
     for (let y = Math.ceil(cursor.y) + 1; y < cursor.y + cursor.height - 1; y++) {

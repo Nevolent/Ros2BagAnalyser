@@ -236,7 +236,11 @@ view boundaries, with 4% range padding and five evenly spaced ticks. Constant
 signals use 1% magnitude padding (minimum 0.001). Selected traces share one axis;
 multi-channel traces use modest opacity. Encoder traces share one RPM axis in the six-wheel
 view; individual wheel selection uses the same samples. Without IMU, the clock
-uses recording metadata Unix time, or relative seconds.
+uses recording metadata Unix time, or relative seconds. Window arrows pan by 20%
+of the current span without seeking or changing playback; spike activation seeks
+to its recorded sample and preserves playback.
+Playback follows the cursor while it is visible; panning or zooming away keeps
+the chosen window until the clock enters it or an explicit seek brings it back.
 
 The dense SVG trace is memoized and composited separately from the HTML cursor.
 The cursor uses fractional transforms each animation frame; React readouts and

@@ -238,6 +238,9 @@ test('encoder checkboxes combine solid colored traces and keep readings above th
 test('extreme encoder glitches leave inspectable gaps without stretching the scale or readouts', async ({
   page,
 }) => {
+  const now = new Date('2026-10-09T10:00:00Z');
+  await page.clock.install({ time: now });
+  await page.clock.pauseAt(now);
   const { api, encoder } = await setup(page);
   const values = Array.from({ length: 81 }, (_, index) =>
     [10, 12, 14, 16, 18, 20].map((value) => value + Math.sin(index) * 0.5),
@@ -290,7 +293,8 @@ test('extreme encoder glitches leave inspectable gaps without stretching the sca
   const marker = page.getByRole('button', { name: /FL extreme spike: -36031/ });
   await expect(marker).toHaveText('');
   const fill = marker.locator('.timeline-spike-fill');
-  await expect(fill).toHaveCSS('opacity', '0.22');
+  await expect(fill).toHaveCSS('opacity', '0.38');
+  await expect(fill).toHaveCSS('background-color', 'rgb(255, 37, 37)');
   const initialGap = (await fill.boundingBox())!;
   const plotBox = (await plot.boundingBox())!;
   const grid = await page
@@ -308,12 +312,35 @@ test('extreme encoder glitches leave inspectable gaps without stretching the sca
   await marker.press('Escape');
   await expect(tooltip).toHaveCount(0);
   await expect(plot).toHaveAttribute('aria-valuenow', '2');
+  await marker.click();
+  await expect(plot).toHaveAttribute('aria-valuenow', '2.05');
+  await expect(plot).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(page.getByRole('button', { name: 'Pause timeline', exact: true })).toBeVisible();
+  await page.clock.runFor(200);
+  await marker.click();
+  await expect(plot).toHaveAttribute('aria-valuenow', '2.05');
+  await expect(page.getByRole('button', { name: 'Pause timeline', exact: true })).toBeVisible();
+  await page.keyboard.press('Space');
+  await expect(page.getByRole('button', { name: 'Play timeline', exact: true })).toBeVisible();
+  await marker.focus();
+  await marker.press('Space');
+  await expect(plot).toHaveAttribute('aria-valuenow', '2.05');
+  await expect(page.getByRole('button', { name: 'Pause timeline', exact: true })).toBeVisible();
+  await marker.press('Space');
+  await expect(page.getByRole('button', { name: 'Play timeline', exact: true })).toBeVisible();
+  await plot.press('ArrowLeft');
+  await marker.press('Enter');
+  await expect(plot).toHaveAttribute('aria-valuenow', '2.05');
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
   const zoomedGap = (await fill.boundingBox())!;
   expect(zoomedGap.width).toBeCloseTo(initialGap.width * 2, 1);
   await marker.hover();
   await expect(tooltip).toContainText('FL extreme spike: -36031 RPM');
   await page.getByRole('button', { name: 'Reset zoom', exact: true }).click();
+  await plot.press('Home');
+  await plot.press('ArrowRight');
+  await plot.press('ArrowRight');
   await plot.press('ArrowRight');
   await expect(page.locator('[data-encoder-value="encoder.FL"]')).toHaveText(
     values[40][0].toFixed(3),
@@ -335,6 +362,17 @@ test('extreme encoder glitches leave inspectable gaps without stretching the sca
   expect(3 / (paired[0] - paired[4])).toBeGreaterThan(0.85);
   for (const wheel of ['ML', 'MR', 'RL', 'RR'])
     await page.getByRole('checkbox', { name: `${wheel} wheel` }).check();
+  // A spike hit target also allows the normal Shift selection gesture.
+  const spikeBox = (await marker.boundingBox())!;
+  await page.keyboard.down('Shift');
+  await page.mouse.move(spikeBox.x + spikeBox.width / 2, spikeBox.y + 80);
+  await page.mouse.down();
+  await page.mouse.move(spikeBox.x + spikeBox.width / 2 + 120, spikeBox.y + 80);
+  await expect(page.locator('.timeline-selection')).toBeVisible();
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  await expect(plot).toHaveAttribute('aria-valuenow', '3');
+  await page.getByRole('button', { name: 'Reset zoom', exact: true }).click();
   await page
     .locator('.analysis-timeline')
     .screenshot({ path: test.info().outputPath('extreme-spikes.png') });
@@ -355,7 +393,10 @@ test('extreme encoder glitches leave inspectable gaps without stretching the sca
   await page.getByRole('menuitemradio', { name: 'Encoders', exact: true }).click();
   const thinMarker = page.getByRole('button', { name: /FL extreme spike: -36031/ });
   expect((await thinMarker.locator('.timeline-spike-fill').boundingBox())!.width).toBe(1);
+  await expect(thinMarker.locator('.timeline-spike-fill')).toHaveCSS('opacity', '0.7');
   expect((await thinMarker.boundingBox())!.width).toBeGreaterThanOrEqual(12);
   await thinMarker.hover();
   await expect(tooltip).toContainText('FL extreme spike: -36031 RPM');
+  await thinMarker.click();
+  await expect(plot).toHaveAttribute('aria-valuenow', '2.05');
 });

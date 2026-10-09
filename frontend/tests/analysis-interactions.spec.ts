@@ -38,13 +38,19 @@ test('right-hand value and unit lift instantly near the playhead and settle back
   await expect(measurement).toHaveCSS('transform', 'none');
   const restingScale = (await scale.boundingBox())!;
   const restingValue = (await measurement.boundingBox())!;
+  const gridTop =
+    box.y + Number(await page.locator('.timeline-grid line').first().getAttribute('y1'));
+  expect(gridTop - restingValue.y - restingValue.height).toBeCloseTo(2, 1);
   await page
     .locator('.analysis-timeline')
     .screenshot({ path: test.info().outputPath('labels-resting.png') });
   await plot.press('End');
   await expect
     .poll(async () => (await measurement.boundingBox())!.y)
-    .toBeCloseTo(restingValue.y - 4, 1);
+    .toBeCloseTo(restingValue.y - 6, 1);
+  const liftedValue = (await measurement.boundingBox())!;
+  const cursor = (await page.locator('.timeline-cursor').boundingBox())!;
+  expect(cursor.y - 6 - liftedValue.y - liftedValue.height).toBeCloseTo(2, 1);
   expect(await scale.boundingBox()).toEqual(restingScale);
   await page
     .locator('.analysis-timeline')
@@ -135,6 +141,13 @@ test('Shift drag previews Unix boundaries and zooms in both directions without s
     await page.mouse.move(box.x + box.width * to, box.y + 100, { steps: 5 });
     const start = Number(await page.locator('[data-selection-start]').textContent());
     const end = Number(await page.locator('[data-selection-end]').textContent());
+    const selectionBox = (await page.locator('.timeline-selection rect').boundingBox())!;
+    const startLabel = (await page.locator('[data-selection-start]').boundingBox())!;
+    const endLabel = (await page.locator('[data-selection-end]').boundingBox())!;
+    expect(selectionBox.y + selectionBox.height - endLabel.y - endLabel.height).toBeCloseTo(
+      startLabel.y - selectionBox.y,
+      0,
+    );
     expect(start).toBeCloseTo(unixStart + duration * 0.2, 0);
     expect(end).toBeCloseTo(unixStart + duration * 0.7, 0);
     await expect(plot).toHaveAttribute('aria-valuenow', '0');
@@ -225,6 +238,56 @@ test('zoom buttons stay anchored inside a Shift-selected range when playback is 
   );
   await plot.click({ position: { x: box.width * 0.5, y: 100 } });
   expect(Number(await plot.getAttribute('aria-valuenow'))).toBeCloseTo(duration * 0.5, 0);
+});
+
+test('window arrows pan by one fifth of the zoomed span, clamp at bounds, and preserve playback', async ({
+  page,
+}) => {
+  const now = new Date('2026-10-09T10:00:00Z');
+  await page.clock.install({ time: now });
+  await page.clock.pauseAt(now);
+  await page.goto('/?demo=1#/analysis');
+  const plot = page.getByRole('slider');
+  const earlier = page.getByRole('button', { name: 'Move view earlier' });
+  const later = page.getByRole('button', { name: 'Move view later' });
+  const end = page.locator('[data-timeline-end]');
+  await expect(earlier).toBeDisabled();
+  await expect(later).toBeDisabled();
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect(earlier).toBeDisabled();
+  await expect(later).toHaveAttribute('title', /7.500 s/);
+  await later.click();
+  await expect(end).toHaveText((unixStart + 45).toFixed(3));
+  await expect(plot).toHaveAttribute('aria-valuenow', '0');
+  await expect(page.locator('.timeline-cursor')).toBeHidden();
+  await earlier.press('Enter');
+  await expect(end).toHaveText((unixStart + 37.5).toFixed(3));
+  await expect(earlier).toBeDisabled();
+  await page.getByRole('button', { name: 'Play timeline', exact: true }).click();
+  await later.click();
+  await expect(page.getByRole('button', { name: 'Pause timeline', exact: true })).toBeVisible();
+  await expect(plot).toHaveAttribute('aria-valuenow', '0');
+  await page.clock.runFor(200);
+  expect(Number(await plot.getAttribute('aria-valuenow'))).toBeGreaterThan(0.1);
+  await expect(end).toHaveText((unixStart + 45).toFixed(3));
+  await expect(page.locator('.timeline-cursor')).toBeHidden();
+  await page.getByRole('button', { name: 'Pause timeline', exact: true }).click();
+  for (let i = 0; i < 4; i++) await later.click();
+  await expect(later).toBeDisabled();
+  await expect(end).toHaveText((unixStart + duration).toFixed(3));
+  for (let i = 0; i < 5; i++) await earlier.click();
+  await expect(earlier).toBeDisabled();
+  await plot.press('Home');
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect(later).toHaveAttribute('title', /3.750 s/);
+  await later.click();
+  await expect(end).toHaveText((unixStart + 22.5).toFixed(3));
+  await page.setViewportSize({ width: 390, height: 844 });
+  const leftTime = (await page.locator('[data-timeline-time]').boundingBox())!;
+  const controls = (await page.locator('.timeline-pan').boundingBox())!;
+  const rightTime = (await end.boundingBox())!;
+  expect(controls.x).toBeGreaterThan(leftTime.x + leftTime.width);
+  expect(controls.x + controls.width).toBeLessThan(rightTime.x);
 });
 
 test('graph geometry updates before paint throughout panel dragging and collapse', async ({

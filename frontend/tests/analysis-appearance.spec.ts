@@ -357,6 +357,8 @@ for (const width of [390, 640]) {
       'encoder.RR',
     );
     await expect(page.locator('[data-encoder-value]')).toHaveCSS('color', 'rgb(229, 211, 79)');
+    const singleReading = (await page.locator('.timeline-measurement').boundingBox())!;
+    expect(plot.y + top - singleReading.y - singleReading.height).toBeCloseTo(2, 1);
     await expect(page.locator('[data-encoder-trace]')).toHaveAttribute('opacity', '1');
     await page.getByRole('checkbox', { name: 'RR wheel' }).uncheck();
     await expect(page.locator('.timeline-grid text, .timeline-axis-reading')).toHaveCount(0);

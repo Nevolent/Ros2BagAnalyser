@@ -175,10 +175,10 @@ export const Timeline = memo(function Timeline({
       typeof next === 'function' ? next(current.current) : { ...current.current, ...next };
     setState(current.current);
   }
-  function atTime(previous: TimelineState, next: number): TimelineState {
+  function atTime(previous: TimelineState, next: number, follow = true): TimelineState {
     const time = clamp(next, 0, duration);
     const start =
-      time < previous.start || time > previous.start + previous.span
+      follow && (time < previous.start || time > previous.start + previous.span)
         ? clamp(time - previous.span * 0.2, 0, duration - previous.span)
         : previous.start;
     return { ...previous, time, start, playing: time < duration && previous.playing };
@@ -192,7 +192,7 @@ export const Timeline = memo(function Timeline({
     if (!(duration > 0)) return;
     if (current.current.time >= duration) seekVersion.current++;
     update((previous) => ({
-      ...atTime(previous, previous.time >= duration ? 0 : previous.time),
+      ...(previous.time >= duration ? atTime(previous, 0) : previous),
       playing: !previous.playing,
     }));
   }
@@ -217,6 +217,13 @@ export const Timeline = memo(function Timeline({
   }
   function resetZoom() {
     update({ start: 0, span: Math.max(duration, 0.001) });
+  }
+  function pan(direction: -1 | 1) {
+    update((previous) => ({
+      ...previous,
+      start: clamp(previous.start + direction * previous.span * 0.2, 0, duration - previous.span),
+    }));
+    setHover(null);
   }
   function measurePlot() {
     const rect = plot.current!.getBoundingClientRect();
@@ -292,7 +299,12 @@ export const Timeline = memo(function Timeline({
       const elapsed = (now - previous) / 1000;
       previous = now;
       const before = current.current;
-      current.current = atTime(before, before.time + elapsed);
+      // Keep following a visible playhead; allow a panned-away window to stay put.
+      current.current = atTime(
+        before,
+        before.time + elapsed,
+        before.time >= before.start && before.time <= before.start + before.span,
+      );
       paintCursor();
       // Keep movement at the display refresh rate; readouts and camera drift
       // checks need far fewer React commits, especially on 120 Hz displays.
@@ -1145,7 +1157,7 @@ export const Timeline = memo(function Timeline({
                     </text>
                     <text
                       x={clamp(x(selectionEnd) - 5, Math.min(size.width - 5, 89), size.width - 5)}
-                      y={size.height - 11}
+                      y={size.height - bottom - 8}
                       textAnchor="end"
                       data-selection-end=""
                     >
@@ -1191,11 +1203,15 @@ export const Timeline = memo(function Timeline({
                 key={`${name}-${spike.timeNs}`}
                 type="button"
                 className="timeline-spike-marker"
+                data-spike-thin={markerWidth < 3}
                 data-spike-channel={spikes.map(({ name }) => name).join(' ')}
                 aria-label={description}
                 aria-describedby={hover?.spikes === spikes ? 'timeline-spike-tooltip' : undefined}
                 style={{ left: hitLeft, width: hitWidth, top, bottom }}
-                onPointerDown={(event) => event.stopPropagation()}
+                onPointerDown={(event) => {
+                  // Shift dragging uses the graph's normal selection gesture.
+                  if (!event.shiftKey) event.stopPropagation();
+                }}
                 onPointerMove={(event) => {
                   event.stopPropagation();
                   show();
@@ -1206,11 +1222,19 @@ export const Timeline = memo(function Timeline({
                 onBlur={() => setHover(null)}
                 onClick={(event) => {
                   event.stopPropagation();
+                  if (event.shiftKey) return;
+                  seek(spike.timeSeconds);
+                  plot.current?.focus({ preventScroll: true });
                   show();
                 }}
                 onKeyDown={(event) => {
                   event.stopPropagation();
                   if (event.key === 'Escape') setHover(null);
+                  if (event.key === ' ') {
+                    event.preventDefault();
+                    if (!event.repeat) togglePlayback();
+                    setHover(null);
+                  }
                 }}
               >
                 <span
@@ -1227,6 +1251,7 @@ export const Timeline = memo(function Timeline({
               className={`timeline-measurement${encoderGraph ? ' is-encoder' : ''}`}
               role="group"
               aria-label={encoderGraph ? 'Wheel encoder readings' : 'IMU readings'}
+              style={{ top: 'auto', bottom: size.height - top + 2 }}
             >
               {activeNames.map((name) => {
                 const source = channels[name];
@@ -1326,6 +1351,32 @@ export const Timeline = memo(function Timeline({
             >
               {formatUnix(state.time)}
             </time>
+            <div className="timeline-pan" role="group" aria-label="Move visible time window">
+              {([-1, 1] as const).map((direction) => (
+                <button
+                  key={direction}
+                  type="button"
+                  className="analysis-graph-button"
+                  aria-label={direction < 0 ? 'Move view earlier' : 'Move view later'}
+                  title={`Move ${direction < 0 ? 'earlier' : 'later'} by ${(state.span * 0.2).toFixed(3)} s (20% of view)`}
+                  disabled={
+                    duration <= 0 ||
+                    (direction < 0 ? state.start <= 0 : state.start >= duration - state.span)
+                  }
+                  onClick={() => pan(direction)}
+                >
+                  <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d={direction < 0 ? 'M10 4 6 8l4 4' : 'm6 4 4 4-4 4'}
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              ))}
+            </div>
             <time
               data-timeline-end=""
               dateTime={

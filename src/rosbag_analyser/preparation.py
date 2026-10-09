@@ -399,8 +399,14 @@ def _aggregate_state(outputs: Mapping[str, str]) -> str:
         return "processing"
     if "queued" in states:
         return "queued"
-    if front == "ready":
-        return "ready" if outputs.get(AI_DESCRIPTION_KIND) == "ready" else "partially_prepared"
+    if (
+        front == "ready"
+        and outputs.get(AI_DESCRIPTION_KIND) == "ready"
+        and "not_requested" not in states
+    ):
+        return "ready"
+    if "ready" in states:
+        return "partially_prepared"
     return "not_planned"
 
 

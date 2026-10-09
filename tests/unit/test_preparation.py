@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from rosbag_analyser.catalog.types import SafeDiagnostic
 from rosbag_analyser.persistence.processing_repository import (
     PROCESSING_KINDS,
@@ -158,6 +160,8 @@ def test_aggregate_precedence_is_failed_processing_queued_ready_not_planned() ->
     )
     partial = service._analysis_for_group(7, group, GENERATION)
     group["ai_description"] = CurrentOutputRecord(_target("ai_description"), artifact=_artifact("ai_description"))
+    for kind in ("topdown_preview", "imu_series"):
+        group[kind] = CurrentOutputRecord(_target(kind), artifact=_artifact(kind))
     ready = service._analysis_for_group(7, group, GENERATION)
 
     assert failed.analysis_state == "failed"
@@ -166,6 +170,43 @@ def test_aggregate_precedence_is_failed_processing_queued_ready_not_planned() ->
     assert not_planned.analysis_state == "not_planned"
     assert partial.analysis_state == "partially_prepared"
     assert ready.analysis_state == "ready"
+
+
+@pytest.mark.parametrize("pending_kind", PROCESSING_KINDS)
+def test_any_missing_compatible_output_makes_preparation_partial(pending_kind) -> None:
+    # A rescan invalidates only the changed output; siblings remain reusable.
+    group = {
+        kind: CurrentOutputRecord(
+            _target(kind),
+            artifact=None if kind == pending_kind else _artifact(kind),
+        )
+        for kind in PROCESSING_KINDS
+    }
+
+    analysis = _service()._analysis_for_group(7, group, GENERATION)
+
+    assert analysis.analysis_state == "partially_prepared"
+    assert {item.kind for item in analysis.outputs if item.state == "not_requested"} == {
+        pending_kind
+    }
+    assert all(
+        item.state == "ready" for item in analysis.outputs if item.kind != pending_kind
+    )
+
+
+def test_new_encoder_target_preserves_existing_preparation_as_partial() -> None:
+    group = {
+        kind: CurrentOutputRecord(_target(kind), artifact=_artifact(kind))
+        for kind in PROCESSING_KINDS if kind != "encoder_series"
+    }
+    service = _service()
+    before = service._analysis_for_group(7, group, GENERATION)
+    group["encoder_series"] = CurrentOutputRecord(_target("encoder_series"))
+    after = service._analysis_for_group(7, group, GENERATION)
+
+    assert before.analysis_state == "ready"
+    assert after.analysis_state == "partially_prepared"
+    assert next(item for item in after.outputs if item.kind == "encoder_series").state == "not_requested"
 
 
 def test_missing_topdown_companion_is_optional_for_aggregate_readiness() -> None:
@@ -463,4 +504,6 @@ def test_unprepared_front_camera_does_not_become_ready_from_imu_alone() -> None:
     group["imu_series"] = CurrentOutputRecord(
         _target("imu_series"), artifact=_artifact("imu_series"),
     )
-    assert _service()._analysis_for_group(7, group, GENERATION).analysis_state == "not_planned"
+    analysis = _service()._analysis_for_group(7, group, GENERATION)
+    assert analysis.analysis_state == "partially_prepared"
+    assert analysis.outputs[0].state == "not_requested"

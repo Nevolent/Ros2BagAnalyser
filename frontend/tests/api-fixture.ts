@@ -115,7 +115,11 @@ export function telemetry() {
 export async function apiFixture(page: Page) {
   const recording = detail();
   const review = { ...detail(43), duration_ns: '0', analysis_state: 'not_planned', outputs: [] };
-  const partial = { ...detail(44), analysis_state: 'not_planned', outputs: [recording.outputs[0]] };
+  const partial = {
+    ...detail(44),
+    analysis_state: 'partially_prepared',
+    outputs: [recording.outputs[0]],
+  };
   const catalog: Catalog = {
     scan: { completed_at: '2026-09-24T09:00:00Z' },
     folders: [

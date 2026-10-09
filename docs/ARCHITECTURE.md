@@ -19,6 +19,8 @@ Browser -> private proxy -> FastAPI -> PostgreSQL
 
 The API validates requests and delivers data. Services coordinate workflows;
 processors decode and transcode. Startup does not scan, prepare or migrate.
+API shutdown gives active HTTP responses ten seconds to finish before cancelling
+them and closing request resources, so stalled media reads cannot prevent restart.
 
 | Modules in `src/rosbag_analyser/` | Responsibility |
 | --- | --- |
@@ -69,9 +71,11 @@ identities cannot be duplicated. Retry resolves current inputs.
 The recording state precedence is failed, processing, queued, ready, partially
 prepared, not planned.
 Any failed output or unavailable front input makes it Failed. Ready requires a
-validated front preview and AI description, with no active or failed output.
-A ready front preview without a ready description is Partially prepared. Top-down,
-IMU and encoders are optional; Analysis can review available output independently.
+validated front preview and AI description, with all available outputs ready and
+no active or failed output. Any ready output with other preparation still needed
+is Partially prepared, including after a rescan changes a camera target or adds
+an encoder target. Unavailable top-down, IMU and encoder inputs are optional;
+Analysis can review available output independently.
 
 AI descriptions are separate jobs after the front preview. They read its default
 stream through a validated, held file descriptor and sample 12 chronological frames

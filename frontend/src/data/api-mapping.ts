@@ -82,17 +82,11 @@ export function recording(row: CatalogRecording): Recording {
         (output) => output.kind === 'front_preview' && output.state === 'unavailable',
       )
         ? 'Failed'
-        : ['processing', 'queued', 'failed'].includes(row.analysis_state)
+        : ['not_planned', 'ready', 'partially_prepared', 'processing', 'queued', 'failed'].includes(
+              row.analysis_state,
+            )
           ? (labels[row.analysis_state] as Recording['analysis'])
-          : row.outputs.some(
-                (output) => output.kind === 'front_preview' && output.state === 'ready',
-              )
-            ? row.outputs.some(
-                (output) => output.kind === 'ai_description' && output.state === 'ready',
-              )
-              ? 'Ready'
-              : 'Partially prepared'
-            : 'Not planned',
+          : 'Not planned',
   };
 }
 export function folders(rows: Catalog['folders']): Folder[] {

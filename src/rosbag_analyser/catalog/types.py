@@ -84,6 +84,7 @@ class RecordingScanResult:
 class ScanSnapshot:
     recordings: tuple[RecordingScanResult, ...]
     duration_ms: int
+    present_paths: frozenset[str] | None = None
 
 
 class RootScanError(RuntimeError):

@@ -1,4 +1,5 @@
 import { Logo } from '../components/Logo';
+import { ArchiveSettings } from './ArchiveSettings';
 import { useRailTooltip } from './useRailTooltip';
 import { searchGroups } from './search-items';
 import type { Route } from './useRoute';
@@ -101,6 +102,7 @@ export function Sidebar({ route }: { route: Route }) {
                 </ul>
               </div>
             </div>
+            <ArchiveSettings />
           </div>
         </div>
       </div>

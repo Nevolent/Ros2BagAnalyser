@@ -191,6 +191,10 @@ class RescanResponse(BaseModel):
     diagnostics: list[RescanDiagnosticResponse]
 
 
+class DiscoveryResponse(BaseModel):
+    added_count: int = Field(ge=0)
+
+
 class PrepareSelectedRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

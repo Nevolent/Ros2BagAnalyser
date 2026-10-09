@@ -82,6 +82,8 @@ class DiscoveredRecordingDirectory:
 def discover_recording_directories(
     archive_root: Path,
     limits: CatalogScanLimits | None = None,
+    *,
+    known_recordings: frozenset[str] = frozenset(),
 ) -> tuple[DiscoveredRecordingDirectory, ...]:
     """Find physical recording roots without following source symlinks.
 
@@ -104,6 +106,20 @@ def discover_recording_directories(
                 "archive_directory_limit_exceeded",
                 "The archive contains more directories than the configured scan limit.",
             )
+
+        # Preserve presence evidence for move detection without enumerating
+        # known recording contents or reopening their databases.
+        if (
+            known_recordings and directory != archive_root
+            and archive_relative_path(archive_root, directory) in known_recordings
+        ):
+            if len(discovered) >= selected_limits.max_recordings:
+                raise RootScanError(
+                    "archive_recording_limit_exceeded",
+                    "The archive contains more recording candidates than the configured scan limit.",
+                )
+            discovered.append(DiscoveredRecordingDirectory(path=directory, entries=None))
+            continue
 
         raw_entries: list[os.DirEntry[str]] = []
         try:

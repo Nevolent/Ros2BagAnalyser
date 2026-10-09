@@ -41,12 +41,12 @@ button:focus-visible,
   text-align: center;
   font-size: 14px;
 }
-.archive-scan-history {
+.archive-settings {
   position: fixed;
   z-index: 100;
-  width: 272px;
+  width: 184px;
   max-width: calc(100vw - 16px);
-  padding: 14px 16px;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--popover);
@@ -55,25 +55,37 @@ button:focus-visible,
   font-size: 13px;
   outline: none;
 }
-.archive-scan-history dl {
+.sidebar-settings {
+  flex: none;
+  padding-top: 8px;
+}
+.sidebar-settings-trigger {
   display: grid;
-}
-.archive-scan-history dt {
-  font-size: 12px;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-control);
   color: var(--muted-foreground);
-  margin-bottom: 4px;
+  cursor: pointer;
 }
-.archive-scan-history dd {
-  margin: 0;
-  font-variant-numeric: tabular-nums;
+.sidebar-settings-trigger svg {
+  width: 18px;
+  height: 18px;
 }
-.rescan-active [data-icon='inline-start'] {
-  animation: rescan-spin 1s linear infinite;
+.sidebar-settings-trigger:hover,
+.sidebar-settings-trigger[aria-expanded='true'] {
+  background: var(--sidebar-accent);
+  color: var(--foreground);
 }
-@keyframes rescan-spin {
-  to {
-    transform: rotate(360deg);
-  }
+.archive-settings button {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.archive-settings button:hover:not(:disabled) {
+  background: var(--accent);
 }
 .info-tooltip {
   position: fixed;

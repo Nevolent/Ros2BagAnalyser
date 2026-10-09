@@ -28,6 +28,7 @@ export function createApiWorkspace(): WorkspaceService {
   let epoch = 0;
   let actionError = '';
   let pollMs = 3000;
+  let discoveryStarted = false;
   const loaded = new Set<string>();
   const cancelling = new Set<number>();
   const listeners = new Set<() => void>();
@@ -255,6 +256,22 @@ export function createApiWorkspace(): WorkspaceService {
       };
       document.addEventListener('visibilitychange', visible);
       void poll();
+      if (!discoveryStarted) {
+        discoveryStarted = true;
+        // One silent addition-only check per page load, independent of normal
+        // polling, route changes and explicit preparation commands.
+        void request<{ added_count: number }>('/api/v1/catalog/discover', undefined, {})
+          .then(async ({ added_count }) => {
+            if (added_count > 0 && currentView === 'recordings' && !snapshot.busy) {
+              epoch++;
+              await refresh();
+            }
+          })
+          .catch((error) => {
+            actionError ||= errorMessage(error);
+            publish({ error: actionError });
+          });
+      }
       return () => {
         controller.abort();
         clearTimeout(timer);

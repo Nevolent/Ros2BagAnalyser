@@ -266,6 +266,89 @@ class CatalogRepository:
             generation=generation,
         )
 
+    def known_recording_paths(self) -> frozenset[str]:
+        with open_connection(self.database_url) as connection:
+            rows = connection.execute(
+                "SELECT archive_relative_path FROM recordings"
+            ).fetchall()
+        return frozenset(row["archive_relative_path"] for row in rows)
+
+    def apply_discovery(self, snapshot: ScanSnapshot) -> ApplySummary:
+        """Add new paths without advancing or reconciling the full-scan state."""
+        paths = [item.archive_relative_path for item in snapshot.recordings]
+        if len(paths) != len(set(paths)):
+            raise ValueError("A discovery contains duplicate recording identities.")
+        with open_connection(self.database_url) as connection:
+            from .processing_repository import _lock_job_queue
+            _lock_job_queue(connection)
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                ("rosbag_analyser_catalog_apply",),
+            )
+            state = connection.execute(
+                "SELECT successful_generation FROM catalog_state "
+                "WHERE singleton = TRUE FOR UPDATE"
+            ).fetchone()
+            if state is None:
+                raise RuntimeError("The catalog state row is unavailable.")
+            generation = int(state["successful_generation"])
+            # Recheck under the same lock as full rescans. A different request
+            # may have saved these paths since filesystem discovery began.
+            known_rows = connection.execute(
+                "SELECT archive_relative_path, move_fingerprint FROM recordings"
+            ).fetchall()
+            known = {row["archive_relative_path"] for row in known_rows}
+            absent_fingerprints = {
+                row["move_fingerprint"]
+                for row in known_rows
+                if snapshot.present_paths is not None
+                and row["archive_relative_path"] not in snapshot.present_paths
+                and row["move_fingerprint"] is not None
+            }
+            # A possible move belongs to full reconciliation. Saving it as new
+            # and preparing a thumbnail could split its existing artifact history.
+            additions = [
+                item
+                for item in snapshot.recordings
+                if item.archive_relative_path not in known
+                and _scan_move_fingerprint(item) not in absent_fingerprints
+            ]
+            added_ids: list[int] = []
+            for recording in additions:
+                identity = self._save_recording(
+                    connection, recording, generation, _scan_move_fingerprint(recording)
+                )
+                added_ids.append(identity.id)
+            if additions:
+                # Preserve existing target generations, identities and full scan
+                # timestamps; discovery has no authority to mark paths missing.
+                connection.execute(
+                    """
+                    UPDATE catalog_state SET
+                        recording_count = recording_count + %(recordings)s,
+                        readable_count = readable_count + %(readable)s,
+                        damaged_count = damaged_count + %(damaged)s,
+                        missing_count = missing_count + %(missing)s,
+                        unsupported_count = unsupported_count + %(unsupported)s,
+                        uninspectable_count = uninspectable_count + %(uninspectable)s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE singleton = TRUE
+                    """,
+                    {
+                        "recordings": len(additions),
+                        **{
+                            health: sum(item.ros_health.value == health for item in additions)
+                            for health in (
+                                "readable", "damaged", "missing", "unsupported", "uninspectable"
+                            )
+                        },
+                    },
+                )
+                self._queue_thumbnails(connection, generation, added_ids)
+        return ApplySummary(
+            len(additions), sum(len(item.components) for item in additions), generation
+        )
+
     def _save_recording(
         self,
         connection: Any,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -110,6 +112,9 @@ def _analysis() -> RecordingAnalysis:
 
 
 class FakeCatalogService:
+    def discover_new(self) -> int:
+        return 2
+
     def rescan(self) -> RescanResult:
         return RescanResult(
             recording_count=1,
@@ -302,13 +307,14 @@ class FakeProcessingService:
 @asynccontextmanager
 async def client_for(
     *,
+    catalog_service=None,
     v1_catalog_service=FakeV1CatalogService(),
     preparation_service=FakePreparationService(),
     processing_service=FakeProcessingService(),
     prepare_max_recordings: int = 100,
 ):
     app = create_app(
-        FakeCatalogService(),
+        catalog_service or FakeCatalogService(),
         v1_catalog_service=v1_catalog_service,
         preparation_service=preparation_service,
         processing_view_service=processing_service,
@@ -367,6 +373,81 @@ async def test_rescan_returns_generation_and_safe_scan_facts() -> None:
             "uninspectable": 0,
         },
     }
+
+
+async def test_discovery_returns_only_the_added_count() -> None:
+    async with client_for() as client:
+        response = await client.post("/api/v1/catalog/discover")
+    assert response.status_code == 200
+    assert response.json() == {"added_count": 2}
+
+
+async def test_refreshes_share_discovery_without_blocking_catalog_reads() -> None:
+    class BlockingDiscovery(FakeCatalogService):
+        calls = 0
+        started = threading.Event()
+        release = threading.Event()
+
+        def discover_new(self):
+            self.calls += 1
+            self.started.set()
+            assert self.release.wait(3)
+            return 2
+
+    service = BlockingDiscovery()
+    async with client_for(catalog_service=service) as client:
+        tasks = [asyncio.create_task(client.post("/api/v1/catalog/discover")) for _ in range(3)]
+        try:
+            assert await asyncio.to_thread(service.started.wait, 2)
+            response = await asyncio.wait_for(client.get("/api/v1/catalog"), 1)
+            assert response.status_code == 200
+            await asyncio.sleep(0.05)
+            assert service.calls == 1
+        finally:
+            service.release.set()
+        results = await asyncio.gather(*tasks)
+        assert all(result.json() == {"added_count": 2} for result in results)
+
+
+async def test_discovery_source_failure_returns_a_safe_error() -> None:
+    from rosbag_analyser.catalog.types import RootScanError
+
+    class FailedDiscovery(FakeCatalogService):
+        def discover_new(self):
+            raise RootScanError("archive_enumeration_failed", "An archive directory could not be enumerated completely.")
+
+    async with client_for(catalog_service=FailedDiscovery()) as client:
+        response = await client.post("/api/v1/catalog/discover")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "archive_enumeration_failed"
+
+
+async def test_leaving_the_page_does_not_cancel_shared_discovery() -> None:
+    class BlockingDiscovery(FakeCatalogService):
+        calls = 0
+        started = threading.Event()
+        release = threading.Event()
+
+        def discover_new(self):
+            self.calls += 1
+            self.started.set()
+            assert self.release.wait(3)
+            return 2
+
+    service = BlockingDiscovery()
+    async with client_for(catalog_service=service) as client:
+        abandoned = asyncio.create_task(client.post("/api/v1/catalog/discover"))
+        try:
+            assert await asyncio.to_thread(service.started.wait, 2)
+            abandoned.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await abandoned
+            shared = asyncio.create_task(client.post("/api/v1/catalog/discover"))
+            await asyncio.sleep(0.05)
+            assert service.calls == 1
+        finally:
+            service.release.set()
+        assert (await shared).json() == {"added_count": 2}
 
 
 @pytest.mark.parametrize(

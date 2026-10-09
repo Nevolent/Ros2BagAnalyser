@@ -10,7 +10,7 @@ derived files. The runtime is Ubuntu 22.04, Python 3.10 and ROS 2 Humble; the
 ```text
 Browser -> private proxy -> FastAPI -> PostgreSQL
                                |           |
-                         explicit scan    jobs
+                       discovery/rescan   jobs
                                |           |
                          read-only source <- Worker -> derived files
                                                             |
@@ -40,6 +40,17 @@ symlinks. A damaged recording is isolated. An incomplete scan cannot replace the
 last successful catalog or mark unseen recordings missing. A successful scan queues
 only unattempted, available thumbnails, atomically with the catalog update. Compatible
 artifacts and prior attempts are retained; failures and cancellations require explicit retry.
+
+Each browser page load silently requests addition-only discovery in the catalog scan
+pool; concurrent requests share one operation. Discovery skips known recording
+roots before enumerating their contents, and inspects only new paths. Unreadable or
+incomplete new bags remain unsaved for a later page load or full rescan. New records,
+targets and unattempted thumbnails commit together under the catalog/queue locks.
+Existing rows, targets, jobs and artifacts stay unchanged; the full-scan generation,
+completion time and duration do not advance. Discovery can initialize targets at
+generation zero. Known-path presence is retained without inspecting contents;
+possible moves with matching saved fingerprints wait for full reconciliation.
+Only a full rescan reconciles changes, moves and missing sources.
 
 Six tables hold domain state: `recordings`, `source_components`, `artifacts`,
 `jobs`, `catalog_state` and `preparation_targets`. Applied SQL migrations,
@@ -258,6 +269,10 @@ Successful siblings stay with failed recordings; retries submit only failed job
 IDs. History groups latest successful outputs for recordings without failures.
 
 `/api/v1` provides catalog, explicit rescan, details, preparation and job controls.
+`POST /api/v1/catalog/discover` adds new recordings without making catalog reads
+touch sources. The browser requests it once per page load, independently of polling
+and route changes, without loading text or blocking controls. Sidebar Settings
+provides **Do a full rescan**.
 `/api/recordings/...` delivers identity-bound media, IMU and encoder series. React routes are
 `#/recordings`, `#/processing` and `#/analysis/{id}`; the server also accepts
 `/`, `/processing` and `/recordings/{id}`. API schemas live in `api/`.

@@ -19,31 +19,38 @@ test('search supports filtering, empty states, shortcuts and keyboard navigation
   await expect(page.getByRole('link', { name: 'Tectrace home' })).toBeFocused();
 });
 
-test('archive scan controls stay aligned and history updates after a scan', async ({ page }) => {
+test('sidebar settings opens a small full-rescan popup and restores keyboard focus', async ({
+  page,
+}) => {
   await page.goto('/?demo=1');
   await page.clock.install();
-  const rescan = page.getByRole('button', { name: 'Rescan Archive', exact: true });
-  const before = await page.locator('.recordings-rescan').boundingBox();
-  await rescan.click();
-  await expect(page.getByRole('button', { name: 'Scanning archive', exact: true })).toBeDisabled();
-  const during = await page.locator('.recordings-rescan').boundingBox();
-  expect(during).toEqual(before);
-  await page.getByRole('button', { name: 'Archive scan history' }).click();
-  const scanHistory = page.getByRole('dialog', { name: 'Scan history', exact: true });
-  await expect(scanHistory.getByText('Last scan completed')).toBeVisible();
-  await expect(scanHistory.getByText('Not scanned yet')).toBeVisible();
+  const settings = page.getByRole('button', { name: 'Settings', exact: true });
+  const before = await settings.boundingBox();
+  expect(before!.y).toBeGreaterThan(900);
+  await settings.press('Enter');
+  const popup = page.getByRole('dialog', { name: 'Settings', exact: true });
+  const rescan = popup.getByRole('button', { name: 'Do a full rescan', exact: true });
+  await expect(rescan).toBeFocused();
+  await expect(popup).toBeInViewport();
+  expect((await popup.boundingBox())!.x).toBeGreaterThan(before!.x + before!.width);
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('button', { name: 'Archive scan history' })).toBeFocused();
+  await expect(settings).toBeFocused();
+  await settings.click();
+  await rescan.click();
+  await expect(popup.getByRole('button', { name: 'Rescanning…' })).toBeDisabled();
+  expect(await settings.boundingBox()).toEqual(before);
   await page.clock.fastForward(5000);
-  await expect(rescan).toBeEnabled();
-  await page.getByRole('button', { name: 'Archive scan history' }).click();
-  await expect(scanHistory.getByText('Not scanned yet')).toHaveCount(0);
-  await expect(scanHistory.locator('dd')).not.toBeEmpty();
+  await expect(popup).toHaveCount(0);
+  await expect(settings).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Rescan Archive' })).toHaveCount(0);
 });
 
 test('mobile navigation rail keeps the main views accessible', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?demo=1');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Settings', exact: true })).toBeInViewport();
+  await page.keyboard.press('Escape');
   for (const label of ['Analysis', 'Processing', 'Recordings']) {
     const link = page.getByRole('link', { name: label, exact: true });
     await expect(link).toBeInViewport();

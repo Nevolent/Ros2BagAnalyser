@@ -50,12 +50,20 @@ class CatalogScanner:
         self.archive_root = archive_root
         self.limits = limits or CatalogScanLimits()
 
-    def scan(self) -> ScanSnapshot:
+    def scan(self, *, known_recordings: frozenset[str] | None = None) -> ScanSnapshot:
         started = time.monotonic_ns()
         recordings: list[RecordingScanResult] = []
-        candidates = discover_recording_directories(self.archive_root, self.limits)
+        candidates = discover_recording_directories(
+            self.archive_root,
+            self.limits,
+            known_recordings=known_recordings or frozenset(),
+        )
         for candidate in candidates:
             recording_root = candidate.path
+            if known_recordings is not None and archive_relative_path(
+                self.archive_root, recording_root
+            ) in known_recordings:
+                continue
             if candidate.entries is None:
                 recordings.append(
                     self._uninspectable_recording(
@@ -91,8 +99,23 @@ class CatalogScanner:
                         ),
                     )
                 )
+        if known_recordings is not None:
+            # Incomplete copies remain undiscovered and can be retried on the
+            # next page load. Full rescans still report all source diagnostics.
+            recordings = [
+                item for item in recordings if item.ros_health is RosHealth.READABLE
+            ]
         elapsed_ms = (time.monotonic_ns() - started) // 1_000_000
-        return ScanSnapshot(recordings=tuple(recordings), duration_ms=elapsed_ms)
+        return ScanSnapshot(
+            recordings=tuple(recordings),
+            duration_ms=elapsed_ms,
+            present_paths=(
+                frozenset(
+                    archive_relative_path(self.archive_root, candidate.path)
+                    for candidate in candidates
+                ) if known_recordings is not None else None
+            ),
+        )
 
     def _scan_recording(
         self,

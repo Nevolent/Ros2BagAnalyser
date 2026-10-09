@@ -48,6 +48,20 @@ class CatalogService:
         self.source_admission_check = source_admission_check
         self._rescan_lock = threading.Lock()
 
+    def discover_new(self) -> int:
+        # Refreshes share the existing scan boundary; an active scan will
+        # discover new sources itself. Never queue a backlog of refresh scans.
+        if not self._rescan_lock.acquire(blocking=False):
+            return 0
+        try:
+            self._require_source_admission()
+            known = self.repository.known_recording_paths()
+            snapshot = self.scanner.scan(known_recordings=known)
+            self._require_source_admission()
+            return self.repository.apply_discovery(snapshot).recording_count
+        finally:
+            self._rescan_lock.release()
+
     def rescan(self) -> RescanResult:
         if not self._rescan_lock.acquire(blocking=False):
             from .types import RootScanError

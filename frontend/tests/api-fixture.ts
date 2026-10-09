@@ -152,6 +152,7 @@ export async function apiFixture(page: Page) {
       allowed_controls: ['pause', 'cancel'],
     } as ApiJob | null,
     posts: [] as { path: string; body: unknown }[],
+    discoveries: [] as unknown[],
     requests: [] as string[],
     override: null as ((route: Route, path: string) => Promise<boolean>) | null,
     imu: telemetry(),
@@ -164,6 +165,11 @@ export async function apiFixture(page: Page) {
     const json = (value: unknown, status = 200) => route.fulfill({ status, json: value });
     if (route.request().method() === 'POST') {
       const body = route.request().postDataJSON();
+      // Automatic discovery is tracked separately from explicit user commands.
+      if (path.endsWith('/discover')) {
+        state.discoveries.push(body);
+        return json({ added_count: 0 });
+      }
       state.posts.push({ path, body });
       if (path.endsWith('/rescan')) return json({ scan: state.catalog.scan, diagnostics: [] });
       if (path.endsWith('/prepare'))

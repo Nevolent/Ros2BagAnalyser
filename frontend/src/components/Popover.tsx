@@ -10,12 +10,14 @@ export function Popover({
   anchor,
   onClose,
   align = 'left',
+  side = 'bottom',
   children,
   ...props
 }: HTMLAttributes<HTMLDivElement> & {
   anchor: RefObject<HTMLElement | null>;
   onClose(restoreFocus?: boolean): void;
   align?: 'left' | 'right';
+  side?: 'bottom' | 'right';
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -25,9 +27,19 @@ export function Popover({
     const panel = ref.current!,
       trigger = anchor.current!;
     const rect = trigger.getBoundingClientRect();
-    panel.style.left = `${Math.max(8, Math.min(innerWidth - panel.offsetWidth - 8, align === 'right' ? rect.right - panel.offsetWidth : rect.left))}px`;
-    panel.style.top = `${Math.max(8, Math.min(innerHeight - panel.offsetHeight - 8, rect.bottom + (align === 'right' ? 6 : 4)))}px`;
-    (panel.querySelector<HTMLElement>('[aria-checked="true"]') ?? panel).focus();
+    const left =
+      side === 'right'
+        ? rect.right + 8
+        : align === 'right'
+          ? rect.right - panel.offsetWidth
+          : rect.left;
+    const top =
+      side === 'right'
+        ? rect.bottom - panel.offsetHeight
+        : rect.bottom + (align === 'right' ? 6 : 4);
+    panel.style.left = `${Math.max(8, Math.min(innerWidth - panel.offsetWidth - 8, left))}px`;
+    panel.style.top = `${Math.max(8, Math.min(innerHeight - panel.offsetHeight - 8, top))}px`;
+    (panel.querySelector<HTMLElement>('[data-autofocus],[aria-checked="true"]') ?? panel).focus();
     const controller = new AbortController();
     const { signal } = controller;
     document.addEventListener(
@@ -51,7 +63,7 @@ export function Popover({
     );
     window.addEventListener('resize', () => close.current(false), { signal });
     return () => controller.abort();
-  }, [anchor, align]);
+  }, [anchor, align, side]);
   return createPortal(
     <div ref={ref} tabIndex={-1} {...props}>
       {children}

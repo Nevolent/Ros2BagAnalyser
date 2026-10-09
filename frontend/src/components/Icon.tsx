@@ -10,6 +10,7 @@ const paths = {
   pause: 'M9 5v14M15 5v14',
   play: 'm8 5 11 7-11 7Z',
   folder: 'M20 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2Z',
+  settings: 'M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1Z',
 };
 export type IconName = keyof typeof paths;
 export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconName }) {
@@ -25,6 +26,7 @@ export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconN
       {...props}
     >
       {name === 'search' && <circle cx="10.5" cy="10.5" r="6.5" />}
+      {name === 'settings' && <circle cx="12" cy="12" r="3" />}
       <path d={paths[name]} />
     </svg>
   );

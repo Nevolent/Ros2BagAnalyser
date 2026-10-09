@@ -58,23 +58,6 @@
   align-items: center;
   gap: var(--space-2);
 }
-.recordings-rescan {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 1px 30px;
-  gap: 0;
-  width: var(--recordings-action-width);
-  height: var(--recordings-action-height);
-  border-radius: var(--radius-control);
-  overflow: hidden;
-  background: transparent;
-}
-.recordings-rescan [data-slot='button-group-separator'] {
-  display: block;
-  width: 1px;
-  margin: 0;
-  background: transparent;
-}
-.recordings-rescan button,
 .recordings-content .prepare-selected {
   height: var(--recordings-action-height);
   min-height: 0;
@@ -85,31 +68,6 @@
   line-height: 16px;
   cursor: pointer;
   transition: background-color 120ms ease;
-}
-.recordings-rescan button {
-  width: 100%;
-  background: var(--secondary);
-}
-.recordings-rescan [data-scan-history] {
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border-left: 0;
-}
-.recordings-rescan [data-scan-history] svg {
-  display: block;
-  width: 14px;
-  height: 14px;
-}
-.recordings-rescan button:hover,
-.recordings-rescan button:focus-visible,
-.recordings-rescan [data-state='open'] {
-  background: color-mix(in oklab, var(--foreground) 8%, var(--secondary));
-}
-.recordings-rescan [data-rescan-archive]:disabled {
-  opacity: 1;
-  color: var(--muted-foreground);
-  cursor: default;
 }
 .recordings-content .prepare-selected {
   width: var(--recordings-action-width);
@@ -269,16 +227,11 @@
     max-width: 100%;
     flex-wrap: nowrap;
   }
-  .recordings-rescan,
   .recordings-content .prepare-selected {
     width: var(--recordings-action-width);
     max-width: none;
     flex-shrink: 1;
   }
-  .recordings-rescan {
-    grid-template-columns: minmax(0, 1fr) 1px 28px;
-  }
-  .recordings-rescan button,
   .recordings-content .prepare-selected {
     padding-inline: 8px;
   }

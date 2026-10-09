@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import logging
 from typing import Annotated, Literal
@@ -13,6 +14,7 @@ from rosbag_analyser.processing_view import InvalidProcessingCursor
 from .catalog_routes import _require_source_capability, _run_catalog_call
 from .v1_schemas import (
     CatalogResponse,
+    DiscoveryResponse,
     BulkControlResponse,
     BulkRetryResponse,
     ControlResponse,
@@ -76,6 +78,31 @@ async def rescan_catalog(request: Request) -> RescanResponse:
     except psycopg.Error as error:
         raise _database_error("rescan V1 catalog", error) from error
     return rescan_response(result)
+
+
+@router.post("/catalog/discover", response_model=DiscoveryResponse)
+async def discover_recordings(request: Request) -> DiscoveryResponse:
+    _require_source_capability(request)
+    # Share in-flight work across refreshing browsers. Shielding leaves the
+    # bounded scan alive when an individual browser navigates away.
+    future = getattr(request.app.state, "catalog_discovery_future", None)
+    if future is None or future.done():
+        future = asyncio.get_running_loop().run_in_executor(
+            request.app.state.catalog_scan_executor,
+            request.app.state.catalog_service.discover_new,
+        )
+        request.app.state.catalog_discovery_future = future
+    try:
+        added_count = await asyncio.shield(future)
+    except RootScanError as error:
+        logger.warning("Catalog discovery failed with code %s.", error.diagnostic.code)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": error.diagnostic.code, "message": error.diagnostic.message},
+        ) from error
+    except psycopg.Error as error:
+        raise _database_error("discover new recordings", error) from error
+    return DiscoveryResponse(added_count=added_count)
 
 
 @router.get("/recordings/{recording_id:int}", response_model=RecordingDetailResponse)

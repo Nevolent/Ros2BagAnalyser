@@ -71,10 +71,6 @@ test('calendar timestamps use the requested format across the workspace', async 
   await expect(page.locator('.bag-recorded time').first()).toHaveText('30/12/2025, 10:25');
   for (const value of await page.locator('.bag-recorded time').allTextContents())
     expect(value).toMatch(/^\d{2}\/\d{2}\/\d{4}, \d{2}:\d{2}$/);
-  await page.getByRole('button', { name: 'Rescan Archive', exact: true }).click();
-  await page.clock.runFor(5000);
-  await page.getByRole('button', { name: 'Archive scan history' }).click();
-  await expect(page.locator('[data-last-scan-completed]')).toHaveText('22/09/2026, 11:53');
   await page.getByRole('link', { name: 'Analysis', exact: true }).click();
   await expect(page.locator('.recording-info time')).toHaveText('30/12/2025, 10:25');
   await page.getByRole('link', { name: 'Processing', exact: true }).click();

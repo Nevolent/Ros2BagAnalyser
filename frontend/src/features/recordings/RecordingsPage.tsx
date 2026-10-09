@@ -12,7 +12,6 @@ import { SearchField } from '../../components/SearchField';
 import { Notice } from '../../components/Notice';
 import { Workspace } from '../../components/Workspace';
 import { FolderBrowser } from './FolderBrowser';
-import { ScanControls } from './ScanControls';
 import { StatusDiagnostic } from './StatusDiagnostic';
 import { SortableHeader } from '../../components/SortableHeader';
 import { useTableSort, durationInSeconds, sizeInBytes } from '../../lib/useTableSort';
@@ -129,7 +128,6 @@ export function RecordingsPage() {
       title="Recordings"
       actions={
         <div className="recordings-actions">
-          <ScanControls />
           <Button
             className="prepare-selected"
             data-prepare-selected=""

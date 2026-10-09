@@ -3,6 +3,11 @@
 ## Review a recording
 
 1. In **Recordings**, browse folders or search the saved catalog.
+   Opening or refreshing the page silently discovers new readable bags. Known
+   recordings stay unchanged; for source changes, moved/removed bags or a complete
+   inspection, use the bottom-left **Settings** icon and **Do a full rescan**.
+   Discovery queues thumbnails for new bags; full rescan also queues unattempted
+   recordings. These checks do not prepare full videos, descriptions or telemetry.
 2. Select recordings and choose **Prepare Selected**, then confirm. This prepares
    available thumbnails, camera previews, AI descriptions, IMU and wheel encoder data, reusing compatible output.
    **Go to Processing** is selected by default; clear it to stay in Recordings.
@@ -57,7 +62,8 @@ views. Details shows the short AI description after the source components, with 
 **Bunker** tag only when the model identifies all required visual cues. Diagnostics
 appear below the description. The description uses
 sampled frames and may miss events between them. Timestamp gaps appear in the
-graph and in Review health diagnostics; gaps alone do not prove data loss. An explicit rescan refreshes this information.
+graph and in Review health diagnostics; gaps alone do not prove data loss.
+**Settings → Do a full rescan** refreshes this information.
 
 The processing percentage compares elapsed time with an estimate, capped at
 99%. **Estimate exceeded** means processing has taken longer than predicted.

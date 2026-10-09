@@ -35,6 +35,7 @@ async def test_deployment_blocks_writes_but_keeps_reads_and_health_available(tmp
                 assert response.headers['Retry-After'] == '30'
                 assert response.headers['X-Content-Type-Options'] == 'nosniff'
             assert (await client.get('/health/live')).status_code == 200
+            assert (await client.post('/api/v1/catalog/discover')).status_code == 503
             assert (await client.get('/')).status_code == 200
             assert (await client.post('/maintenance-test')).status_code == 503
             assert writes == []

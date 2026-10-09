@@ -167,21 +167,12 @@ test('scrolling keeps filters and headers visible without shifting table columns
 test('actions match dimensions and pointer clicks leave no button outlines', async ({ page }) => {
   await page.goto('/?demo=1');
   await page.locator('.bag-table tbody .bag-checkbox').first().check();
-  const scan = await page.locator('.recordings-rescan').boundingBox();
   const prepare = await page.getByRole('button', { name: 'Prepare Selected' }).boundingBox();
-  expect(prepare!.height).toBe(scan!.height);
-  expect(prepare!.width).toBe(scan!.width);
-  const rescanButton = (await page
-    .getByRole('button', { name: 'Rescan Archive', exact: true })
-    .boundingBox())!;
-  const historyButton = (await page
-    .getByRole('button', { name: 'Archive scan history', exact: true })
-    .boundingBox())!;
-  expect(historyButton.x - rescanButton.x - rescanButton.width).toBe(1);
-  await expect(page.locator('.recordings-rescan')).toHaveCSS(
-    'background-color',
-    'rgba(0, 0, 0, 0)',
-  );
+  expect(prepare!.height).toBe(30);
+  expect(prepare!.width).toBe(150);
+  await expect(
+    page.locator('.recordings-actions').getByRole('button', { name: /rescan/i }),
+  ).toHaveCount(0);
   await page.getByRole('button', { name: 'Collapse folders', exact: true }).click();
   const reopen = page.getByRole('button', { name: 'Expand folders', exact: true });
   await expect(reopen).toHaveCSS('outline-style', 'none');

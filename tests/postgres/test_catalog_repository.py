@@ -27,6 +27,7 @@ from rosbag_analyser.catalog.types import (
     RecordingScanResult,
     RootScanError,
     RosHealth,
+    SafeDiagnostic,
     ScanSnapshot,
     SourceComponentResult,
     SourceCondition,
@@ -188,6 +189,148 @@ def _snapshot(revision: str = "a" * 64) -> ScanSnapshot:
         components=components,
     )
     return ScanSnapshot(recordings=(recording,), duration_ms=1)
+
+
+def _discovery_planner():
+    from rosbag_analyser.preparation_planner import PreparationTargetPlan
+
+    class Planner:
+        def plan_recording(self, recording_id, recording, *anchors):
+            return tuple(
+                PreparationTargetPlan(kind, PLANNER_IDENTITIES[kind], "available",
+                                      TARGET_IDENTITIES[kind], None, 10)
+                for kind in PROCESSING_KINDS
+            )
+
+        def unavailable_targets(self, code, message):
+            return tuple(
+                PreparationTargetPlan(kind, PLANNER_IDENTITIES[kind], "unavailable",
+                                      None, SafeDiagnostic(code, message), None)
+                for kind in PROCESSING_KINDS
+            )
+
+    return Planner()
+
+
+@pytest.mark.postgres
+def test_discovery_preserves_existing_records_targets_jobs_and_artifacts(postgres_url):
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    old = catalog.list_recordings()[0]
+    _make_targets_available(postgres_url, old.id)
+    processing = ProcessingRepository(postgres_url)
+    processing.request_job(old.id, "front_preview", TARGET_IDENTITIES["front_preview"])
+    running = processing.claim_next_job()
+    processing.enter_publishing(running.id)
+    artifact = processing.complete_job(running.id, ArtifactWrite(
+        old.id, "front_preview", TARGET_IDENTITIES["front_preview"], "ready/output.mp4",
+        "video/mp4", 100, 0, 100, {"cache_identity": TARGET_IDENTITIES["front_preview"]}))
+
+    def existing_state():
+        with open_connection(postgres_url) as connection:
+            return tuple(connection.execute(
+                f"SELECT * FROM {table} WHERE {'id' if table == 'recordings' else 'recording_id'} = %s ORDER BY 1",
+                (old.id,),
+            ).fetchall() for table in ("recordings", "source_components", "preparation_targets", "jobs", "artifacts"))
+
+    before = existing_state()
+    full_scan = catalog.get_catalog_state()
+    catalog.target_planner = _discovery_planner()
+    new = replace(_snapshot("b" * 64).recordings[0], archive_relative_path="new", display_name="new")
+    # A stale concurrent discovery includes the old path with changed facts.
+    snapshot = ScanSnapshot((_snapshot("c" * 64).recordings[0], new), 50)
+    result = catalog.apply_discovery(snapshot)
+    assert result.recording_count == 1
+    assert existing_state() == before
+    state = catalog.get_catalog_state()
+    assert state.successful_generation == full_scan.successful_generation
+    assert state.successful_completed_at == full_scan.successful_completed_at
+    assert state.duration_ms == full_scan.duration_ms
+    assert state.recording_count == 2
+    assert state.readable_count == 2
+    assert processing.get_current_artifact_for_delivery(old.id, "front_preview", artifact.id,
+                                                      PLANNER_IDENTITIES["front_preview"]) == artifact
+    added = next(item for item in catalog.list_recordings() if item.id != old.id)
+    queued = processing.list_processing_jobs("queued", limit=10)
+    assert [(item.job.recording_id, item.job.kind) for item in queued] == [(added.id, "thumbnail")]
+    assert catalog.apply_discovery(snapshot).recording_count == 0
+    assert catalog.get_catalog_state() == state
+    assert existing_state() == before
+    assert processing.list_processing_jobs("queued", limit=10) == queued
+    # Full reconciliation retains its authority to mark absent paths missing.
+    catalog.apply_snapshot(ScanSnapshot((new,), 1))
+    assert not catalog.get_recording(old.id).recording.source_present
+    assert catalog.get_catalog_state().successful_generation == full_scan.successful_generation + 1
+
+
+@pytest.mark.postgres
+def test_discovery_initializes_new_targets_without_a_full_rescan(postgres_url):
+    catalog = CatalogRepository(postgres_url, _discovery_planner())
+    assert catalog.apply_discovery(_snapshot()).recording_count == 1
+    recording = catalog.list_recordings()[0]
+    assert catalog.get_catalog_state().successful_generation == 0
+    assert catalog.get_catalog_state().successful_completed_at is None
+    processing = ProcessingRepository(postgres_url)
+    result = processing.prepare_recording(recording.id, PLANNER_IDENTITIES,
+                                           output_kinds=("front_preview",))
+    assert result.outputs[0].outcome == "queued"
+
+
+@pytest.mark.postgres
+def test_concurrent_discovery_is_atomic_and_deduplicates_thumbnails(postgres_url):
+    catalog = CatalogRepository(postgres_url, _discovery_planner())
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: catalog.apply_discovery(_snapshot()), range(2)))
+    assert sorted(result.recording_count for result in results) == [0, 1]
+    assert catalog.get_catalog_state().recording_count == 1
+    assert len(catalog.list_recordings()) == 1
+    assert len(ProcessingRepository(postgres_url).list_processing_jobs("queued", limit=10)) == 1
+
+
+@pytest.mark.postgres
+def test_discovery_rolls_back_additions_when_planning_fails(postgres_url):
+    class FailedPlanner:
+        def plan_recording(self, *args):
+            raise ValueError("Planning failed.")
+
+    catalog = CatalogRepository(postgres_url, FailedPlanner())
+    before = catalog.get_catalog_state()
+    with pytest.raises(ValueError, match="Planning failed"):
+        catalog.apply_discovery(_snapshot())
+    assert catalog.list_recordings() == ()
+    assert catalog.get_catalog_state() == before
+    assert ProcessingRepository(postgres_url).list_processing_jobs("queued", limit=10) == ()
+
+
+@pytest.mark.postgres
+def test_discovery_defers_possible_moves_for_identity_preserving_full_rescan(postgres_url, tmp_path):
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    source = create_recording(archive, "run")
+    catalog = CatalogRepository(postgres_url)
+    service = CatalogService(CatalogScanner(archive), catalog)
+    service.rescan()
+    original = catalog.list_recordings()[0]
+    source.rename(archive / "moved")
+    assert service.discover_new() == 0
+    assert catalog.list_recordings() == (original,)
+    service.rescan()
+    moved = catalog.list_recordings()[0]
+    assert moved.id == original.id
+    assert moved.archive_relative_path == "moved"
+
+
+@pytest.mark.postgres
+def test_discovery_adds_identical_copies_when_the_original_is_still_present(postgres_url, tmp_path):
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    source = create_recording(archive, "run")
+    catalog = CatalogRepository(postgres_url)
+    service = CatalogService(CatalogScanner(archive), catalog)
+    service.rescan()
+    shutil.copytree(source, archive / "copy")
+    assert service.discover_new() == 1
+    assert {item.archive_relative_path for item in catalog.list_recordings()} == {"run", "copy"}
 
 
 def _planner_archive(tmp_path: Path) -> tuple[Path, Path, PreparationPlanner]:

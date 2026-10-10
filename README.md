@@ -29,6 +29,17 @@ AI descriptions use the pinned Qwen3-VL-2B Q8 CPU runtime through llama.cpp;
 provision it with `scripts/setup-model setup` as described in Development. Frontend
 development uses Node.js; the committed browser build needs no Node.js on the VM.
 
+## Deploy to the VM
+
+From the project root in WSL, deploy the committed, pushed revision to the configured VM:
+
+```bash
+./vm deploy
+```
+
+See [Operations](docs/OPERATIONS.md#deploy-a-commit) for prerequisites, migrations,
+model setup and recovery.
+
 ## Project layout
 
 | Path | Contents |

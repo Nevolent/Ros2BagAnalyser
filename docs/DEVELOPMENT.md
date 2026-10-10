@@ -80,8 +80,9 @@ rescan sources or retry failed jobs.
 Encoder support requires migration `0011_encoder_series.sql`, followed by an
 explicit rescan to save the new preparation targets. Prepare Selected reuses
 existing compatible output and queues missing encoder work. The optional
-`ROS_BAG_ANALYSER_ENCODER_TOPIC` chooses a specific custom encoder stream; empty
-selects one unique supported stream automatically. Restart services after
+`ROS_BAG_ANALYSER_ENCODER_TOPIC` chooses a specific custom encoder stream; unset
+or empty selects one unique supported stream automatically. Existing private
+configuration needs no new setting for automatic selection. Restart services after
 configuration changes, then rescan.
 
 Colour-camera discovery and default selection use `front-preview-v6`. After
@@ -186,6 +187,9 @@ For visual comparisons, run `npm run visual:capture` before a change, then
 | `tests/postgres/` | Disposable `ROS_BAG_ANALYSER_TEST_DATABASE_URL`, `ROS_BAG_ANALYSER_ALLOW_TEST_DATABASE_RESET=1`, and `--require-postgres` |
 | `tests/deployment/` | Disposable proxy/tools; see fixtures |
 | `tests/real_archive/` | `RUN_REAL_ARCHIVE_TESTS=1`, source settings and disposable database; define a bounded target first |
+
+When combining ROS tests with async unit/API tests while plugin autoload is
+disabled, explicitly load `-p anyio.pytest_plugin`.
 
 The PostgreSQL suite resets its target schema. Routine tests use synthetic
 archives and temporary output. A skipped integration suite is not a passing

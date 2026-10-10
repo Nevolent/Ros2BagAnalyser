@@ -66,11 +66,21 @@ the grouping target.
 
 ## Deploy a commit
 
+For an existing configured VM, run this from the workstation project root in WSL:
+
 ```bash
-./deploy-vm --check    # Local eligibility check; no VM connection
-./vm deploy           # Deploy the committed, pushed revision
-./vm deploy --push    # Push the existing commit first
+./vm deploy
 ```
+
+The branch must be committed and pushed, and the VM must be reachable using the
+private SSH settings described above. Deployment needs sudo access, healthy
+database/mount configuration and no paused jobs. A new VM needs the installation
+procedure below.
+
+`./deploy-vm --check` checks only local settings, branch and uncommitted runtime
+files; it does not connect to the VM or validate the upgrade from its active release.
+For future committed changes, `./vm deploy --push` pushes the branch and deploys
+it in one command.
 
 Application and release changes must be committed. Local documentation, tests
 and diagnostic helpers do not block deployment and are not included.
@@ -78,6 +88,10 @@ The command never commits automatically. It sends the deployment script over
 SSH, then fast-forwards the dedicated VM checkout and validates the exact pushed
 revision. Documentation/test-only changes update that checkout without
 activating a release.
+
+Pending migrations, model setup and health checks are included in this command.
+The release includes the committed browser assets; an already configured VM needs
+no separate migration, frontend build or model-setup command.
 
 The deployer stages an immutable release before interrupting services. It also
 provisions/checks the candidate's pinned CPU model and runs synthetic inference
@@ -242,8 +256,8 @@ code can read a newer schema.
 ## Source checks and incidents
 
 Rescan explicitly through the operator interface/API. It refreshes saved catalog
-and identities without creating jobs. Use application retry and queue controls,
-not database edits.
+and identities and queues available, unattempted thumbnails. Use Prepare Selected
+for remaining outputs and explicit retries; use queue controls rather than database edits.
 
 Bound source checks to an identified root, selected recordings and intended work.
 Use `rosbag-analyser-source-manifest` for lightweight before/after inventories,

@@ -50,7 +50,9 @@ test('discovery keeps existing rows and controls usable, then shows newly discov
   release();
   await expect(page.locator('.bag-table tbody tr')).toHaveCount(4);
   await expect(selection).toBeChecked();
-  await expect(page.getByRole('link', { name: 'new-recording', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: 'Analyze new-recording', exact: true }),
+  ).toBeVisible();
 });
 
 test('a failed discovery preserves the catalog and reports the failure without replaying it', async ({

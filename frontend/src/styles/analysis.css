@@ -183,6 +183,8 @@
 }
 .analysis-timeline {
   --timeline-line: oklch(0.72 0.008 260);
+  --timeline-playhead-height: 6px;
+  --timeline-reading-gap: 2.5px;
   grid-column: 1;
   grid-row: 2;
   display: flex;
@@ -254,9 +256,9 @@
   border-radius: 5px;
 }
 [data-timeline-play] svg {
-  width: 13px;
-  height: 13px;
-  transform: translateY(-1px);
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 .analysis-graph-button:hover,
 .timeline-channel-trigger:hover,
@@ -287,12 +289,17 @@
   gap: 6px;
   padding: 0 2px 0 6px;
   font-size: 12px;
-  line-height: 16.5px;
+  line-height: 16px;
   font-weight: 500;
   color: var(--muted-foreground);
 }
 .timeline-channel-trigger [data-channel-label] {
-  transform: translateY(1px);
+  /* Centre the capitals themselves instead of the font’s extra leading. */
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+  /* Leave room for descenders inside the ellipsis clip, outside the cap alignment. */
+  padding-bottom: 0.25em;
+  margin-bottom: -0.25em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -368,7 +375,7 @@
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 6px;
+  gap: 4px 10px;
   margin-inline: 10px 6px;
   min-height: 24px;
 }
@@ -384,11 +391,16 @@
   cursor: pointer;
 }
 .timeline-axes label > span {
-  transform: translateY(1px);
+  width: 1ch;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+}
+.timeline-axes.is-encoder label > span {
+  width: 2ch;
 }
 .timeline-axes .bag-checkbox {
   border-color: var(--axis-color);
-  transform: translateY(1px);
 }
 .timeline-axes .bag-checkbox:focus-visible {
   outline: 2px solid var(--ring);
@@ -514,15 +526,15 @@
   will-change: transform;
   transform: translateZ(0);
   transition: none;
-  background: color-mix(in srgb, var(--foreground) 65%, transparent);
+  background: color-mix(in srgb, var(--foreground) 85%, transparent);
 }
 .timeline-cursor::before {
   content: '';
   position: absolute;
-  top: -6px;
+  top: calc(-1 * var(--timeline-playhead-height));
   left: -3px;
   width: 7px;
-  height: 6px;
+  height: var(--timeline-playhead-height);
   background: var(--foreground);
   clip-path: polygon(0 0, 100% 0, 100% 50%, 50% 100%, 0 50%);
 }
@@ -560,11 +572,42 @@
   gap: 3px;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
+/* Equal cells reserve the full formatted value, including its sign.
+   A compact gap brings X/Y towards Z while the rightmost label stays anchored.
+   Trim to the alphabetic baseline so numbers, labels and units share one line.
+   The untrimmed hidden reserve keeps the plot geometry stable. */
+.timeline-measurement {
+  column-gap: 2px;
+}
+.timeline-axis-reading {
+  display: inline-grid;
+  grid-template-columns: 8ch 1ch;
+  align-items: baseline;
+  font-size: 14px;
+}
+.timeline-measurement.is-encoder .timeline-axis-reading {
+  grid-template-columns: 8ch 2ch;
+}
+.timeline-measurement strong,
+.timeline-reading-label {
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+}
 .timeline-reading-label,
 .timeline-reading-reserve > span {
+  display: inline-block;
   width: 1ch;
   font-size: 13px;
   line-height: 20px;
+}
+.timeline-reading-label {
+  font-size: 14px;
+}
+.timeline-measurement-reserve {
+  column-gap: 10px;
+}
+.timeline-reading-reserve {
+  min-width: calc(11ch + 3px);
 }
 .is-encoder .timeline-reading-label {
   width: 2ch;
@@ -583,6 +626,15 @@
   flex: none;
   color: var(--muted-foreground);
   font-size: 11.5px;
+}
+/* Unit descenders may extend below the shared baseline within the marker gap. */
+.timeline-measurement [data-timeline-unit] {
+  display: inline-block;
+  /* Preserve the unit’s 10px separation and the rightmost axis position. */
+  margin-left: 8px;
+  line-height: 20px;
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
 }
 .chart-tooltip {
   position: absolute;
@@ -819,7 +871,7 @@
 .timeline-selection text {
   fill: var(--foreground);
   font:
-    10px ui-monospace,
+    13px ui-monospace,
     monospace;
 }
 @media (max-width: 720px) {
@@ -860,7 +912,7 @@
   padding: 0 2px 0 6px;
   color: var(--muted-foreground);
   font-size: 12px;
-  line-height: 16.5px;
+  line-height: 16px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;

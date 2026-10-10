@@ -3,11 +3,12 @@
 ## Review a recording
 
 1. In **Recordings**, browse folders or search the saved catalog.
-   **Compact** keeps the dense list; **Thumbnail** adds a camera image, the full
+   **Thumbnail** opens by default and adds a camera image, the full
    AI description and a **Bunker** tag when identified. Descriptions use one line
    with ellipsis when space is limited; only cut-off text offers a hover/focus popup
    to read it in full. Clicking the image, title, description, tag or space between
-   them opens Analysis. The view choice persists during navigation.
+   them opens Analysis. **Compact** offers the dense list. The view choice persists
+   during navigation; opening or refreshing the page starts in Thumbnail.
    Opening or refreshing the page silently discovers new readable bags. Known
    recordings stay unchanged; for source changes, moved/removed bags or a complete
    inspection, use the bottom-left **Full rescan** icon.
@@ -27,8 +28,9 @@
    menu. Combine X/Y/Z axes or FL/FR/ML/MR/RL/RR wheels with the adjacent checkboxes,
    and zoom the graph. Encoders share one RPM axis.
 
-Fixed readouts sit one pixel above the playhead marker and show only selected axes or wheels; labels, traces and values share
-their colors, with the number before its axis/wheel label.
+Fixed readout baselines sit 2.5 pixels above the playhead marker and show only selected axes or wheels.
+Numbers, axis/wheel labels and units share a baseline; equally spaced labels keep their positions across signs and digit counts.
+Labels, traces and values share their colors, with the number before its axis/wheel label.
 Hover over the encoder readouts or focus them with Tab for a wheel abbreviation
 guide that follows the pointer; Escape dismisses it.
 The vertical scale fits the selected data in the visible time window with a small

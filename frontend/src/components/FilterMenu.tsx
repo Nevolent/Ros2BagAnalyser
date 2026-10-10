@@ -33,7 +33,7 @@ export function FilterMenu({
         data-filter-value={value || undefined}
         onClick={() => setOpen(!open)}
       >
-        {value || label}
+        <span>{value || label}</span>
         <Icon name="chevron" strokeWidth={2} />
       </button>
       <select

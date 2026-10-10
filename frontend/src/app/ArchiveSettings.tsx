@@ -28,7 +28,11 @@ export function ArchiveSettings() {
         data-rail-link=""
         onClick={() => void rescan()}
       >
-        <Icon name="retry" className={scanning ? 'archive-rescan-spinning' : undefined} />
+        <Icon
+          name="retry"
+          strokeWidth={2}
+          className={scanning ? 'archive-rescan-spinning' : undefined}
+        />
       </button>
     </div>
   );

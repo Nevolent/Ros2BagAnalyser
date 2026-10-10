@@ -204,6 +204,7 @@ test('actions match dimensions and pointer clicks leave no button outlines', asy
   expect(typography[0]).toEqual(typography[1]);
   const folderToggle = (await page
     .getByRole('button', { name: 'Collapse folders', exact: true })
+    .locator('svg path')
     .boundingBox())!;
   const folderSearch = (await page.locator('.folder-search-field').boundingBox())!;
   expect(folderToggle.x + folderToggle.width).toBeCloseTo(folderSearch.x + folderSearch.width, 1);

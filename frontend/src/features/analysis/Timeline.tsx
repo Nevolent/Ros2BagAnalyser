@@ -235,8 +235,13 @@ export const Timeline = memo(function Timeline({
     setHover(null);
   }
   function measurePlot() {
-    const rect = plot.current!.getBoundingClientRect();
-    const next = { width: Math.max(1, rect.width), height: Math.max(100, rect.height) };
+    // SVG coordinates and HTML offsets both use local CSS pixels. A rendered
+    // bounding rectangle can include zoom/scaling and would apply it twice.
+    const style = getComputedStyle(plot.current!);
+    const next = {
+      width: Math.max(1, parseFloat(style.width)),
+      height: Math.max(100, parseFloat(style.height)),
+    };
     setSize((previous) =>
       previous.width === next.width && previous.height === next.height ? previous : next,
     );
@@ -764,6 +769,9 @@ export const Timeline = memo(function Timeline({
   }, [activeNames, displaySeries, state.start, state.span, size.width]);
   const selectionStart = selection ? Math.min(selection.start, selection.end) : 0;
   const selectionEnd = selection ? Math.max(selection.start, selection.end) : 0;
+  // 13px monospace timestamps need up to 8px per character plus edge padding.
+  const selectionLabelWidth =
+    Math.max(formatUnix(selectionStart).length, formatUnix(selectionEnd).length) * 8 + 10;
   return (
     <section
       className="cn-card analysis-timeline bg-secondary shadow-none ring-0 dark:bg-secondary/50"
@@ -834,7 +842,7 @@ export const Timeline = memo(function Timeline({
                 }}
               />
               <div
-                className="timeline-axes"
+                className={`timeline-axes${encoderGraph ? ' is-encoder' : ''}`}
                 role="group"
                 aria-label={encoderGraph ? 'Encoder wheels' : 'IMU axes'}
               >
@@ -1187,14 +1195,22 @@ export const Timeline = memo(function Timeline({
                 {duration > 0 && (
                   <>
                     <text
-                      x={clamp(x(selectionStart) + 5, 5, Math.max(5, size.width - 89))}
-                      y={top + 15}
+                      x={clamp(
+                        x(selectionStart) + 5,
+                        5,
+                        Math.max(5, size.width - selectionLabelWidth),
+                      )}
+                      y={top + 17}
                       data-selection-start=""
                     >
                       {formatUnix(selectionStart)}
                     </text>
                     <text
-                      x={clamp(x(selectionEnd) - 5, Math.min(size.width - 5, 89), size.width - 5)}
+                      x={clamp(
+                        x(selectionEnd) - 5,
+                        Math.min(size.width - 5, selectionLabelWidth),
+                        size.width - 5,
+                      )}
                       y={size.height - bottom - 8}
                       textAnchor="end"
                       data-selection-end=""
@@ -1291,7 +1307,10 @@ export const Timeline = memo(function Timeline({
               aria-label={encoderGraph ? 'Wheel encoder readings' : 'IMU readings'}
               tabIndex={encoderGraph ? 0 : undefined}
               aria-describedby={wheelGuideOpen && encoderGraph ? 'encoder-wheel-guide' : undefined}
-              style={{ top: 'auto', bottom: size.height - top + 7 }}
+              style={{
+                top: 'auto',
+                bottom: `calc(${size.height - top}px + var(--timeline-playhead-height) + var(--timeline-reading-gap))`,
+              }}
               onPointerEnter={(event) => {
                 if (!encoderGraph || event.pointerType === 'touch') return;
                 setHover(null);

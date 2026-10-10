@@ -26,9 +26,11 @@ test('synthetic preview has dense bounded signals and stable initial readouts', 
   expect(mode.x - play.x - play.width).toBeLessThanOrEqual(2);
   expect(mode.y + mode.height / 2).toBeCloseTo(play.y + play.height / 2, 1);
   const icon = (await page.locator('[data-timeline-play] svg').boundingBox())!;
-  const title = (await page.locator('[data-channel-label]').boundingBox())!;
-  expect(icon.y + icon.height / 2).toBeLessThan(title.y + title.height / 2);
-  expect(Math.abs(icon.y + icon.height / 2 - title.y - title.height / 2)).toBeLessThanOrEqual(3.5);
+  const titleCentre = await page.locator('[data-channel-label]').evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return r.y + (r.height - parseFloat(getComputedStyle(el).paddingBottom)) / 2;
+  });
+  expect(icon.y + icon.height / 2).toBeCloseTo(titleCentre, 1);
   for (const label of await page.locator('.timeline-axes label').all()) {
     const checkbox = (await label.locator('input').boundingBox())!;
     const text = (await label.locator('span').boundingBox())!;
@@ -358,7 +360,7 @@ for (const width of [390, 640]) {
     );
     await expect(page.locator('[data-encoder-value]')).toHaveCSS('color', 'rgb(229, 211, 79)');
     const singleReading = (await page.locator('.timeline-measurement').boundingBox())!;
-    expect(plot.y + top - 6 - singleReading.y - singleReading.height).toBeCloseTo(1, 1);
+    expect(plot.y + top - 6 - singleReading.y - singleReading.height).toBeCloseTo(2.5, 1);
     await expect(page.locator('[data-encoder-trace]')).toHaveAttribute('opacity', '1');
     await page.getByRole('checkbox', { name: 'RR wheel' }).uncheck();
     await expect(page.locator('.timeline-grid text, .timeline-axis-reading')).toHaveCount(0);

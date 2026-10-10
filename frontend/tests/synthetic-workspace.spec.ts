@@ -11,7 +11,7 @@ test('explicit synthetic mode uses the shared app without backend requests', asy
   await expect.poll(() => page.locator('.bag-table tbody tr').count()).toBeGreaterThan(500);
   const service = createSyntheticWorkspace();
   const recording = service.getSnapshot().recordings.find((row) => row.analysis === 'Ready')!;
-  await page.getByRole('link', { name: recording.name, exact: true }).click();
+  await page.getByRole('link', { name: `Analyze ${recording.name}`, exact: true }).click();
   await expect(page.locator('.analysis-recording-name')).toHaveText(recording.name);
   await expect(page.getByRole('slider')).toBeVisible();
   await page.getByRole('link', { name: 'Processing', exact: true }).click();
@@ -27,7 +27,7 @@ test('a disabled synthetic flag still uses real backend data', async ({ page }) 
   await apiFixture(page);
   await page.goto('/?synthetic=0');
   await expect(page.locator('.bag-table tbody tr')).toHaveCount(3);
-  await expect(page.getByRole('link', { name: 'recording-42', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Analyze recording-42', exact: true })).toBeVisible();
 });
 
 test('synthetic archive fills every view and gives each recording its own details', () => {

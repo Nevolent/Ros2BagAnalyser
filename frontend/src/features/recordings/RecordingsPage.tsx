@@ -91,7 +91,10 @@ export function RecordingsPage() {
   const [search, setSearch] = useRememberedState('recordings.search', '');
   const [health, setHealth] = useRememberedState('recordings.health', '');
   const [analysis, setAnalysis] = useRememberedState('recordings.analysis', '');
-  const [view, setView] = useRememberedState<'compact' | 'thumbnail'>('recordings.view', 'compact');
+  const [view, setView] = useRememberedState<'compact' | 'thumbnail'>(
+    'recordings.view',
+    'thumbnail',
+  );
   const [selection, setSelection] = useRememberedState('recordings.selection', new Set<string>());
   useEffect(() => {
     setSelection((current) => {
@@ -137,7 +140,7 @@ export function RecordingsPage() {
       actions={
         <div className="recordings-actions">
           <div className="recordings-view" role="group" aria-label="Recording view">
-            {(['compact', 'thumbnail'] as const).map((mode) => (
+            {(['thumbnail', 'compact'] as const).map((mode) => (
               <button
                 key={mode}
                 type="button"

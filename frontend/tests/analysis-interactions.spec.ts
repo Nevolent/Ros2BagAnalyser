@@ -24,42 +24,30 @@ test('scrubbing follows the pointer before the next seek frame', async ({ page }
   await page.mouse.up();
 });
 
-test('right-hand value and unit lift instantly near the playhead and settle back above the grid line', async ({
+test('values and units share a baseline 2.5 pixels above the playhead across seeking and zoom', async ({
   page,
 }) => {
   await page.goto('/?demo=1#/analysis');
   const plot = page.getByRole('slider', { name: 'Recording timeline' });
-  const box = (await plot.boundingBox())!;
-  const scale = page.locator('.timeline-grid text').first();
   const measurement = page.locator('.timeline-measurement');
   await expect(measurement).toHaveCSS('transition-duration', '0s');
-  const center = () => plot.click({ position: { x: box.width / 2, y: 100 } });
-  await center();
-  await expect(measurement).toHaveCSS('transform', 'none');
-  const restingScale = (await scale.boundingBox())!;
-  const restingValue = (await measurement.boundingBox())!;
-  const gridTop =
-    box.y + Number(await page.locator('.timeline-grid line').first().getAttribute('y1'));
-  expect(gridTop - restingValue.y - restingValue.height).toBeCloseTo(2, 1);
+  const gap = async () => {
+    const value = (await measurement.boundingBox())!;
+    const cursor = (await page.locator('.timeline-cursor').boundingBox())!;
+    return cursor.y - 6 - value.y - value.height;
+  };
+  await expect.poll(gap).toBeCloseTo(2.5, 1);
+  const initial = (await measurement.boundingBox())!;
+  for (const key of ['End', 'Home', 'ArrowRight']) {
+    await plot.press(key);
+    await expect.poll(gap).toBeCloseTo(2.5, 1);
+    expect((await measurement.boundingBox())!.y).toBe(initial.y);
+  }
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect.poll(gap).toBeCloseTo(2.5, 1);
   await page
     .locator('.analysis-timeline')
-    .screenshot({ path: test.info().outputPath('labels-resting.png') });
-  await plot.press('End');
-  await expect
-    .poll(async () => (await measurement.boundingBox())!.y)
-    .toBeCloseTo(restingValue.y - 6, 1);
-  const liftedValue = (await measurement.boundingBox())!;
-  const cursor = (await page.locator('.timeline-cursor').boundingBox())!;
-  expect(cursor.y - 6 - liftedValue.y - liftedValue.height).toBeCloseTo(2, 1);
-  expect(await scale.boundingBox()).toEqual(restingScale);
-  await page
-    .locator('.analysis-timeline')
-    .screenshot({ path: test.info().outputPath('labels-near-playhead.png') });
-  await center();
-  await expect
-    .poll(async () => (await measurement.boundingBox())!.y)
-    .toBeCloseTo(restingValue.y, 1);
-  expect(await scale.boundingBox()).toEqual(restingScale);
+    .screenshot({ path: test.info().outputPath('fixed-readouts.png') });
 });
 
 for (const viewport of [
@@ -142,6 +130,7 @@ test('Shift drag previews Unix boundaries and zooms in both directions without s
     const start = Number(await page.locator('[data-selection-start]').textContent());
     const end = Number(await page.locator('[data-selection-end]').textContent());
     const selectionBox = (await page.locator('.timeline-selection rect').boundingBox())!;
+    await expect(page.locator('[data-selection-start]')).toHaveCSS('font-size', '13px');
     const startLabel = (await page.locator('[data-selection-start]').boundingBox())!;
     const endLabel = (await page.locator('[data-selection-end]').boundingBox())!;
     expect(selectionBox.y + selectionBox.height - endLabel.y - endLabel.height).toBeCloseTo(
@@ -433,7 +422,8 @@ test('playhead advances fractionally every frame between readout commits', async
   const pixelsPerFrame = (box.width * 0.016) / duration;
   const positions: number[] = [];
   for (let i = 0; i < 8; i++) {
-    await page.clock.runFor(17);
+    // Playwright schedules animation frames on 16ms boundaries; 17ms can cross two.
+    await page.clock.runFor(16);
     positions.push(
       await page.locator('.timeline-cursor').evaluate((el) => el.getBoundingClientRect().x),
     );

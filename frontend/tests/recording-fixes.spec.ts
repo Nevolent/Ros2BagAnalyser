@@ -72,7 +72,7 @@ test('optional ready outputs cannot mark missing or empty front input ready', as
   await page.goto('/');
   const row = page
     .locator('tbody tr')
-    .filter({ has: page.getByRole('link', { name: 'recording-42', exact: true }) });
+    .filter({ has: page.getByRole('link', { name: 'Analyze recording-42', exact: true }) });
   await expect(row).toContainText('Failed');
   await row.getByRole('link').click();
   await expect(page.locator('.recording-errors')).toContainText('The camera stream has no frames.');
@@ -156,8 +156,8 @@ test('timeline cursor remains a continuous line during playback and scrubbing', 
     await page.clock.runFor(1000);
     const cursor = (await page.locator('.timeline-cursor').boundingBox())!;
     const readout = (await page.locator('.timeline-measurement').boundingBox())!;
-    expect(cursor.y - 6 - (readout.y + readout.height)).toBeCloseTo(1, 1);
-    expect(readout.y - box.y).toBeCloseTo(5, 1);
+    expect(cursor.y - 6 - (readout.y + readout.height)).toBeCloseTo(2.5, 1);
+    expect(readout.y).toBeGreaterThanOrEqual(box.y);
     const capture = PNG.sync.read(await page.screenshot());
     for (let y = Math.ceil(cursor.y) + 1; y < cursor.y + cursor.height - 1; y++) {
       const x = Math.floor(cursor.x);

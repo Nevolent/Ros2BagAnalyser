@@ -242,7 +242,7 @@ test('analysis opens actual recording with irregular IMU time, last duplicate, n
 }) => {
   await apiFixture(page);
   await page.goto('/');
-  await page.getByRole('link', { name: 'recording-42', exact: true }).click();
+  await page.getByRole('link', { name: 'Analyze recording-42', exact: true }).click();
   await expect(page).toHaveURL(/#\/analysis\/42$/);
   const plot = page.getByRole('slider', { name: 'Recording timeline' });
   await expect(plot).toHaveAttribute('aria-valuemax', '6');

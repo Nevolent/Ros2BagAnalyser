@@ -21,6 +21,7 @@ test('Thumbnail mode preserves columns and selection, shows descriptions and lin
   ];
   await page.goto('/');
   const row = page.locator('.bag-table tbody tr').first();
+  await page.getByRole('button', { name: 'Compact', exact: true }).click();
   const before = await row.locator('td').all();
   const columns = await Promise.all(before.slice(1).map((cell) => cell.boundingBox()));
   await row.getByRole('checkbox').check();

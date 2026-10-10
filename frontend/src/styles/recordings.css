@@ -66,7 +66,7 @@
   font-family: inherit;
   font-size: 12px;
   font-weight: 400;
-  line-height: 1.428571;
+  line-height: 16px;
   cursor: pointer;
   transition: background-color 120ms ease;
 }
@@ -94,6 +94,7 @@
   display: none;
 }
 .recordings-toolbar {
+  gap: 4px;
   flex: none;
   margin: 0 8px 6px;
   overflow-y: auto;
@@ -104,8 +105,25 @@
   height: var(--search-control-height);
   border-radius: var(--radius-sm);
 }
+/* Centre the visible capitals consistently across filters and the action. */
 .recordings-toolbar .bag-filter button {
   border-radius: inherit;
+  font-family: inherit;
+  font-weight: 400;
+  line-height: 16px;
+}
+.recordings-toolbar .bag-filter button > span,
+.recordings-toolbar .prepare-selected > span {
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+}
+.recordings-toolbar .bag-search-field input {
+  height: 16px;
+  line-height: 16px;
+}
+.recordings-toolbar .bag-search-field svg {
+  display: block;
+  transform: none;
 }
 .recordings-toolbar .bag-filter button:hover,
 .recordings-toolbar .bag-filter button[aria-expanded='true'] {

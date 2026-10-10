@@ -97,8 +97,15 @@ The deployer stages an immutable release before interrupting services. It also
 provisions/checks the candidate's pinned CPU model and runs synthetic inference
 as the service account before closing writes. Download, build or inference
 failure leaves the active release running. The Linux x86_64 builder needs
-`build-essential` and `cmake`; an operator must provision missing OS packages
-before deployment. First setup downloads about 2.65 GB of weights plus llama.cpp
+`python3-pip`, `python3.10-venv`, `build-essential` and `cmake`. On the configured
+VM, provision missing OS packages before deployment:
+
+```bash
+sudo apt-get update
+sudo apt-get install --no-install-recommends python3-pip python3.10-venv build-essential cmake
+```
+
+First setup downloads about 2.65 GB of weights plus llama.cpp
 source and needs at least 8 GiB free staging space. Subsequent releases reuse
 verified runtime assets. The runtime uses CPU feature dispatch, including a
 baseline backend for guests that expose no AVX. It requires no compute GPU.
@@ -124,7 +131,18 @@ schema. It copies and verifies the dump under a new local
 running the migration service. PostgreSQL inspection, backup and disposable
 restore use the `postgres` OS account with peer authentication. Migration role
 and unit checks happen before interruption. Transfers are bounded to 10 GiB and
-ten minutes; each attempt records its exit status in `result.json`.
+ten minutes; each attempt records its exit status in `result.json`. Failed backup
+transport commands save bounded SSH diagnostics in private `backup-transport.jsonl`.
+Status polling retries up to three consecutive SSH failures or timeouts; invalid
+backup markers and failed checksum checks still stop deployment.
+
+Native WSL/Linux OpenSSH deployments establish and check a private shared SSH
+connection before starting remote deployment. Staging, the sudo session, backup
+polling, transfer and acknowledgement reuse it, avoiding repeated handshakes
+during model setup. The connection closes after report collection and has a
+60-second idle expiry if the local helper is killed. Windows `ssh.exe` retains
+separate connections; repeated banner-exchange timeouts during deployment call
+for native WSL OpenSSH with its own working key and known-host configuration.
 
 The root-owned `/run/rosbag-analyser-maintenance` gate blocks mutations and new
 worker claims until candidate preflight, API health/smoke and service startup
@@ -230,12 +248,32 @@ not require a NAS-host reboot.
 
 ## Backup and recovery
 
-If deployment stopped before activation with both services down, use
-`./vm recover`. It requires a free deployment lock and the previous release
-still selected, checks its schema and absence of running jobs, then starts
-services. Maintenance clears only after API readiness and worker health pass.
+If deployment aborted with the previous release still selected, use
+`./vm recover`. It requires a free deployment lock, a stopped migration,
+compatible schema and no running or paused jobs. It starts both stopped
+services, or validates both already active services without restarting them;
+mixed or transitional service states require inspection. Maintenance clears
+only after the expected API release is ready and the worker is online.
 It does not restore data or switch releases. A schema mismatch needs the
-rollback procedure below; rerunning deployment is not a recovery step.
+rollback procedure below. After successful recovery, retry `./vm deploy`.
+
+If migrations completed and the recorded candidate is already selected, inspect
+the preflight journal before retrying startup:
+
+```bash
+journalctl -u rosbag-analyser-preflight.service -n 60 --no-pager
+./vm recover --candidate && ./vm status
+```
+
+Candidate recovery checks the installed release identity, compatible schema,
+stopped migration and absence of running or paused jobs. It repairs service read
+access to root-owned `wheelhouse/SHA256SUMS` only when its content matches the
+release manifest; installation publishes this non-secret metadata as `0644`.
+It then runs preflight, starts stopped services and verifies the expected API,
+online worker and smoke checks before clearing maintenance. Failures retain the
+gate and recovery files. This command never reruns migrations, restores the
+database or changes release pointers; the default `./vm recover` still requires
+the previous release to be selected.
 
 With private backup settings and `PGPASSFILE`, run
 `deploy/scripts/backup-database BACKUP_DIRECTORY RELEASE_ID`. Keep the verified

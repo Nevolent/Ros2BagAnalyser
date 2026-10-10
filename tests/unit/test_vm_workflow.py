@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -43,7 +44,8 @@ def test_help_needs_no_vm_and_source_selection_is_explicit():
             vm.make_request(vm.parser().parse_args(["topics", "--recording", value]))
 
 
-def test_recovery_uses_existing_sudo_transport_without_deployment_backup(monkeypatch):
+@pytest.mark.parametrize('candidate', [False, True])
+def test_recovery_uses_existing_sudo_transport_without_deployment_backup(monkeypatch, candidate):
     monkeypatch.setattr(vm, 'connection_settings', lambda: {'HOST': 'fixture'})
     calls = []
 
@@ -51,10 +53,11 @@ def test_recovery_uses_existing_sudo_transport_without_deployment_backup(monkeyp
         calls.append((settings, command, payload, kwargs))
         return subprocess.CompletedProcess(command, 0, b'', b'')
     monkeypatch.setattr(vm.vm_ssh, 'run', run)
-    assert vm.main(['recover']) == 0
+    assert vm.main(['recover'] + (['--candidate'] if candidate else [])) == 0
     assert len(calls) == 1
     assert calls[0][1][:2] == ['python3', '-c']
-    assert 'def recover():' in calls[0][1][2]
+    assert 'def recover(' in calls[0][1][2]
+    assert calls[0][1][3:] == (['--candidate'] if candidate else [])
     assert calls[0][3] == {'sudo': True, 'capture_output': False}
 
 
@@ -266,11 +269,60 @@ def test_deploy_uses_committed_bootstrap():
     assert 'bash -s -- "$deploy_branch" "$local_revision"' in launcher
 
 
-@pytest.mark.parametrize('interactive', [False, True])
-def test_deployment_backup_is_verified_off_vm_before_upgrade_can_continue(tmp_path, monkeypatch, interactive):
+def multiplexing_ssh(tmp_path, failure=None):
+    """A transport that refuses command sessions without a live private master."""
     fake_ssh = tmp_path / 'ssh'
-    fake_ssh.write_text("#!/usr/bin/env python3\nimport subprocess,sys\nsys.exit(subprocess.call(sys.argv[-1],shell=True))\n")
+    fake_ssh.write_text(
+        "#!/usr/bin/env python3\nimport json,subprocess,sys\nfrom pathlib import Path\n"
+        f"with Path({str(tmp_path / 'ssh-calls.jsonl')!r}).open('a') as log:\n"
+        "    log.write(json.dumps(sys.argv[1:])+'\\n')\n"
+        "control=Path(next(arg.split('=',1)[1] for arg in sys.argv if arg.startswith('ControlPath=')))\n"
+        "assert control.parent.stat().st_mode & 0o777 == 0o700\n"
+        "if '-M' in sys.argv:\n"
+        f"    if {failure!r} == 'start':\n"
+        "        print('fixture banner timeout',file=sys.stderr);sys.exit(255)\n"
+        f"    if {failure!r} != 'unavailable': control.touch()\n"
+        "elif '-O' in sys.argv:\n"
+        "    if sys.argv[sys.argv.index('-O')+1]=='check': sys.exit(0 if control.exists() else 255)\n"
+        "    control.unlink(missing_ok=True)\n"
+        "else:\n"
+        "    assert control.is_file(), 'unexpected new connection during deployment'\n"
+        "    sys.exit(subprocess.call(sys.argv[-1],shell=True))\n"
+    )
     fake_ssh.chmod(0o755)
+    return {'SSH': str(fake_ssh), 'USER': 'operator', 'HOST': 'local.test'}
+
+
+@pytest.mark.parametrize('failure', ['start', 'unavailable', 'command'])
+def test_deployment_connection_failure_cleans_up_and_never_runs_unconnected(tmp_path, failure):
+    settings = multiplexing_ssh(tmp_path, failure)
+    entered = False
+    with pytest.raises((ValueError, RuntimeError)):
+        with ssh_transport.deployment_connection(settings) as shared:
+            entered = True
+            assert failure == 'command'
+            assert Path(shared['CONTROL_PATH']).exists()
+            raise RuntimeError('fixture command failure')
+    assert entered == (failure == 'command')
+    calls = [json.loads(line) for line in (tmp_path / 'ssh-calls.jsonl').read_text().splitlines()]
+    assert '-M' in calls[0] and calls[-1][-3:-1] == ['-O', 'exit']
+    socket = Path(next(arg.split('=', 1)[1] for arg in calls[0] if arg.startswith('ControlPath=')))
+    assert not socket.parent.exists()
+    assert 'CONTROL_PATH' not in settings
+
+
+def test_windows_deployment_preserves_configured_transport(monkeypatch):
+    settings = {'SSH': '/mnt/c/Windows/System32/OpenSSH/ssh.exe', 'USER': 'operator', 'HOST': 'local.test'}
+    monkeypatch.setattr(ssh_transport.subprocess, 'run', lambda *a, **k: pytest.fail('unexpected SSH invocation'))
+    with ssh_transport.deployment_connection(settings) as shared:
+        assert shared is settings
+        assert not any(arg.startswith('ControlPath=') for arg in ssh_transport.ssh_command(shared, ['true']))
+
+
+@pytest.mark.parametrize('interactive', [False, True])
+@pytest.mark.parametrize('exit_code', [0, 7])
+def test_deployment_backup_is_verified_off_vm_before_upgrade_can_continue(tmp_path, monkeypatch, interactive, exit_code):
+    settings = multiplexing_ssh(tmp_path)
     sudo = tmp_path / 'sudo'
     sudo.write_text("#!/usr/bin/env python3\nimport os,sys\nos.execvp(sys.argv[2],sys.argv[2:])\n")
     sudo.chmod(0o755)
@@ -285,17 +337,26 @@ def test_deployment_backup_is_verified_off_vm_before_upgrade_can_continue(tmp_pa
         "    dump=Path(temporary)/'original.dump';dump.write_bytes(b'recovery fixture'*100000)\n"
         "    module.publish_backup(dump,Path(os.environ['ROS_BAG_ANALYSER_DEPLOY_TRANSFER_DIRECTORY']),timeout=15)\n"
         "    print('migration allowed')\n"
+        f"raise SystemExit({exit_code})\n"
     )
     target = tmp_path / 'report'
-    result = ssh_transport.run({'SSH': str(fake_ssh), 'USER': 'operator', 'HOST': 'local.test'},
+    result = ssh_transport.run(settings,
                                [sys.executable, '-c', script], b'', sudo=True, timeout=25,
                                deployment_backup=target)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == exit_code, result.stderr
     assert b'migration allowed' in result.stdout
     assert (target / 'database.dump').read_bytes() == b'recovery fixture'*100000
     assert target.stat().st_mode & 0o777 == 0o700
     assert (target / 'database.dump').stat().st_mode & 0o777 == 0o600
     assert (target / 'backup.json').stat().st_mode & 0o777 == 0o600
+    calls = [json.loads(line) for line in (tmp_path / 'ssh-calls.jsonl').read_text().splitlines()]
+    assert sum('-M' in call for call in calls) == 1
+    assert calls[1][-3:-1] == ['-O', 'check']
+    assert calls[-1][-3:-1] == ['-O', 'exit']
+    paths = {arg.split('=', 1)[1] for call in calls for arg in call if arg.startswith('ControlPath=')}
+    assert len(paths) == 1
+    assert not Path(paths.pop()).parent.exists()
+    assert 'CONTROL_PATH' not in settings
 
 
 def test_corrupt_backup_never_acknowledges_migration_or_replaces_valid_output(tmp_path):
@@ -317,6 +378,144 @@ def test_corrupt_backup_never_acknowledges_migration_or_replaces_valid_output(tm
     assert not (remote_dir / 'backup-ack.json').exists()
     assert (local_dir / 'database.dump').read_bytes() == b'previous valid copy'
     assert not list(local_dir.glob('*.partial'))
+
+
+@pytest.mark.parametrize('first_failure', [255, 'timeout'])
+def test_backup_status_retries_transport_failure_and_preserves_diagnostics(tmp_path, monkeypatch, first_failure):
+    target = tmp_path / 'report'
+    target.mkdir(mode=0o700)
+    done = threading.Event()
+    waits = []
+    monkeypatch.setattr(done, 'wait', waits.append)
+    polls = []
+    received = []
+    record = {'size': 7, 'sha256': 'a' * 64}
+
+    def run(command, **kwargs):
+        assert shlex.split(command[-1])[2] == ssh_transport.BACKUP_STATUS
+        assert kwargs['stdin'] == subprocess.DEVNULL
+        polls.append(command)
+        if len(polls) == 1:
+            if first_failure == 'timeout':
+                raise subprocess.TimeoutExpired(command, 20, stderr=b'status timed out')
+            return subprocess.CompletedProcess(command, 255, b'', b'Connection reset by peer')
+        return subprocess.CompletedProcess(command, 0, json.dumps(record).encode(), b'')
+
+    monkeypatch.setattr(ssh_transport.subprocess, 'run', run)
+    monkeypatch.setattr(ssh_transport, 'receive_backup', lambda *args: received.append(args[3]))
+    failures = []
+    ssh_transport.backup_monitor({'SSH': 'ssh', 'USER': 'operator', 'HOST': 'fixture'},
+                                 '/tmp/rosbag-vm-fixture', target, done, failures)
+    assert len(polls) == 2 and waits == [1]
+    assert received == [record] and failures == []
+    path = target / 'backup-transport.jsonl'
+    saved = json.loads(path.read_text())
+    assert saved['phase'] == 'status' and saved['exit_code'] == (124 if first_failure == 'timeout' else 255)
+    assert saved['stderr'] == ('status timed out' if first_failure == 'timeout' else 'Connection reset by peer')
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize('failure,expected_polls', [('connection', 3), ('unsafe-marker', 1), ('malformed', 1)])
+def test_backup_status_failure_is_bounded_and_never_acknowledges_success(tmp_path, monkeypatch, failure, expected_polls):
+    target = tmp_path / 'report'
+    target.mkdir(mode=0o700)
+    done = threading.Event()
+    monkeypatch.setattr(done, 'wait', lambda _: None)
+    polls = []
+    acknowledgements = []
+
+    def run(command, **kwargs):
+        code = shlex.split(command[-1])[2]
+        if code == ssh_transport.BACKUP_STATUS:
+            polls.append(command)
+            assert kwargs['stdin'] == subprocess.DEVNULL
+            if failure == 'connection':
+                return subprocess.CompletedProcess(command, 255, b'', b'Connection refused')
+            if failure == 'unsafe-marker':
+                return subprocess.CompletedProcess(command, 1, b'', b'Unsafe backup transfer marker')
+            return subprocess.CompletedProcess(command, 0, b'not json', b'')
+        assert code == ssh_transport.ACK_BACKUP
+        acknowledgements.append(json.loads(kwargs['input']))
+        return subprocess.CompletedProcess(command, 0, b'', b'')
+
+    monkeypatch.setattr(ssh_transport.subprocess, 'run', run)
+    monkeypatch.setattr(ssh_transport, 'receive_backup', lambda *args: pytest.fail('unverified transfer'))
+    failures = []
+    ssh_transport.backup_monitor({'SSH': 'ssh', 'USER': 'operator', 'HOST': 'fixture'},
+                                 '/tmp/rosbag-vm-fixture', target, done, failures)
+    assert len(polls) == expected_polls
+    assert len(failures) == len(acknowledgements) == 1
+    assert acknowledgements == [{'error': failures[0]}]
+    assert 'backup-transport.jsonl' in failures[0]
+    saved = [json.loads(line) for line in (target / 'backup-transport.jsonl').read_text().splitlines()]
+    assert len(saved) == expected_polls
+    if failure == 'unsafe-marker':
+        assert saved[0]['stderr'] == 'Unsafe backup transfer marker'
+    elif failure == 'malformed':
+        assert saved[0]['stdout'] == 'not json'
+    assert not (target / 'database.dump').exists()
+
+
+def test_finished_deployment_does_not_report_teardown_as_backup_failure(tmp_path, monkeypatch):
+    done = threading.Event()
+
+    def run(command, **kwargs):
+        assert shlex.split(command[-1])[2] == ssh_transport.BACKUP_STATUS
+        done.set()
+        return subprocess.CompletedProcess(command, 255, b'', b'Connection closed')
+
+    monkeypatch.setattr(ssh_transport.subprocess, 'run', run)
+    failures = []
+    ssh_transport.backup_monitor({'SSH': 'ssh', 'USER': 'operator', 'HOST': 'fixture'},
+                                 '/tmp/rosbag-vm-fixture', tmp_path, done, failures)
+    assert failures == []
+    assert not (tmp_path / 'backup-transport.jsonl').exists()
+
+
+def test_stream_diagnostics_are_private_and_never_contain_backup_payload(tmp_path):
+    result = subprocess.CompletedProcess(['fixture'], 255, b'private database bytes', b'x' * 5000)
+    path = ssh_transport.record_backup_transport_error(tmp_path, 'stream', result)
+    saved = json.loads(path.read_text())
+    assert saved == {'phase': 'stream', 'exit_code': 255, 'stderr': 'x' * 4096}
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize('phase', ['stream', 'acknowledgement'])
+def test_failed_backup_transport_retains_safe_output_and_logs_the_actual_error(tmp_path, phase):
+    failed_code = ssh_transport.STREAM_BACKUP if phase == 'stream' else ssh_transport.ACK_BACKUP
+    fake_ssh = tmp_path / 'ssh'
+    fake_ssh.write_text("#!/usr/bin/env python3\nimport shlex,subprocess,sys\n"
+                        f"if shlex.split(sys.argv[-1])[2] == {failed_code!r}:\n"
+                        "    print('fixture transport rejected',file=sys.stderr)\n"
+                        "    sys.exit(255)\n"
+                        "sys.exit(subprocess.call(sys.argv[-1],shell=True))\n")
+    fake_ssh.chmod(0o755)
+    remote_dir = tmp_path / 'transfer'
+    remote_dir.mkdir(mode=0o700)
+    payload = b'private synthetic recovery fixture'
+    (remote_dir / 'backup.dump').write_bytes(payload)
+    (remote_dir / 'backup.dump').chmod(0o600)
+    local_dir = tmp_path / 'local'
+    local_dir.mkdir(mode=0o700)
+    if phase == 'stream':
+        (local_dir / 'database.dump').write_bytes(b'previous valid copy')
+    import hashlib
+    record = {'size': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
+    with pytest.raises(ValueError, match='backup-transport.jsonl'):
+        ssh_transport.receive_backup({'SSH': str(fake_ssh), 'USER': 'operator', 'HOST': 'local.test'},
+                                     str(remote_dir), local_dir, record)
+    assert (local_dir / 'database.dump').read_bytes() == (b'previous valid copy' if phase == 'stream' else payload)
+    assert not (remote_dir / 'backup-ack.json').exists()
+    assert not list(local_dir.glob('*.partial'))
+    saved = json.loads((local_dir / 'backup-transport.jsonl').read_text())
+    assert saved == {'phase': phase, 'exit_code': 255, 'stderr': 'fixture transport rejected\n'}
+
+
+@pytest.mark.parametrize('record', [[], None, 'unexpected'])
+def test_invalid_backup_record_never_creates_output(tmp_path, record):
+    with pytest.raises(ValueError, match='Invalid database recovery copy'):
+        ssh_transport.receive_backup({}, '/tmp/rosbag-vm-fixture', tmp_path, record)
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_deployment_result_is_private_and_records_verified_backup(tmp_path):

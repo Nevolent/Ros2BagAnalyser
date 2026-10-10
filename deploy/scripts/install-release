@@ -80,6 +80,9 @@ find "$staging/release/deploy/scripts" -maxdepth 1 -type f -exec chmod 0755 {} +
 chown -R root:root "$staging/release"
 find "$staging/release" -type d -exec chmod 0755 {} +
 find "$staging/release" -type f -exec chmod go-w {} +
+# The wheelhouse builder protects its checksum file with mode 0600. Installed
+# preflight runs as the service account and must be able to read this metadata.
+chmod 0644 "$staging/release/wheelhouse/SHA256SUMS"
 mv -- "$staging/release" "$release_target"
 python3.10 - \
   "$release_target/venv/bin" \

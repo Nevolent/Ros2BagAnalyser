@@ -107,7 +107,22 @@ os.replace(temporary,root/'backup-ack.json')
 """
 
 
+def record_backup_transport_error(target, phase, result):
+    """Keep bounded transport diagnostics beside the protected recovery copy."""
+    path = target / 'backup-transport.jsonl'
+    record = {'phase': phase, 'exit_code': result.returncode,
+              'stderr': (result.stderr or b'').decode('utf-8', errors='replace')[-4096:]}
+    if phase == 'status':
+        record['stdout'] = (result.stdout or b'').decode('utf-8', errors='replace')[-4096:]
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, 'w') as output:
+        output.write(json.dumps(record) + '\n')
+    return path
+
+
 def receive_backup(settings, directory, target, record, done=None):
+    if not isinstance(record, dict):
+        raise ValueError('Invalid database recovery copy identity or size.')
     size, digest = record.get('size'), record.get('sha256')
     if not isinstance(size, int) or not 0 < size <= 10 * 1024**3 or not re.fullmatch(r'[0-9a-f]{64}', str(digest)):
         raise ValueError('Invalid database recovery copy identity or size.')
@@ -119,7 +134,7 @@ def receive_backup(settings, directory, target, record, done=None):
     try:
         with os.fdopen(descriptor, 'wb') as output, tempfile.TemporaryFile() as errors:
             process = subprocess.Popen(ssh_command(settings, ['python3', '-c', STREAM_BACKUP, directory, str(size)]),
-                                       stdout=subprocess.PIPE, stderr=errors)
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors)
             total, checksum = 0, hashlib.sha256()
             try:
                 deadline = time.monotonic() + 600
@@ -138,8 +153,12 @@ def receive_backup(settings, directory, target, record, done=None):
                             raise ValueError('Database backup exceeded its declared size.')
                         output.write(chunk)
                         checksum.update(chunk)
-                if process.wait(timeout=30):
-                    raise ValueError('SSH could not transfer the database backup.')
+                returncode = process.wait(timeout=30)
+                if returncode:
+                    errors.seek(0)
+                    diagnostics = record_backup_transport_error(target, 'stream', subprocess.CompletedProcess(
+                        process.args, returncode, stderr=errors.read(4096)))
+                    raise ValueError(f'SSH could not transfer the database backup; see {diagnostics}.')
                 if total != size or checksum.hexdigest() != digest:
                     raise ValueError('The workstation database backup checksum did not match.')
                 output.flush()
@@ -164,20 +183,41 @@ def receive_backup(settings, directory, target, record, done=None):
         acknowledged = subprocess.run(ssh_command(settings, ['python3', '-c', ACK_BACKUP, directory]),
                                       input=json.dumps(record).encode(), capture_output=True, timeout=30)
         if acknowledged.returncode:
-            raise ValueError('Could not acknowledge the verified backup to the VM.')
+            diagnostics = record_backup_transport_error(target, 'acknowledgement', acknowledged)
+            raise ValueError(f'Could not acknowledge the verified backup to the VM; see {diagnostics}.')
         print(f'Verified recovery copy: {destination}', file=sys.stderr, flush=True)
     finally:
         temporary.unlink(missing_ok=True)
 
 
 def backup_monitor(settings, directory, target, done, failures):
+    consecutive_failures = 0
     try:
         while not done.is_set():
-            result = subprocess.run(ssh_command(settings, ['python3', '-c', BACKUP_STATUS, directory]),
-                                    capture_output=True, timeout=20)
+            command = ssh_command(settings, ['python3', '-c', BACKUP_STATUS, directory])
+            timed_out = False
+            try:
+                result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+            except subprocess.TimeoutExpired as error:
+                timed_out = True
+                result = subprocess.CompletedProcess(command, 124, error.stdout, error.stderr)
+            if done.is_set():
+                return
             if result.returncode:
-                raise ValueError('Could not read the VM backup transfer status.')
-            record = json.loads(result.stdout)
+                diagnostics = record_backup_transport_error(target, 'status', result)
+                consecutive_failures += 1
+                # Retry only transport failures, never a rejected backup marker.
+                if (timed_out or result.returncode == 255) and consecutive_failures < 3:
+                    done.wait(consecutive_failures)
+                    continue
+                raise ValueError(f'Could not read the VM backup transfer status '
+                                 f'(exit {result.returncode}); see {diagnostics}.')
+            consecutive_failures = 0
+            try:
+                record = json.loads(result.stdout)
+            except ValueError as error:
+                diagnostics = record_backup_transport_error(target, 'status', result)
+                raise ValueError(f'Invalid VM backup transfer status; see {diagnostics}.') from error
             if record is not None:
                 receive_backup(settings, directory, target, record, done)
                 return
@@ -192,11 +232,49 @@ def backup_monitor(settings, directory, target, done, failures):
 
 
 def ssh_command(settings: dict[str, str], command: list[str], *, tty: bool = False) -> list[str]:
-    return [settings['SSH'], '-tt' if tty else '-T', '-o', 'BatchMode=yes',
+    options = []
+    if settings.get('CONTROL_PATH'):
+        options = ['-o', 'ControlMaster=no', '-o', 'ControlPath=' + settings['CONTROL_PATH']]
+    return [settings['SSH'], '-tt' if tty else '-T', *options, '-o', 'BatchMode=yes',
             '-o', 'ConnectTimeout=10', '-o', 'ConnectionAttempts=1',
             '-o', 'StrictHostKeyChecking=yes', '-o', 'ServerAliveInterval=15',
             '-o', 'ServerAliveCountMax=2', f"{settings['USER']}@{settings['HOST']}",
             shlex.join(command)]
+
+
+@contextlib.contextmanager
+def deployment_connection(settings):
+    """Reuse one authenticated connection while model setup loads the guest."""
+    # Windows OpenSSH does not provide Unix control sockets. Keep that client's
+    # existing transport; never silently change its keys or SSH configuration.
+    if settings['SSH'].lower().endswith('.exe'):
+        yield settings
+        return
+    # A short, private socket path works even when the checkout path is long.
+    with tempfile.TemporaryDirectory(prefix='rosbag-ssh-', dir='/tmp') as directory:
+        shared = dict(settings, CONTROL_PATH=str(Path(directory) / 'control'))
+        base = ssh_command(shared, [])[:-2]
+        destination = f"{settings['USER']}@{settings['HOST']}"
+        try:
+            started = subprocess.run(base + ['-M', '-N', '-f', '-o', 'ControlPersist=60', destination],
+                                     stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+            if started.returncode:
+                raise ValueError('Could not establish the deployment SSH connection: ' +
+                                 started.stderr.decode('utf-8', errors='replace').strip())
+            checked = subprocess.run(base + ['-O', 'check', destination], stdin=subprocess.DEVNULL,
+                                     capture_output=True, timeout=5)
+            if checked.returncode:
+                raise ValueError('SSH connection sharing is unavailable; deployment was not started: ' +
+                                 (started.stderr + checked.stderr).decode('utf-8', errors='replace').strip())
+            yield shared
+        finally:
+            # Address only our private master. An idle limit also bounds its
+            # lifetime if this workstation process is killed before cleanup.
+            try:
+                subprocess.run(base + ['-O', 'exit', destination], stdin=subprocess.DEVNULL,
+                               capture_output=True, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                pass
 
 
 def terminal():
@@ -228,7 +306,8 @@ def run(settings: dict[str, str], command: list[str], payload: bytes, *,
             result.stderr += b'Run this command in an interactive terminal to enter the VM sudo password.\n'
         return result
 
-    with (tty if tty is not None else contextlib.nullcontext()):
+    connection = deployment_connection(settings) if deployment_backup is not None else contextlib.nullcontext(settings)
+    with (tty if tty is not None else contextlib.nullcontext()), connection as settings:
         staged = subprocess.run(ssh_command(settings, ['python3', '-c', STAGE]),
                                 input=envelope, capture_output=True, timeout=30)
         if staged.returncode:

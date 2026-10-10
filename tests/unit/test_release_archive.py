@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
 from pathlib import Path
+import subprocess
 import tarfile
 
 import pytest
@@ -59,3 +61,32 @@ def test_release_archive_rejects_links(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit, match="unsafe"):
         release_archive.validate_archive(str(archive))
+
+
+def test_installed_dependency_identity_is_readable_with_private_builder_permissions(tmp_path: Path) -> None:
+    release = tmp_path / 'release'
+    scripts = release / 'deploy/scripts'
+    scripts.mkdir(parents=True)
+    (scripts / 'run-service').write_text('#!/bin/sh\n')
+    wheelhouse = release / 'wheelhouse'
+    wheelhouse.mkdir()
+    checksum = wheelhouse / 'SHA256SUMS'
+    content = b'synthetic dependency identity\n'
+    checksum.write_bytes(content)
+    checksum.chmod(0o600)
+    private = tmp_path / 'recovery.env'
+    private.write_text('synthetic private fixture')
+    private.chmod(0o600)
+    installer = (MODULE_PATH.parent / 'install-release').read_text()
+    permissions = installer.split('find "$staging/release/deploy/scripts"', 1)[1].split('\nmv --', 1)[0]
+    # Exercise the installer's publication permissions without root installation,
+    # downloads or pip. Fixture ownership already matches this test's user.
+    permissions = ('find "$staging/release/deploy/scripts"' + permissions).replace(
+        'chown -R root:root "$staging/release"', '')
+    subprocess.run(['bash', '-eu', '-c', permissions], check=True,
+                   env=dict(os.environ, staging=str(tmp_path)), capture_output=True)
+    assert checksum.stat().st_mode & 0o777 == 0o644
+    assert checksum.read_bytes() == content
+    assert scripts.stat().st_mode & 0o777 == 0o755
+    assert (scripts / 'run-service').stat().st_mode & 0o777 == 0o755
+    assert private.stat().st_mode & 0o777 == 0o600

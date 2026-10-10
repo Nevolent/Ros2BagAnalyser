@@ -66,7 +66,9 @@ def parser() -> argparse.ArgumentParser:
     commands = result.add_subparsers(dest="action", required=True)
     deploy = commands.add_parser("deploy", help="Deploy the committed revision using deploy-vm")
     deploy.add_argument("--push", action="store_true", help="Push this branch first (never commits files)")
-    commands.add_parser("recover", help="Reopen the previous release after a deployment stopped before activation")
+    recover = commands.add_parser("recover", help="Validate and reopen the selected release after an aborted deployment")
+    recover.add_argument("--candidate", action="store_true",
+                         help="Finish recovery of an already-selected candidate after migration; repair verified checksum read access")
     for name, description in (("status", "Save release, service and health facts"),
                               ("logs", "Save recent sanitized API/worker logs"),
                               ("topics", "Check selected recordings' configured topics"),
@@ -148,7 +150,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.action == "recover":
             source = (ROOT / "tools/vm_recover.py").read_text()
-            result = vm_ssh.run(connection_settings(), ["python3", "-c", source], b"",
+            command = ["python3", "-c", source] + (["--candidate"] if args.candidate else [])
+            result = vm_ssh.run(connection_settings(), command, b"",
                                 sudo=True, capture_output=False)
             if result.stderr:
                 sys.stderr.write(result.stderr.decode("utf-8", errors="replace"))

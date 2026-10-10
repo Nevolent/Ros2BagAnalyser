@@ -157,18 +157,6 @@ export function RecordingsPage() {
               </button>
             ))}
           </div>
-          <Button
-            className="prepare-selected"
-            data-prepare-selected=""
-            disabled={busy}
-            hidden={!selected.length}
-            onClick={() => {
-              setGoToProcessing(true);
-              setPrepare(true);
-            }}
-          >
-            <span>Prepare Selected</span>
-          </Button>
         </div>
       }
     >
@@ -222,6 +210,18 @@ export function RecordingsPage() {
               value={analysis}
               onChange={setAnalysis}
             />
+            <Button
+              className="prepare-selected"
+              data-prepare-selected=""
+              disabled={busy}
+              hidden={!selected.length}
+              onClick={() => {
+                setGoToProcessing(true);
+                setPrepare(true);
+              }}
+            >
+              <span>Prepare Selected</span>
+            </Button>
           </div>
           <TableBody
             className="recordings-table-body"
@@ -325,16 +325,16 @@ export function RecordingsPage() {
                     </td>
                     <th scope="row">
                       {view === 'thumbnail' ? (
-                        <div className="recording-thumbnail-row">
-                          <RecordingThumbnail recording={recording} />
+                        <a
+                          className="recording-thumbnail-row"
+                          href={`#/analysis/${recording.id}`}
+                          aria-label={`Analyze ${recording.name}`}
+                        >
+                          <RecordingThumbnail recording={recording} navigable />
                           <div className="recording-thumbnail-copy">
-                            <a
-                              className="bag-name recording-link"
-                              href={`#/analysis/${recording.id}`}
-                              title={recording.name}
-                            >
+                            <span className="bag-name recording-link" title={recording.name}>
                               {recording.name}
-                            </a>
+                            </span>
                             {recording.aiDescription?.description && (
                               <RecordingDescription
                                 description={recording.aiDescription.description}
@@ -346,7 +346,7 @@ export function RecordingsPage() {
                               </div>
                             )}
                           </div>
-                        </div>
+                        </a>
                       ) : (
                         <a
                           className="bag-name recording-link"

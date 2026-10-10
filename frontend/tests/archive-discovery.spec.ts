@@ -73,7 +73,7 @@ test('a failed discovery preserves the catalog and reports the failure without r
   expect(api.discoveries).toHaveLength(1);
 });
 
-test('settings runs a full rescan from any page and retains failures for retry', async ({
+test('full-rescan control runs a full rescan from any page and retains failures for retry', async ({
   page,
 }) => {
   const api = await apiFixture(page);
@@ -84,15 +84,12 @@ test('settings runs a full rescan from any page and retains failures for retry',
     return true;
   };
   await page.goto('/#/processing');
-  const settings = page.getByRole('button', { name: 'Settings', exact: true });
+  const settings = page.getByRole('button', { name: 'Full rescan', exact: true });
   await settings.click();
-  const popup = page.getByRole('dialog', { name: 'Settings', exact: true });
-  await popup.getByRole('button', { name: 'Do a full rescan' }).click();
   await expect(page.getByRole('alert')).toContainText('Full rescan failed.');
-  await expect(popup.getByRole('button', { name: 'Do a full rescan' })).toBeEnabled();
+  await expect(settings).not.toHaveAttribute('aria-disabled', 'true');
   api.override = null;
-  await popup.getByRole('button', { name: 'Do a full rescan' }).click();
-  await expect(popup).toHaveCount(0);
+  await settings.click();
   await expect(settings).toBeFocused();
   expect(api.posts.map((post) => post.path)).toEqual([
     '/api/v1/catalog/rescan',

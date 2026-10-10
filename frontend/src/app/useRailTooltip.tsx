@@ -52,6 +52,16 @@ export function useRailTooltip() {
     return () => hint.target.removeAttribute('aria-describedby');
   }, [hint]);
   useEffect(() => {
+    if (!hint) return;
+    const observer = new MutationObserver(() => {
+      const text = hint.target.getAttribute('aria-label');
+      if (text)
+        setHint((current) => (current?.target === hint.target ? { ...current, text } : current));
+    });
+    observer.observe(hint.target, { attributes: true, attributeFilter: ['aria-label'] });
+    return () => observer.disconnect();
+  }, [hint?.target]);
+  useEffect(() => {
     const controller = new AbortController();
     document.addEventListener(
       'keydown',

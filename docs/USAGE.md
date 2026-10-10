@@ -6,10 +6,11 @@
    **Compact** keeps the dense list; **Thumbnail** adds a camera image, the full
    AI description and a **Bunker** tag when identified. Descriptions use one line
    with ellipsis when space is limited; only cut-off text offers a hover/focus popup
-   to read it in full. The view choice persists during navigation.
+   to read it in full. Clicking the image, title, description, tag or space between
+   them opens Analysis. The view choice persists during navigation.
    Opening or refreshing the page silently discovers new readable bags. Known
    recordings stay unchanged; for source changes, moved/removed bags or a complete
-   inspection, use the bottom-left **Settings** icon and **Do a full rescan**.
+   inspection, use the bottom-left **Full rescan** icon.
    Discovery queues thumbnails for new bags; full rescan also queues unattempted
    recordings. These checks do not prepare full videos, descriptions or telemetry. Thumbnail placeholders
    show No Thumbnail, Queued, Processing or Thumbnail failed. Failed or cancelled
@@ -26,7 +27,7 @@
    menu. Combine X/Y/Z axes or FL/FR/ML/MR/RL/RR wheels with the adjacent checkboxes,
    and zoom the graph. Encoders share one RPM axis.
 
-Fixed readouts above the graph show only selected axes or wheels; labels, traces and values share
+Fixed readouts sit one pixel above the playhead marker and show only selected axes or wheels; labels, traces and values share
 their colors, with the number before its axis/wheel label.
 Hover over the encoder readouts or focus them with Tab for a wheel abbreviation
 guide that follows the pointer; Escape dismisses it.
@@ -74,7 +75,7 @@ views. Details shows the short AI description after the source components, with 
 appear below the description. The description uses
 sampled frames and may miss events between them. Timestamp gaps appear in the
 graph and in Review health diagnostics; gaps alone do not prove data loss.
-**Settings → Do a full rescan** refreshes this information.
+**Full rescan** refreshes this information.
 
 The processing percentage compares elapsed time with an estimate, capped at
 99%. **Estimate exceeded** means processing has taken longer than predicted.

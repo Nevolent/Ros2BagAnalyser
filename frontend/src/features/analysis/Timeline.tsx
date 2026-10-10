@@ -120,7 +120,6 @@ export const Timeline = memo(function Timeline({
   const emptyText = useRef<HTMLSpanElement>(null);
   const hoverTip = useRef<HTMLDivElement>(null);
   const wheelGuideTip = useRef<HTMLDivElement>(null);
-  const measurementLeft = useRef(Infinity);
   const help = useRef<HTMLDivElement>(null);
   const helpTrigger = useRef<HTMLButtonElement>(null);
   const interaction = useRef<Interaction | null>(null);
@@ -273,9 +272,6 @@ export const Timeline = memo(function Timeline({
     plot.current?.setAttribute('aria-valuenow', String(Number(time.toFixed(3))));
     element.style.transform = `translate3d(${position}px, 0, 0)`;
     element.style.display = visible ? '' : 'none';
-    const lifted = String(visible && position >= measurementLeft.current);
-    if (measurement.current?.getAttribute('data-lifted') !== lifted)
-      measurement.current?.setAttribute('data-lifted', lifted);
   }
   useLayoutEffect(() => {
     if (!measurementReserve.current) return;
@@ -289,7 +285,6 @@ export const Timeline = memo(function Timeline({
     return () => observer.disconnect();
   }, [hasTelemetry]);
   useLayoutEffect(() => {
-    measurementLeft.current = size.width - (measurement.current?.offsetWidth ?? 0) - 10;
     paintCursor(pendingSeek.current ?? current.current.time);
   }, [state, size, channels, top]);
   useLayoutEffect(() => {
@@ -1296,7 +1291,7 @@ export const Timeline = memo(function Timeline({
               aria-label={encoderGraph ? 'Wheel encoder readings' : 'IMU readings'}
               tabIndex={encoderGraph ? 0 : undefined}
               aria-describedby={wheelGuideOpen && encoderGraph ? 'encoder-wheel-guide' : undefined}
-              style={{ top: 'auto', bottom: size.height - top + 2 }}
+              style={{ top: 'auto', bottom: size.height - top + 7 }}
               onPointerEnter={(event) => {
                 if (!encoderGraph || event.pointerType === 'touch') return;
                 setHover(null);

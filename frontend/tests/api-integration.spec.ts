@@ -90,8 +90,7 @@ test('live catalog filters, real folders, red review, selection and explicit sca
   await page.getByRole('menuitemradio', { name: 'Partially prepared', exact: true }).click();
   await expect(rows).toHaveCount(1);
   await expect(rows.filter({ hasText: 'recording-44' })).toHaveCount(1);
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: 'Do a full rescan', exact: true }).click();
+  await page.getByRole('button', { name: 'Full rescan', exact: true }).click();
   await expect.poll(() => api.posts.length).toBe(1);
   expect(api.posts[0].path).toBe('/api/v1/catalog/rescan');
 });

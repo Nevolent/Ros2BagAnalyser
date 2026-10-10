@@ -156,24 +156,22 @@ test('timeline cursor remains a continuous line during playback and scrubbing', 
     await page.clock.runFor(1000);
     const cursor = (await page.locator('.timeline-cursor').boundingBox())!;
     const readout = (await page.locator('.timeline-measurement').boundingBox())!;
-    // The readout now rests over the grid and lifts only near the cursor.
-    // Its horizontal overlap must still leave the continuous cursor clear.
-    const lifted = cursor.x >= readout.x - 10;
-    await expect(page.locator('.timeline-measurement')).toHaveAttribute(
-      'data-lifted',
-      String(lifted),
-    );
-    if (lifted) {
-      expect(cursor.y - (readout.y + readout.height)).toBeGreaterThanOrEqual(1);
-      expect(readout.y - box.y).toBeCloseTo(4, 1);
-    }
+    expect(cursor.y - 6 - (readout.y + readout.height)).toBeCloseTo(1, 1);
+    expect(readout.y - box.y).toBeCloseTo(5, 1);
     const capture = PNG.sync.read(await page.screenshot());
     for (let y = Math.ceil(cursor.y) + 1; y < cursor.y + cursor.height - 1; y++) {
       const x = Math.floor(cursor.x);
       const luminance = [x - 1, x, x + 1].map(
         (column) => capture.data[(y * capture.width + column) * 4],
       );
-      expect(Math.max(...luminance), `cursor must stay painted at y=${y}`).toBeGreaterThan(100);
+      // Compare with the local background: subpixel antialiasing changes absolute brightness.
+      const background = [x - 4, x - 3, x + 3, x + 4]
+        .map((column) => capture.data[(y * capture.width + column) * 4])
+        .sort((a, b) => a - b);
+      expect(
+        Math.max(...luminance) - background[1],
+        `cursor must stay painted at y=${y}`,
+      ).toBeGreaterThan(30);
     }
     await page.getByRole('button', { name: 'Pause timeline', exact: true }).click();
   }

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { apiFixture, detail } from './api-fixture';
 
-test('Thumbnail mode preserves columns and selection, shows full descriptions and offers a popup only when clipped', async ({
+test('Thumbnail mode preserves columns and selection, shows descriptions and links the entire thumbnail area to analysis', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
@@ -33,7 +33,7 @@ test('Thumbnail mode preserves columns and selection, shows full descriptions an
       button.boundingBox(),
     ),
   );
-  expect(controls[0]!.x + controls[0]!.width).toBeLessThan(controls[1]!.x);
+  expect(controls[0]!.y + controls[0]!.height).toBeLessThan(controls[1]!.y);
   const after = await Promise.all(before.slice(1).map((cell) => cell.boundingBox()));
   columns.forEach((column, index) => expect(after[index]!.x).toBeCloseTo(column!.x, 1));
   await expect(row.locator('.recording-thumbnail img')).toBeVisible();
@@ -54,14 +54,13 @@ test('Thumbnail mode preserves columns and selection, shows full descriptions an
   expect(centred).toBeLessThan(1);
   await page.screenshot({ path: test.info().outputPath('thumbnails-desktop.png') });
   await page.setViewportSize({ width: 390, height: 1080 });
-  const trigger = description.getByRole('button');
+  const trigger = description.locator('.recording-description-trigger');
   await expect(trigger).toBeVisible();
   await trigger.hover();
   const tooltip = page.getByRole('tooltip');
   await expect(tooltip).toHaveText(api.recording.ai_description!.description);
-  await trigger.focus();
   await expect(trigger).toHaveAttribute('aria-describedby', (await tooltip.getAttribute('id'))!);
-  await trigger.press('Escape');
+  await page.keyboard.press('Escape');
   await expect(tooltip).toHaveCount(0);
   await page.setViewportSize({ width: 1920, height: 1080 });
   await expect(trigger).toHaveCount(0);
@@ -110,7 +109,7 @@ test('Thumbnail placeholders truthfully track queued, processing, missing, faile
     'Thumbnail failed',
     'Thumbnail failed',
   ]);
-  await placeholders.nth(3).getByRole('button').focus();
+  await placeholders.nth(3).hover();
   await expect(page.getByRole('tooltip')).toHaveText('Synthetic thumbnail failure.');
   await page.keyboard.press('Escape');
 });
@@ -136,7 +135,8 @@ for (const width of [1440, 390]) {
     await expect(text).toHaveCSS('text-overflow', 'ellipsis');
     await expect(text.locator('img')).toHaveCount(0);
     expect(await text.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
-    await text.focus();
+    await page.keyboard.press('Tab');
+    await row.locator('.recording-thumbnail-row').focus();
     await expect(page.getByRole('tooltip')).toHaveText(description);
     await page.keyboard.press('Escape');
     await row.getByRole('checkbox').check();
@@ -153,4 +153,42 @@ test('catalog rejects a thumbnail URL outside its recording and API route', asyn
   await page.goto('/');
   await expect(page.getByText('Invalid thumbnail URL.')).toBeVisible();
   await expect(page.locator('.recording-thumbnail img')).toHaveCount(0);
+});
+
+for (const area of [
+  '.recording-thumbnail',
+  '.bag-name',
+  '.recording-description',
+  '.recording-tags',
+  '.recording-thumbnail-copy',
+]) {
+  test(`thumbnail area ${area} opens analysis`, async ({ page }) => {
+    const api = await apiFixture(page);
+    api.catalog.recordings = [api.recording];
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Thumbnail', exact: true }).click();
+    const target = page.locator('.bag-table tbody tr').first().locator(area);
+    if (area === '.recording-thumbnail-copy') {
+      const gap = await target.evaluate((element) => {
+        const title = element.querySelector('.bag-name')!.getBoundingClientRect();
+        const description = element
+          .querySelector('.recording-description')!
+          .getBoundingClientRect();
+        return { x: title.left + 4, y: (title.bottom + description.top) / 2 };
+      });
+      await page.mouse.click(gap.x, gap.y);
+    } else await target.click();
+    await expect(page).toHaveURL(/#\/analysis\/42$/);
+  });
+}
+
+test('thumbnail navigation supports keyboard activation', async ({ page }) => {
+  const api = await apiFixture(page);
+  api.catalog.recordings = [api.recording];
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Thumbnail', exact: true }).click();
+  const link = page.getByRole('link', { name: `Analyze ${api.recording.name}` });
+  await link.focus();
+  await link.press('Enter');
+  await expect(page).toHaveURL(/#\/analysis\/42$/);
 });

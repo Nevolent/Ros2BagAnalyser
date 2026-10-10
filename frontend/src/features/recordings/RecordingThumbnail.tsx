@@ -2,7 +2,13 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import type { Recording } from '../../data/types';
 import { StatusDiagnostic } from './StatusDiagnostic';
 
-export function RecordingThumbnail({ recording }: { recording: Recording }) {
+export function RecordingThumbnail({
+  recording,
+  navigable = false,
+}: {
+  recording: Recording;
+  navigable?: boolean;
+}) {
   const thumbnail = recording.thumbnail;
   const [failedUrl, setFailedUrl] = useState('');
   const [loadedUrl, setLoadedUrl] = useState('');
@@ -32,6 +38,7 @@ export function RecordingThumbnail({ recording }: { recording: Recording }) {
         </>
       ) : thumbnail?.state === 'failed' || (failedUrl === url && !!url) ? (
         <StatusDiagnostic
+          navigable={navigable}
           status={label}
           className="thumbnail-diagnostic"
           issues={[
@@ -65,6 +72,7 @@ export function RecordingDescription({ description }: { description: string }) {
     <div ref={ref} className="recording-description">
       {clipped ? (
         <StatusDiagnostic
+          navigable
           status={description}
           issues={[description]}
           tone="muted"

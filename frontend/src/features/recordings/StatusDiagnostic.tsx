@@ -13,6 +13,7 @@ export function StatusDiagnostic({
   outputs,
   className = '',
   raw = false,
+  navigable = false,
 }: {
   status: string;
   issues: string[];
@@ -20,10 +21,11 @@ export function StatusDiagnostic({
   outputs?: Recording['analysisOutputs'];
   className?: string;
   raw?: boolean;
+  navigable?: boolean;
 }) {
   const visibleOutputs = outputs?.filter((output) => output.state !== 'unavailable');
   const id = useId();
-  const target = useRef<HTMLButtonElement>(null);
+  const target = useRef<HTMLButtonElement & HTMLSpanElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [open, setOpen] = useState(false);
@@ -82,6 +84,28 @@ export function StatusDiagnostic({
     window.addEventListener('resize', hide, { signal });
     return () => controller.abort();
   }, [open]);
+  useEffect(() => {
+    if (!navigable || !raw) return;
+    const link = target.current?.closest('a');
+    if (!link) return;
+    const showOnKeyboardFocus = () => {
+      if (link.matches(':focus-visible')) show();
+    };
+    link.addEventListener('focus', showOnKeyboardFocus);
+    link.addEventListener('blur', hide);
+    return () => {
+      link.removeEventListener('focus', showOnKeyboardFocus);
+      link.removeEventListener('blur', hide);
+    };
+  }, [navigable, raw]);
+  useEffect(() => {
+    if (!navigable || !raw || !open) return;
+    const link = target.current?.closest('a');
+    link?.setAttribute('aria-describedby', id);
+    return () => {
+      if (link?.getAttribute('aria-describedby') === id) link.removeAttribute('aria-describedby');
+    };
+  }, [navigable, raw, open, id]);
   useEffect(
     () => () => {
       clearTimeout(hideTimer.current);
@@ -89,25 +113,26 @@ export function StatusDiagnostic({
     },
     [id],
   );
+  const Tag = navigable ? 'span' : 'button';
   return (
     <>
-      <button
-        type="button"
+      <Tag
+        type={navigable ? undefined : 'button'}
         ref={target}
         className={`bag-status status-${tone} recording-status-diagnostic ${className}`}
-        tabIndex={0}
+        tabIndex={navigable ? undefined : 0}
         aria-describedby={open ? id : undefined}
         onPointerEnter={show}
         onPointerLeave={leave}
         onClick={(event) => {
-          event.stopPropagation();
+          if (!navigable) event.stopPropagation();
           show();
         }}
         onFocus={show}
         onBlur={leave}
       >
         {status}
-      </button>
+      </Tag>
       {open &&
         createPortal(
           <div

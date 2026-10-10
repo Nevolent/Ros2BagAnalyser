@@ -184,8 +184,30 @@ test('actions match dimensions and pointer clicks leave no button outlines', asy
   await page.goto('/?demo=1');
   await page.locator('.bag-table tbody .bag-checkbox').first().check();
   const prepare = await page.getByRole('button', { name: 'Prepare Selected' }).boundingBox();
-  expect(prepare!.height).toBe(30);
-  expect(prepare!.width).toBe(150);
+  const health = await page.getByRole('button', { name: 'Filter by health' }).boundingBox();
+  const analysis = await page.getByRole('button', { name: 'Filter by analysis' }).boundingBox();
+  expect(prepare!.height).toBe(health!.height);
+  expect(prepare!.width).toBe(health!.width);
+  expect(prepare!.y).toBe(analysis!.y);
+  expect(prepare!.x).toBeGreaterThan(analysis!.x + analysis!.width);
+  await expect(page.locator('.recordings-toolbar .prepare-selected')).toBeVisible();
+  const typography = await page.locator('.recordings-toolbar').evaluate((element) => {
+    const properties = ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight'] as const;
+    return [
+      element.querySelector('.prepare-selected')!,
+      element.querySelector('[data-filter-trigger="health"]')!,
+    ].map((control) => {
+      const style = getComputedStyle(control);
+      return properties.map((property) => style[property]);
+    });
+  });
+  expect(typography[0]).toEqual(typography[1]);
+  const folderToggle = (await page
+    .getByRole('button', { name: 'Collapse folders', exact: true })
+    .boundingBox())!;
+  const folderSearch = (await page.locator('.folder-search-field').boundingBox())!;
+  expect(folderToggle.x + folderToggle.width).toBeCloseTo(folderSearch.x + folderSearch.width, 1);
+
   await expect(
     page.locator('.recordings-actions').getByRole('button', { name: /rescan/i }),
   ).toHaveCount(0);

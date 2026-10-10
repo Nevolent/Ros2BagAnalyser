@@ -276,8 +276,8 @@ IDs. History groups latest successful outputs for recordings without failures.
 `/api/v1` provides catalog, explicit rescan, details, preparation and job controls.
 `POST /api/v1/catalog/discover` adds new recordings without making catalog reads
 touch sources. The browser requests it once per page load, independently of polling
-and route changes, without loading text or blocking controls. Sidebar Settings
-provides **Do a full rescan**.
+and route changes, without loading text or blocking controls. The bottom-left **Full rescan** button scans directly, spins during the request
+and shows **Scanning archive** in its hover label.
 `/api/recordings/...` delivers identity-bound media, IMU and encoder series. React routes are
 `#/recordings`, `#/processing` and `#/analysis/{id}`; the server also accepts
 `/`, `/processing` and `/recordings/{id}`. API schemas live in `api/`.

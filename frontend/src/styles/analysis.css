@@ -368,7 +368,7 @@
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 10px;
+  gap: 4px 6px;
   margin-inline: 10px 6px;
   min-height: 24px;
 }
@@ -497,9 +497,6 @@
 .timeline-measurement-reserve {
   transition: none;
 }
-.timeline-measurement[data-lifted='true'] {
-  transform: translateY(-6px);
-}
 .timeline-line {
   fill: none;
   stroke: var(--timeline-line);
@@ -538,7 +535,7 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: baseline;
-  gap: 4px 10px;
+  gap: 4px 6px;
   width: max-content;
   max-width: calc(100% - 72px);
   pointer-events: none;

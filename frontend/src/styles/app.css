@@ -41,20 +41,6 @@ button:focus-visible,
   text-align: center;
   font-size: 14px;
 }
-.archive-settings {
-  position: fixed;
-  z-index: 100;
-  width: 184px;
-  max-width: calc(100vw - 16px);
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--popover);
-  color: var(--popover-foreground);
-  box-shadow: 0 4px 12px #0002;
-  font-size: 13px;
-  outline: none;
-}
 .sidebar-settings {
   flex: none;
   padding-top: 8px;
@@ -73,19 +59,17 @@ button:focus-visible,
   height: 18px;
 }
 .sidebar-settings-trigger:hover,
-.sidebar-settings-trigger[aria-expanded='true'] {
+.sidebar-settings-trigger[aria-busy='true'] {
   background: var(--sidebar-accent);
   color: var(--foreground);
 }
-.archive-settings button {
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  text-align: left;
-  cursor: pointer;
+.archive-rescan-spinning {
+  animation: archive-rescan-spin 1s linear infinite;
 }
-.archive-settings button:hover:not(:disabled) {
-  background: var(--accent);
+@keyframes archive-rescan-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .info-tooltip {
   position: fixed;
@@ -185,7 +169,7 @@ main[data-slot='sidebar-inset'] {
   height: 14px;
 }
 .recordings-workspace .folder-toggle {
-  margin-right: -10px;
+  margin-right: 0;
 }
 .folder-reopen {
   display: grid;
@@ -272,7 +256,7 @@ main[data-slot='sidebar-inset'] {
 /* Compact archive tree with a fixed search field and scrollable folders. */
 
 .recordings-workspace .folder-heading {
-  padding: 0 var(--space-3);
+  padding: 0 8px 0 var(--space-3);
   gap: 7px;
 }
 .folder-heading-actions {
@@ -992,5 +976,11 @@ main[data-slot='sidebar-inset'] {
 @media (prefers-reduced-motion: reduce) {
   .rail-tooltip-label {
     animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .archive-rescan-spinning {
+    animation: none !important;
   }
 }

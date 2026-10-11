@@ -301,6 +301,10 @@
   background: var(--background);
   color: var(--foreground);
 }
+.recordings-view button > span {
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
+}
 .recordings-view svg {
   width: 14px;
   height: 14px;

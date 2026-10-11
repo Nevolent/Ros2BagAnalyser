@@ -6,7 +6,10 @@ for (const zoom of [1, 1.25, 2]) {
   test(`toolbar and graph controls share their vertical centres at ${zoom * 100}% scale`, async ({
     page,
   }) => {
-    await page.setViewportSize({ width: Math.round(1440 * zoom), height: Math.round(1000 * zoom) });
+    await page.setViewportSize({
+      width: zoom === 1 ? 2560 : Math.round(1440 * zoom),
+      height: zoom === 1 ? 1440 : Math.round(1000 * zoom),
+    });
     await page.goto('/?demo=1');
     await page.evaluate((zoom) => {
       document.documentElement.style.zoom = String(zoom);

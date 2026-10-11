@@ -43,6 +43,30 @@
   color: var(--muted-foreground);
   opacity: 1;
 }
+.search-field input::-webkit-search-cancel-button {
+  display: none;
+}
+.search-clear {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.search-clear svg {
+  width: 12px;
+  height: 12px;
+}
+.search-clear:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.search-clear:focus-visible {
+  outline: 1px solid var(--ring);
+}
 .data-table-panel {
   --table-surface: var(--secondary);
   padding: 0 0 8px;
@@ -170,7 +194,8 @@
   font-variant-numeric: tabular-nums;
 }
 .page-tabs .page-tab-count > span {
-  transform: translateY(-0.5px);
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
 }
 .page-tabs button[aria-pressed='true'] .page-tab-count {
   background: #fff;
@@ -214,6 +239,12 @@
   height: 14px;
   flex: none;
   opacity: 0.45;
+}
+/* Centre visible capitals using font metrics at every browser scale. */
+.table-sort > span,
+.page-tabs button > span:first-child {
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
 }
 [aria-sort='ascending'] .table-sort,
 [aria-sort='descending'] .table-sort {

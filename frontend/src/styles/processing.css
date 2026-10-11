@@ -189,11 +189,11 @@
 .processing-bulk-actions button span {
   display: inline-flex;
   align-items: center;
-  height: 100%;
-  transform: translateY(1px);
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
 }
 .processing-bulk-actions button svg {
-  transform: translateY(1px);
+  transform: none;
 }
 .processing-bulk-actions button:is(:hover, :focus-visible) {
   background: color-mix(in oklab, var(--foreground) 9%, transparent);

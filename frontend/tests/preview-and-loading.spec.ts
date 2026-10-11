@@ -50,6 +50,21 @@ test('five frames share one request, start at the middle, cycle on hover and hon
   expect(downloads).toBe(1);
 });
 
+test('search clear stays visible and resets the controlled recording filter', async ({ page }) => {
+  await apiFixture(page);
+  await page.goto('/');
+  const input = page.getByPlaceholder('Search recordings');
+  const clear = input.locator('..').getByRole('button', { name: 'Clear search' });
+  await expect(clear).toBeVisible();
+  await input.fill('recording-42');
+  await expect(page.locator('.bag-table tbody tr:visible')).toHaveCount(1);
+  await clear.click();
+  await expect(input).toHaveValue('');
+  await expect(input).toBeFocused();
+  await expect(page.locator('.bag-table tbody tr:visible')).toHaveCount(3);
+  await expect(clear).toBeVisible();
+});
+
 test('prepared cameras appear before a delayed sensor download completes', async ({ page }) => {
   const api = await apiFixture(page);
   let release!: () => void;

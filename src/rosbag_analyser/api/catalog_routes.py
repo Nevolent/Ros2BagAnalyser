@@ -15,7 +15,7 @@ from fastapi import (
 )
 import psycopg
 
-from rosbag_analyser.catalog.service import CatalogService
+from rosbag_analyser.catalog.service import CatalogService, RescanResult
 from rosbag_analyser.catalog.types import RootScanError
 
 from .schemas import (
@@ -41,11 +41,7 @@ def _service(request: Request) -> CatalogService:
 async def rescan_catalog(request: Request) -> RescanResponse:
     _require_source_capability(request)
     try:
-        result = await _run_catalog_call(
-            request,
-            _service(request).rescan,
-            executor=request.app.state.catalog_scan_executor,
-        )
+        result = await asyncio.shield(_rescan_future(request))
     except RootScanError as error:
         logger.warning(
             "Catalog root scan failed with code %s.",
@@ -62,6 +58,26 @@ async def rescan_catalog(request: Request) -> RescanResponse:
     except psycopg.Error as error:
         raise _catalog_database_error("rescan", error) from error
     return rescan_response(result)
+
+
+def _rescan_future(request: Request) -> asyncio.Future[RescanResult]:
+    # Both API versions share one server-owned operation. Closing a browser
+    # cancels its wait only; repeated requests join rather than enqueue scans.
+    future = getattr(request.app.state, "catalog_rescan_future", None)
+    if future is None or future.done():
+        future = asyncio.get_running_loop().run_in_executor(
+            request.app.state.catalog_scan_executor, _service(request).rescan,
+        )
+        request.app.state.catalog_rescan_future = future
+        def consume_failure(done: asyncio.Future[RescanResult]) -> None:
+            if done.cancelled():
+                return
+            error = done.exception()
+            if error is not None:
+                logger.warning("Catalog rescan failed.", exc_info=(
+                    type(error), error, error.__traceback__))
+        future.add_done_callback(consume_failure)
+    return future
 
 
 def _require_source_capability(request: Request) -> None:

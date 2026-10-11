@@ -114,6 +114,52 @@ def _is_disposable_test_database_name(database_name: str) -> bool:
     )
 
 
+def test_source_scan_lock_is_shared_releases_on_failure_and_distinguishes_discovery(postgres_url):
+    first = CatalogRepository(postgres_url)
+    second = CatalogRepository(postgres_url)
+    assert not second.rescan_running()
+    with first.source_scan(full=False):
+        assert not second.rescan_running()
+        with pytest.raises(RootScanError, match='already in progress'):
+            with second.source_scan(full=True):
+                pytest.fail('A second source scan acquired the lock')
+    with pytest.raises(RuntimeError, match='interrupted'):
+        with first.source_scan(full=True):
+            assert second.rescan_running()
+            with pytest.raises(RootScanError, match='already in progress'):
+                with second.source_scan(full=True):
+                    pytest.fail('A second full rescan acquired the lock')
+            raise RuntimeError('interrupted')
+    assert not second.rescan_running()
+    with second.source_scan(full=True):
+        assert first.rescan_running()
+    assert not first.rescan_running()
+
+
+def test_rescan_cache_persists_across_services_and_replans_unchanged_sources(postgres_url, tmp_path, monkeypatch):
+    from rosbag_analyser.catalog import sqlite_health
+    archive = tmp_path / 'archive'
+    archive.mkdir()
+    create_recording(archive, 'unchanged')
+    catalog = CatalogRepository(postgres_url)
+    CatalogService(CatalogScanner(archive), catalog).rescan()
+    class ChangedPlanner:
+        def plan_recording(self, *args):
+            self.calls += 1
+            return ()
+        def unavailable_targets(self, *args):
+            return ()
+        calls = 0
+    planner = ChangedPlanner()
+    restarted = CatalogRepository(postgres_url, planner)
+    assert len(restarted.load_timing_cache()) == 1
+    monkeypatch.setattr(sqlite_health, 'inspect_timing', lambda _: pytest.fail('Timestamp inspection repeated'))
+    result = CatalogService(CatalogScanner(archive), restarted).rescan()
+    assert planner.calls == 1
+    assert result.generation == 2
+    assert len(restarted.load_timing_cache()) == 1
+
+
 @pytest.fixture()
 def anyio_backend() -> str:
     return "asyncio"
@@ -319,7 +365,7 @@ async def test_full_rescan_retries_and_completes_prior_preparation_atomically(po
     assert partial.analysis_state == 'partially_prepared'
     assert {output.kind for output in partial.outputs if output.state == 'failed'} == {'thumbnail', 'imu_series', 'encoder_series'}
     present = replace(snapshot, recordings=tuple(item for item in snapshot.recordings if item.display_name != 'missing'))
-    service = CatalogService(SimpleNamespace(scan=lambda: present), catalog)
+    service = CatalogService(SimpleNamespace(scan=lambda **_: present), catalog)
     app = create_app(service, preparation_service=preparation)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
@@ -1073,7 +1119,7 @@ def test_root_scan_failure_preserves_last_catalog_snapshot(postgres_url: str) ->
     before = repository.list_recordings()
 
     class FailingScanner:
-        def scan(self):
+        def scan(self, **kwargs):
             raise RootScanError(
                 "archive_enumeration_failed",
                 "The archive root could not be enumerated.",

@@ -65,11 +65,23 @@ configuration changes require an explicit rescan; the worker revalidates inputs.
 
 The scan saves topic names, types and counts in `recordings.scan_details`.
 Timestamp inspection uses a verified immutable SQLite descriptor without loading
-payloads, bounded to two million messages, five seconds and 256 Image/IMU topics.
-A gap must be at least five seconds and twenty times the median of the first
+payloads, bounded to two million messages per pass, a shared five-second query
+budget and 256 Image/IMU topics.
+The global pass reads the covering timestamp index first, avoiding random source-page
+lookups. A sequential table-header pass collects bounded sensor timestamp lists and
+sorts them in memory; evidence survives an interrupted sensor check.
+Its raw results (including partial checks) persist separately in `scan_details` and
+are reused when device, inode, mode, size, mtime, ctime, the 100-byte SQLite header
+and timestamp policy/limits match. Schema and descriptor checks still run; metadata,
+companions, health presentation and preparation targets are recomputed on every
+full rescan. Moves can reuse timing when the physical database identity still matches;
+cache misses, replacements and policy changes inspect timestamps again.
+The timestamp policy version must advance when inspection semantics change.
+A gap must be at least one second and twenty times the median of the first
 1,024 positive intervals, with at least twenty intervals of cadence evidence.
 Checks cover the bag and individual camera/IMU streams; the largest 24 gaps are
-saved with relative locations. Incomplete checks are marked partial. Gap evidence
+saved with internal relative locations; engineer-facing diagnostics use Unix time.
+Incomplete checks are marked partial. Gap evidence
 sets presentation health to Review without changing readability or preparation
 eligibility; timestamps alone do not prove data loss.
 
@@ -293,8 +305,19 @@ IDs. History groups latest successful outputs for recordings without failures.
 `/api/v1` provides catalog, explicit rescan, details, preparation and job controls.
 `POST /api/v1/catalog/discover` adds new recordings without making catalog reads
 touch sources. The browser requests it once per page load, independently of polling
-and route changes, without loading text or blocking controls. The bottom-left **Full rescan** button scans directly, spins during the request
-and shows **Scanning archive** in its hover label.
+and route changes, without loading text or blocking controls. The bottom-left
+**Full rescan** button appears only in Recordings, starts background work and
+spins while the server is scanning.
+Browser starts use `POST /api/v1/catalog/rescan?background=true` (202); the default
+POST remains a completion-waiting API for scripts. Both API versions share and
+shield one operation from request cancellation. `GET /api/v1/catalog/rescan/status`
+is polled on every route, including Analysis; reloads and other browsers see the
+server's running state. PostgreSQL session advisory locks serialize source scans
+across API processes and expose active full rescans independently of discovery.
+They release on server/session loss, allowing explicit retry; interrupted work
+does not resume automatically. The click dismisses its hover label and background;
+pointer reentry restores the button cue and **Scanning archive** label. Away from
+it, only the retry icon spins.
 `/api/recordings/...` delivers identity-bound media, IMU and encoder series. React routes are
 `#/recordings`, `#/processing` and `#/analysis/{id}`; the server also accepts
 `/`, `/processing` and `/recordings/{id}`. API schemas live in `api/`.

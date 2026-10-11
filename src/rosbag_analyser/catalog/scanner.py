@@ -50,9 +50,24 @@ class CatalogScanner:
         self.archive_root = archive_root
         self.limits = limits or CatalogScanLimits()
 
-    def scan(self, *, known_recordings: frozenset[str] | None = None) -> ScanSnapshot:
+    def scan(
+        self,
+        *,
+        known_recordings: frozenset[str] | None = None,
+        timing_cache: dict[str, dict] | None = None,
+    ) -> ScanSnapshot:
         started = time.monotonic_ns()
         recordings: list[RecordingScanResult] = []
+        # Rename detection still traverses every path. Reuse timing for the same
+        # physical database at a new path without an O(recordings²) cache search.
+        timing_by_identity = {
+            tuple(cache["key"]["file"]): cache
+            for cache in (timing_cache or {}).values()
+            if isinstance(cache, dict) and isinstance(cache.get("key"), dict)
+            and isinstance(cache["key"].get("file"), list)
+            and len(cache["key"]["file"]) == 6
+            and all(type(value) is int for value in cache["key"]["file"])
+        }
         candidates = discover_recording_directories(
             self.archive_root,
             self.limits,
@@ -78,7 +93,9 @@ class CatalogScanner:
                 continue
             try:
                 recordings.append(
-                    self._scan_recording(recording_root, candidate.entries)
+                    self._scan_recording(
+                        recording_root, candidate.entries, timing_cache, timing_by_identity
+                    )
                 )
             except (OSError, UnsafeSourcePath) as error:
                 diagnostic = _safe_path_diagnostic(error)
@@ -121,6 +138,8 @@ class CatalogScanner:
         self,
         recording_root: Path,
         entries: tuple[DirectEntry, ...],
+        timing_cache: dict[str, dict] | None = None,
+        timing_by_identity: dict[tuple[int, ...], dict] | None = None,
     ) -> RecordingScanResult:
         relative_recording = archive_relative_path(self.archive_root, recording_root)
 
@@ -134,7 +153,7 @@ class CatalogScanner:
             entries, SourceRole.TOPDOWN_TIMESTAMPS, ".csv"
         )
         database_component, database_probe, database_identity = self._database_component(
-            recording_root, metadata
+            recording_root, metadata, timing_cache, timing_by_identity
         )
         components = (
             metadata_component,
@@ -158,11 +177,12 @@ class CatalogScanner:
             if gaps:
                 longest = gaps[0]
                 seconds = int(longest["duration_ns"]) / 1_000_000_000
-                offset = int(longest["start_ns"]) / 1_000_000_000
+                origin = metadata.start_time_ns if metadata is not None else int(database_probe.timing["origin_ns"])
+                timestamp = (origin + int(longest["start_ns"])) / 1_000_000_000
                 diagnostic = SafeDiagnostic(
                     "recording_time_gap",
-                    f"Possible missing data: a {seconds:.1f} s timestamp gap near "
-                    f"{offset:.1f} s. Review the timeline; timestamps alone do not prove data loss.",
+                    f"Possible missing data: a {seconds:.1f} s timestamp gap near Unix time "
+                    f"{timestamp:.3f}. Review the timeline; timestamps alone do not prove data loss.",
                 )
         source_size = _complete_source_size(components)
         source_revision = _source_revision(
@@ -194,6 +214,7 @@ class CatalogScanner:
                     for topic in metadata.topics
                 ] if metadata is not None else None,
                 "timing": database_probe.timing if database_probe is not None else None,
+                "timing_cache": database_probe.timing_cache if database_probe is not None else None,
             },
             preparation_facts=RecordingPreparationFacts(
                 metadata=metadata,
@@ -291,7 +312,11 @@ class CatalogScanner:
         )
 
     def _database_component(
-        self, recording_root: Path, metadata: ParsedMetadata | None
+        self,
+        recording_root: Path,
+        metadata: ParsedMetadata | None,
+        timing_cache: dict[str, dict] | None = None,
+        timing_by_identity: dict[tuple[int, ...], dict] | None = None,
     ) -> tuple[
         SourceComponentResult,
         SQLiteProbeResult | None,
@@ -368,7 +393,17 @@ class CatalogScanner:
                 database_identity,
             )
 
-        probe = probe_sqlite_database(database_path)
+        cached = (timing_cache or {}).get(relative)
+        if cached is None and timing_by_identity:
+            cached = timing_by_identity.get((
+                database_identity.device_id, database_identity.inode,
+                database_identity.mode, database_identity.size_bytes,
+                database_identity.mtime_ns, database_identity.ctime_ns,
+            ))
+        probe = (
+            probe_sqlite_database(database_path) if cached is None else
+            probe_sqlite_database(database_path, timing_cache=cached)
+        )
         return (
             SourceComponentResult(
                 role=SourceRole.ROS_DATABASE,

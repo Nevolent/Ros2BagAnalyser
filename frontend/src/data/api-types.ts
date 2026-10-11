@@ -11,6 +11,10 @@ export interface Diagnostic {
   code: string;
   message: string;
 }
+export interface RescanStatus {
+  running: boolean;
+  diagnostic: Diagnostic | null;
+}
 export interface Artifact {
   streams?: {
     index: number;

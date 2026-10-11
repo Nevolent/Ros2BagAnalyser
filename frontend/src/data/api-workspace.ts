@@ -1,6 +1,6 @@
 import type { WorkspaceService } from './workspace-service';
 import type { AnalysisRecording, Folder, Job, WorkspaceSnapshot } from './types';
-import type { Catalog, Detail, JobsPage, Overview } from './api-types';
+import type { Catalog, Detail, JobsPage, Overview, RescanStatus } from './api-types';
 import { activeJob, folders, jobs, processingGroups, recording } from './api-mapping';
 import { analysisRecording } from './analysis-adapter';
 import { errorMessage, numericId, request } from './http';
@@ -29,12 +29,32 @@ export function createApiWorkspace(): WorkspaceService {
   let actionError = '';
   let pollMs = 3000;
   let discoveryStarted = false;
+  let scanPending = false;
+  let scanDiagnostic = '';
+  let scanVersion = 0;
   const loaded = new Set<string>();
   const cancelling = new Set<number>();
   const listeners = new Set<() => void>();
   function publish(patch: Partial<WorkspaceSnapshot>) {
     snapshot = { ...snapshot, ...patch };
     listeners.forEach((listener) => listener());
+  }
+  async function refreshRescan(signal?: AbortSignal) {
+    const version = ++scanVersion;
+    try {
+      const status = await request<RescanStatus>('/api/v1/catalog/rescan/status', signal);
+      if (signal?.aborted || version !== scanVersion) return;
+      if (typeof status.running !== 'boolean') throw new Error('Invalid rescan status.');
+      const diagnostic = status.running || scanPending ? '' : (status.diagnostic?.message ?? '');
+      if (diagnostic && diagnostic !== scanDiagnostic) actionError = diagnostic;
+      scanDiagnostic = diagnostic;
+      publish({ scanning: status.running || scanPending, error: actionError });
+    } catch (error) {
+      if (!signal?.aborted && version === scanVersion) {
+        actionError ||= errorMessage(error);
+        publish({ error: actionError });
+      }
+    }
   }
   async function readJobs(view: View, signal?: AbortSignal) {
     const items: JobsPage['items'] = [];
@@ -141,7 +161,7 @@ export function createApiWorkspace(): WorkspaceService {
       pollMs = Math.min(30000, pollMs * 2);
     }
   }
-  async function mutate(path: string, body: unknown = {}, scanning = false): Promise<boolean> {
+  async function mutate(path: string, body: unknown = {}): Promise<boolean> {
     if (snapshot.busy) return false;
     const preparing = path === '/api/v1/recordings/prepare';
     const queueLoading = preparing || path === '/api/v1/processing/jobs/retry';
@@ -149,7 +169,7 @@ export function createApiWorkspace(): WorkspaceService {
     if (queueLoading) loaded.delete('processing');
     epoch++;
     actionError = '';
-    publish({ busy: true, queueLoading, error: '', scanning });
+    publish({ busy: true, queueLoading, error: '' });
     try {
       const payload = typeof body === 'function' ? await body() : body;
       const result = await request<{
@@ -213,7 +233,7 @@ export function createApiWorkspace(): WorkspaceService {
       publish({ error: actionError });
       return false;
     } finally {
-      publish({ busy: false, queueLoading: false, scanning: false });
+      publish({ busy: false, queueLoading: false });
     }
   }
   function selectedJobs(ids: ReadonlySet<string>, rows: Job[]) {
@@ -244,7 +264,12 @@ export function createApiWorkspace(): WorkspaceService {
         if (running || controller.signal.aborted) return;
         running = true;
         clearTimeout(timer);
-        if (!snapshot.busy && !document.hidden) await refresh(controller.signal);
+        if (!document.hidden) {
+          await Promise.all([
+            refreshRescan(controller.signal),
+            snapshot.busy ? Promise.resolve() : refresh(controller.signal),
+          ]);
+        }
         running = false;
         if (!controller.signal.aborted) timer = setTimeout(poll, pollMs);
       };
@@ -316,7 +341,27 @@ export function createApiWorkspace(): WorkspaceService {
       actionError = '';
       publish({ error: '' });
     },
-    rescan: () => mutate('/api/v1/catalog/rescan', {}, true),
+    async rescan() {
+      if (snapshot.scanning || scanPending || snapshot.busy) return false;
+      scanVersion++;
+      scanPending = true;
+      actionError = '';
+      publish({ scanning: true, error: '' });
+      let success = false;
+      try {
+        await request('/api/v1/catalog/rescan?background=true', undefined, {});
+        success = true;
+      } catch (error) {
+        actionError = errorMessage(error);
+        publish({ error: actionError });
+      } finally {
+        scanPending = false;
+        // A lost HTTP response must not clear an operation still owned by the server.
+        epoch++;
+        await Promise.all([refreshRescan(), refresh()]);
+      }
+      return success;
+    },
     prepare: (ids) =>
       mutate('/api/v1/recordings/prepare', {
         recording_ids: [...ids].map(numericId),

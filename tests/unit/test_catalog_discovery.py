@@ -1,4 +1,5 @@
 from pathlib import Path
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -56,6 +57,9 @@ class DiscoveryRepository:
     def __init__(self):
         self.known = frozenset({"known"})
         self.applied = []
+
+    def source_scan(self, *, full):
+        return nullcontext()
 
     def known_recording_paths(self):
         return self.known

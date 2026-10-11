@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
 import stat
 
 from .types import SafeDiagnostic, SourceCondition
-from .timing import inspect_timing
+from .timing import inspect_timing, timing_policy, valid_cached_timing
 
 
 SQLITE_HEADER_BYTES = 100
@@ -28,9 +30,10 @@ class SQLiteProbeResult:
     mtime_ns: int | None
     revision_facts: tuple[tuple[str, int | str], ...]
     timing: dict | None = None
+    timing_cache: dict | None = None
 
 
-def probe_sqlite_database(path: Path) -> SQLiteProbeResult:
+def probe_sqlite_database(path: Path, *, timing_cache: dict | None = None) -> SQLiteProbeResult:
     try:
         descriptor, header, before = _open_database(path)
     except OSError:
@@ -53,7 +56,7 @@ def probe_sqlite_database(path: Path) -> SQLiteProbeResult:
         )
 
     try:
-        result = _probe_open_database(descriptor, header, before)
+        result = _probe_open_database(descriptor, header, before, timing_cache)
         return _verify_unchanged(path, descriptor, before, result)
     finally:
         os.close(descriptor)
@@ -76,7 +79,10 @@ def _open_database(path: Path) -> tuple[int, bytes, os.stat_result]:
 
 
 def _probe_open_database(
-    descriptor: int, header: bytes, details: os.stat_result
+    descriptor: int,
+    header: bytes,
+    details: os.stat_result,
+    timing_cache: dict | None = None,
 ) -> SQLiteProbeResult:
     if len(header) < SQLITE_HEADER_BYTES:
         return _damaged(
@@ -135,13 +141,21 @@ def _probe_open_database(
             "sqlite_size_mismatch",
             "The SQLite header declares a different database size than the source file.",
         )
-    return _probe_schema_readonly(descriptor, details, facts)
+    key = {
+        "policy": timing_policy(),
+        "file": [details.st_dev, details.st_ino, details.st_mode, details.st_size,
+                 details.st_mtime_ns, details.st_ctime_ns],
+        "header": hashlib.sha256(header).hexdigest(),
+    }
+    return _probe_schema_readonly(descriptor, details, facts, key, timing_cache)
 
 
 def _probe_schema_readonly(
     descriptor: int,
     details: os.stat_result,
     facts: tuple[tuple[str, int | str], ...],
+    timing_key: dict,
+    timing_cache: dict | None,
 ) -> SQLiteProbeResult:
     completed_instructions = 0
 
@@ -184,7 +198,12 @@ def _probe_schema_readonly(
             if ({row[0] for row in rows} == {"topics", "messages"}
                     and all(required.issubset(table_columns[table])
                             for table, required in REQUIRED_ROS_COLUMNS.items())):
-                timing = inspect_timing(connection)
+                cached = timing_cache.get("timing") if isinstance(timing_cache, dict) else None
+                if (valid_cached_timing(cached)
+                        and timing_cache.get("key") == timing_key):
+                    timing = deepcopy(cached)
+                else:
+                    timing = inspect_timing(connection)
         finally:
             connection.close()
     except sqlite3.DatabaseError as error:
@@ -242,6 +261,7 @@ def _probe_schema_readonly(
     return SQLiteProbeResult(
         condition=SourceCondition.READABLE,
         timing=timing,
+        timing_cache={"key": timing_key, "timing": deepcopy(timing)},
         diagnostic=None,
         size_bytes=details.st_size,
         mtime_ns=details.st_mtime_ns,
@@ -272,12 +292,14 @@ def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
         left.st_mode,
         left.st_size,
         left.st_mtime_ns,
+        left.st_ctime_ns,
     ) == (
         right.st_dev,
         right.st_ino,
         right.st_mode,
         right.st_size,
         right.st_mtime_ns,
+        right.st_ctime_ns,
     )
 
 

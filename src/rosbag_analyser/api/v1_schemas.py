@@ -41,6 +41,11 @@ class DiagnosticResponse(BaseModel):
     message: str
 
 
+class RescanStatusResponse(BaseModel):
+    running: bool
+    diagnostic: DiagnosticResponse | None = None
+
+
 class ScanCountsResponse(BaseModel):
     recordings: int
     readable: int

@@ -102,7 +102,7 @@ export function Sidebar({ route }: { route: Route }) {
                 </ul>
               </div>
             </div>
-            <ArchiveSettings />
+            {route === 'recordings' && <ArchiveSettings />}
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from contextlib import nullcontext
 
 import pytest
 
@@ -12,7 +13,7 @@ class RecordingScanner:
     def __init__(self) -> None:
         self.scan_calls = 0
 
-    def scan(self) -> ScanSnapshot:
+    def scan(self, *, timing_cache=None) -> ScanSnapshot:
         self.scan_calls += 1
         return ScanSnapshot(recordings=(), duration_ms=1)
 
@@ -20,6 +21,12 @@ class RecordingScanner:
 class RecordingRepository:
     def __init__(self) -> None:
         self.apply_calls = 0
+
+    def source_scan(self, *, full):
+        return nullcontext()
+
+    def load_timing_cache(self):
+        return {}
 
     def apply_snapshot(self, snapshot: ScanSnapshot) -> SimpleNamespace:
         self.apply_calls += 1

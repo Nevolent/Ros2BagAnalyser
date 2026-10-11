@@ -8,10 +8,10 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Path, Query, Request, Response, status
 import psycopg
 
-from rosbag_analyser.catalog.types import RootScanError
+from rosbag_analyser.catalog.types import RootScanError, SafeDiagnostic
 from rosbag_analyser.processing_view import InvalidProcessingCursor
 
-from .catalog_routes import _require_source_capability, _run_catalog_call
+from .catalog_routes import _require_source_capability, _run_catalog_call, _rescan_future
 from .v1_schemas import (
     CatalogResponse,
     DiscoveryResponse,
@@ -26,6 +26,7 @@ from .v1_schemas import (
     RecordingDetailResponse,
     ReorderJobsRequest,
     RescanResponse,
+    RescanStatusResponse,
     RetryResponse,
     catalog_response,
     bulk_control_response,
@@ -53,15 +54,23 @@ async def get_catalog(request: Request) -> CatalogResponse:
     return catalog_response(view)
 
 
-@router.post("/catalog/rescan", response_model=RescanResponse)
-async def rescan_catalog(request: Request) -> RescanResponse:
+@router.post("/catalog/rescan", response_model=RescanResponse | RescanStatusResponse)
+async def rescan_catalog(
+    request: Request,
+    response: Response,
+    background: bool = False,
+) -> RescanResponse | RescanStatusResponse:
     _require_source_capability(request)
     try:
-        result = await _run_catalog_call(
-            request,
-            request.app.state.catalog_service.rescan,
-            executor=request.app.state.catalog_scan_executor,
-        )
+        # Another API process may own the database-backed scan lock.
+        if background and await _rescan_running(request):
+            response.status_code = status.HTTP_202_ACCEPTED
+            return RescanStatusResponse(running=True)
+        future = _rescan_future(request)
+        if background:
+            response.status_code = status.HTTP_202_ACCEPTED
+            return RescanStatusResponse(running=True)
+        result = await asyncio.shield(future)
     except RootScanError as error:
         logger.warning(
             "V1 catalog scan failed with code %s.",
@@ -80,9 +89,47 @@ async def rescan_catalog(request: Request) -> RescanResponse:
     return rescan_response(result)
 
 
+async def _rescan_running(request: Request) -> bool:
+    future = getattr(request.app.state, "catalog_rescan_future", None)
+    if future is not None and not future.done():
+        return True
+    service = request.app.state.catalog_service
+    if hasattr(service, "rescan_running"):
+        return await _run_catalog_call(request, service.rescan_running)
+    return False
+
+
+@router.get("/catalog/rescan/status", response_model=RescanStatusResponse)
+async def rescan_status(request: Request) -> RescanStatusResponse:
+    try:
+        running = await _rescan_running(request)
+    except psycopg.Error as error:
+        raise _database_error("load catalog rescan status", error) from error
+    diagnostic = None
+    future = getattr(request.app.state, "catalog_rescan_future", None)
+    if not running and future is not None and future.done() and not future.cancelled():
+        error = future.exception()
+        if error is not None and not (
+            isinstance(error, RootScanError)
+            and error.diagnostic.code == "catalog_scan_in_progress"
+        ):
+            diagnostic = (
+                error.diagnostic if isinstance(error, RootScanError) else
+                SafeDiagnostic("catalog_rescan_failed",
+                               "The full rescan failed. Retry the full rescan.")
+            )
+    return RescanStatusResponse(
+        running=running,
+        diagnostic=diagnostic and {"code": diagnostic.code, "message": diagnostic.message},
+    )
+
+
 @router.post("/catalog/discover", response_model=DiscoveryResponse)
 async def discover_recordings(request: Request) -> DiscoveryResponse:
     _require_source_capability(request)
+    rescan = getattr(request.app.state, "catalog_rescan_future", None)
+    if rescan is not None and not rescan.done():
+        return DiscoveryResponse(added_count=0)
     # Share in-flight work across refreshing browsers. Shielding leaves the
     # bounded scan alive when an individual browser navigates away.
     future = getattr(request.app.state, "catalog_discovery_future", None)

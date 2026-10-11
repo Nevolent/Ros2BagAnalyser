@@ -147,6 +147,9 @@ test('searches share exact geometry and table headers match the recordings panel
   expect(metrics[0]).toEqual(metrics[1]);
   const colors = await page.evaluate(() => ({
     panel: getComputedStyle(document.querySelector('.data-table-panel')!).backgroundColor,
+  await page.getByRole('link', { name: 'Processing', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Full rescan', exact: true })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Recordings', exact: true }).click();
     header: getComputedStyle(document.querySelector('.bag-table thead th')!).backgroundColor,
   }));
   expect(colors.panel).toBe(colors.header);

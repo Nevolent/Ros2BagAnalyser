@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
@@ -11,6 +12,7 @@ from typing import Any, Protocol
 from psycopg import IsolationLevel
 
 from rosbag_analyser.catalog.types import (
+    RootScanError,
     RecordingScanResult,
     SafeDiagnostic,
     ScanSnapshot,
@@ -22,6 +24,12 @@ from rosbag_analyser.preparation_planner import (
 )
 
 from .database import open_connection
+
+
+# Two-key session locks: one source scanner across API processes, and an
+# independently observable full-rescan flag. PostgreSQL releases both on exit
+# or connection loss, so an interrupted server cannot leave a stale busy flag.
+CATALOG_SCAN_LOCK = 734102
 
 
 @dataclass(frozen=True)
@@ -121,6 +129,53 @@ class CatalogRepository:
     ) -> None:
         self.database_url = database_url
         self.target_planner = target_planner
+
+    @contextmanager
+    def source_scan(self, *, full: bool):
+        with open_connection(self.database_url) as connection:
+            connection.autocommit = True
+            acquired = connection.execute(
+                "SELECT pg_try_advisory_lock(%s, 1) AS acquired",
+                (CATALOG_SCAN_LOCK,),
+            ).fetchone()["acquired"]
+            if not acquired:
+                raise RootScanError(
+                    "catalog_scan_in_progress", "A catalog scan is already in progress."
+                )
+            try:
+                if full:
+                    connection.execute("SELECT pg_advisory_lock(%s, 2)", (CATALOG_SCAN_LOCK,))
+                yield connection
+            finally:
+                # Closing the owned session releases the locks even on errors.
+                connection.close()
+
+    def rescan_running(self) -> bool:
+        with open_connection(self.database_url) as connection:
+            row = connection.execute(
+                """SELECT EXISTS (
+                    SELECT 1 FROM pg_locks
+                    WHERE locktype = 'advisory' AND granted
+                      AND classid = %s AND objid = 2 AND objsubid = 2
+                      AND database = (SELECT oid FROM pg_database
+                                      WHERE datname = current_database())
+                ) AS running""", (CATALOG_SCAN_LOCK,),
+            ).fetchone()
+        return bool(row["running"])
+
+    def load_timing_cache(self) -> dict[str, dict]:
+        with open_connection(self.database_url) as connection:
+            rows = connection.execute(
+                """SELECT component.relative_path,
+                          recording.scan_details -> 'timing_cache' AS timing_cache
+                   FROM recordings AS recording
+                   JOIN source_components AS component ON component.recording_id = recording.id
+                   WHERE recording.source_present AND component.role = 'ros_database'
+                     AND component.relative_path IS NOT NULL
+                     AND recording.scan_details -> 'timing_cache' IS NOT NULL"""
+            ).fetchall()
+        return {str(row["relative_path"]): row["timing_cache"] for row in rows
+                if isinstance(row["timing_cache"], dict)}
 
     def apply_snapshot(
         self,

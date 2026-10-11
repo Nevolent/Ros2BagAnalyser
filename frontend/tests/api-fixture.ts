@@ -153,6 +153,7 @@ export async function apiFixture(page: Page) {
     } as ApiJob | null,
     posts: [] as { path: string; body: unknown }[],
     discoveries: [] as unknown[],
+    scanning: false,
     requests: [] as string[],
     override: null as ((route: Route, path: string) => Promise<boolean>) | null,
     imu: telemetry(),
@@ -206,6 +207,8 @@ export async function apiFixture(page: Page) {
       }
     }
     if (path === '/api/v1/catalog') return json(state.catalog);
+    if (path === '/api/v1/catalog/rescan/status')
+      return json({ running: state.scanning, diagnostic: null });
     if (path === '/api/v1/processing/overview')
       return json({
         current: state.active,

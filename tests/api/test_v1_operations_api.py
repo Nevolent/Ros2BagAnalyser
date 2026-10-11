@@ -130,6 +130,73 @@ class FakeCatalogService:
         )
 
 
+class HeldRescanService(FakeCatalogService):
+    def __init__(self, *, fail=False):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.calls = 0
+        self.fail = fail
+
+    def rescan(self):
+        self.calls += 1
+        self.started.set()
+        assert self.release.wait(5)
+        if self.fail:
+            raise RuntimeError('/private/source/secret.db3')
+        return super().rescan()
+
+
+async def test_rescan_survives_request_cancellation_and_new_browsers_share_status():
+    service = HeldRescanService()
+    try:
+        async with client_for(catalog_service=service) as client:
+            initiating = asyncio.create_task(client.post('/api/catalog/rescan'))
+            for _ in range(100):
+                if service.started.is_set():
+                    break
+                await asyncio.sleep(.01)
+            assert service.started.is_set()
+            initiating.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await initiating
+            async with httpx.AsyncClient(transport=client._transport,
+                                         base_url='http://testserver') as other:
+                assert (await other.get('/api/v1/catalog/rescan/status')).json()['running']
+                repeated = await other.post('/api/v1/catalog/rescan?background=true')
+                assert repeated.status_code == 202
+                assert repeated.json()['running']
+                waiting = asyncio.create_task(other.post('/api/v1/catalog/rescan'))
+                await asyncio.sleep(.02)
+                assert service.calls == 1
+                assert (await other.get('/api/v1/catalog')).status_code == 200
+                service.release.set()
+                assert (await waiting).status_code == 200
+                assert (await other.get('/api/v1/catalog/rescan/status')).json() == {
+                    'running': False, 'diagnostic': None,
+                }
+    finally:
+        service.release.set()
+
+
+async def test_background_rescan_returns_promptly_and_reports_safe_failure():
+    service = HeldRescanService(fail=True)
+    try:
+        async with client_for(catalog_service=service) as client:
+            started = await asyncio.wait_for(client.post('/api/v1/catalog/rescan?background=true'), .5)
+            assert started.status_code == 202
+            service.release.set()
+            for _ in range(100):
+                response = await client.get('/api/v1/catalog/rescan/status')
+                if not response.json()['running']:
+                    break
+                await asyncio.sleep(.01)
+            assert response.json()['diagnostic']['code'] == 'catalog_rescan_failed'
+            assert '/private' not in response.text
+            assert not response.json()['running']
+    finally:
+        service.release.set()
+
+
 class FakeV1CatalogService:
     def get_catalog(self) -> V1CatalogView:
         recording = _recording()

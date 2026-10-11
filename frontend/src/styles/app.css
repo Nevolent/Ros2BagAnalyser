@@ -59,9 +59,11 @@ button:focus-visible,
   width: 16px;
   height: 16px;
 }
-.sidebar-settings-trigger:hover,
-.sidebar-settings-trigger[aria-busy='true'] {
+.sidebar-settings-trigger:hover:not([data-suppress-hover='true']) {
   background: var(--sidebar-accent);
+  color: var(--foreground);
+}
+.sidebar-settings-trigger[aria-busy='true'] {
   color: var(--foreground);
 }
 .archive-rescan-spinning {

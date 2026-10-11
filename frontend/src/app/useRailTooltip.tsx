@@ -71,6 +71,7 @@ export function useRailTooltip() {
       { signal: controller.signal },
     );
     window.addEventListener('resize', hide, { signal: controller.signal });
+    document.addEventListener('rail-tooltip-dismiss', hide, { signal: controller.signal });
     return () => {
       controller.abort();
       clearTimeout(showTimer.current);

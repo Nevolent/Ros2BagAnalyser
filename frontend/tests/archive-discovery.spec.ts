@@ -75,7 +75,7 @@ test('a failed discovery preserves the catalog and reports the failure without r
   expect(api.discoveries).toHaveLength(1);
 });
 
-test('full-rescan control runs a full rescan from any page and retains failures for retry', async ({
+test('full-rescan control is confined to recordings and retains failures for retry', async ({
   page,
 }) => {
   const api = await apiFixture(page);
@@ -87,6 +87,8 @@ test('full-rescan control runs a full rescan from any page and retains failures 
   };
   await page.goto('/#/processing');
   const settings = page.getByRole('button', { name: 'Full rescan', exact: true });
+  await expect(settings).toHaveCount(0);
+  await page.getByRole('link', { name: 'Recordings', exact: true }).click();
   await settings.click();
   await expect(page.getByRole('alert')).toContainText('Full rescan failed.');
   await expect(settings).not.toHaveAttribute('aria-disabled', 'true');
@@ -97,4 +99,58 @@ test('full-rescan control runs a full rescan from any page and retains failures 
     '/api/v1/catalog/rescan',
     '/api/v1/catalog/rescan',
   ]);
+});
+
+test('server rescan status survives reload and updates every route without duplicate starts', async ({
+  page,
+}) => {
+  const api = await apiFixture(page);
+  api.override = async (route, path) => {
+    if (path !== '/api/v1/catalog/rescan') return false;
+    api.scanning = true;
+    api.posts.push({ path, body: route.request().postDataJSON() });
+    await route.fulfill({ status: 202, json: { running: true, diagnostic: null } });
+    return true;
+  };
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Full rescan', exact: true }).click();
+  const spinning = page.getByRole('button', { name: 'Scanning archive', exact: true });
+  await expect(spinning).toHaveAttribute('aria-disabled', 'true');
+  await page.reload();
+  await expect(spinning).toHaveAttribute('aria-busy', 'true');
+  await spinning.focus();
+  await page.keyboard.press('Enter');
+  expect(api.posts).toHaveLength(1);
+  await page.getByRole('link', { name: 'Processing', exact: true }).click();
+  await expect(spinning).toHaveCount(0);
+  await page.getByRole('link', { name: 'Analysis', exact: true }).click();
+  await expect(spinning).toHaveCount(0);
+  await page.getByRole('link', { name: 'Recordings', exact: true }).click();
+  await expect(spinning).toHaveAttribute('aria-busy', 'true');
+  api.scanning = false;
+  await expect(page.getByRole('button', { name: 'Full rescan', exact: true })).not.toHaveAttribute(
+    'aria-disabled',
+    'true',
+  );
+  expect(api.posts).toHaveLength(1);
+});
+
+test('a scan started elsewhere is visible on first load and failed status reads retain its spinner', async ({
+  page,
+}) => {
+  const api = await apiFixture(page);
+  api.scanning = true;
+  await page.goto('/#/processing');
+  const spinning = page.getByRole('button', { name: 'Scanning archive', exact: true });
+  await expect(spinning).toHaveCount(0);
+  await page.getByRole('link', { name: 'Recordings', exact: true }).click();
+  await expect(spinning).toHaveAttribute('aria-busy', 'true');
+  api.override = async (route, path) => {
+    if (path !== '/api/v1/catalog/rescan/status') return false;
+    await route.fulfill({ status: 503, json: { detail: { message: 'Status unavailable.' } } });
+    return true;
+  };
+  await expect(page.getByRole('alert')).toContainText('Status unavailable.');
+  await expect(spinning).toHaveAttribute('aria-busy', 'true');
+  expect(api.posts).toHaveLength(0);
 });

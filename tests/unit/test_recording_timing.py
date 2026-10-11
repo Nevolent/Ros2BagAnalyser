@@ -85,9 +85,57 @@ def test_scan_saves_topics_and_bag_relative_review_without_blocking_processing(t
     result = CatalogScanner(archive).scan().recordings[0]
     assert result.ros_health.value == "readable"
     assert result.diagnostic.code == "recording_time_gap"
+    assert "near Unix time " in result.diagnostic.message
+    assert "timestamps alone do not prove data loss" in result.diagnostic.message.lower()
     assert result.scan_details["topics"][0]["name"] == "/camera/image_raw"
     assert result.scan_details["timing"]["gaps"][0]["start_ns"] == "5000000000"
     planner = PreparationPlanner(front_topic="", imu_topic="", imu_component="angular_velocity.z",
                                  profile=V0_PREVIEW_PROFILE, encoder_identity="synthetic")
     assert planner.plan_recording(1, result)[0].target_state == "available"
     assert inventory(archive) == before
+
+
+def test_sensor_scan_finds_short_late_pause_in_unordered_rows_using_covering_index(tmp_path):
+    path = tmp_path / "late-gap.db3"
+    # IMU keeps the recording active while the camera pauses for 2.5 seconds.
+    stamps = [n * 10_000_000 for n in range(4000)]
+    messages = [(2, stamp) for stamp in stamps]
+    messages += [(1, stamp) for stamp in stamps if not 30_000_000_000 <= stamp < 32_500_000_000]
+    database(path, reversed(messages))
+    before = inventory(tmp_path)
+    with sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True) as connection:
+        plan = connection.execute(
+            "EXPLAIN QUERY PLAN SELECT timestamp FROM messages ORDER BY timestamp LIMIT 2000001"
+        ).fetchall()
+        assert any("COVERING INDEX timestamp_idx" in row[3] for row in plan)
+        result = timing.inspect_timing(connection)
+    assert result["status"] == "complete"
+    assert result["gaps"] == [{"topic": "/image", "start_ns": "29990000000",
+                              "end_ns": "32500000000", "duration_ns": "2510000000"}]
+    assert inventory(tmp_path) == before
+
+
+def test_partial_sensor_evidence_survives_query_interruption(tmp_path):
+    path = tmp_path / "interrupted.db3"
+    database(path, [(1, n * 10_000_000) for n in range(50)])
+
+    class InterruptedSensorConnection:
+        def set_progress_handler(self, callback, interval):
+            pass
+
+        def execute(self, query, parameters):
+            if "NOT INDEXED" not in query:
+                return connection.execute(query, parameters)
+
+            def rows():
+                for n in range(50):
+                    yield 1, n * 10_000_000
+                yield 1, 6_500_000_000
+                raise sqlite3.OperationalError("interrupted")
+            return rows()
+
+    with sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True) as connection:
+        result = timing.inspect_timing(InterruptedSensorConnection())
+    assert result["status"] == "partial"
+    assert result["gaps"][0]["topic"] == "/image"
+    assert result["gaps"][0]["duration_ns"] == "6010000000"

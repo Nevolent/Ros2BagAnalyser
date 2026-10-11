@@ -19,7 +19,9 @@ test('search supports filtering, empty states, shortcuts and keyboard navigation
   await expect(page.getByRole('link', { name: 'Tectrace home' })).toBeFocused();
 });
 
-test('full rescan runs directly and updates its live hover label', async ({ page }) => {
+test('full rescan dismisses the hover box and shows its label on pointer reentry', async ({
+  page,
+}) => {
   await page.goto('/?demo=1');
   await page.clock.install();
   const rescan = page.getByRole('button', { name: 'Full rescan', exact: true });
@@ -32,12 +34,19 @@ test('full rescan runs directly and updates its live hover label', async ({ page
   const scanning = page.getByRole('button', { name: 'Scanning archive', exact: true });
   await expect(scanning).toHaveAttribute('aria-busy', 'true');
   await expect(scanning).toHaveAttribute('aria-disabled', 'true');
-  await expect(page.getByRole('tooltip')).toHaveText('Scanning archive');
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
   await expect(scanning.locator('svg')).toHaveCSS('animation-name', 'archive-rescan-spin');
   expect(await scanning.boundingBox()).toEqual(before);
+  await page.mouse.move(300, 300);
+  await scanning.hover();
+  await page.clock.runFor(100);
+  await expect(page.getByRole('tooltip')).toHaveText('Scanning archive');
+  await page.mouse.move(300, 300);
+  await page.clock.runFor(300);
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
   await page.clock.fastForward(5000);
   await expect(rescan).toBeFocused();
-  await expect(page.getByRole('tooltip')).toHaveText('Full rescan');
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
   await expect(rescan).not.toHaveAttribute('aria-busy', 'true');
 });
 

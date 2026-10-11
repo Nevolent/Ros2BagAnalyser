@@ -13,7 +13,7 @@ from rosbag_analyser.persistence.catalog_repository import (
 )
 
 from .scanner import CatalogScanner
-from .types import SafeDiagnostic
+from .types import RootScanError, SafeDiagnostic
 
 
 @dataclass(frozen=True)
@@ -57,34 +57,42 @@ class CatalogService:
         if not self._rescan_lock.acquire(blocking=False):
             return 0
         try:
-            self._require_source_admission()
-            known = self.repository.known_recording_paths()
-            snapshot = self.scanner.scan(known_recordings=known)
-            self._require_source_admission()
-            return self.repository.apply_discovery(snapshot).recording_count
+            with self.repository.source_scan(full=False) as connection:
+                self._require_source_admission()
+                known = self.repository.known_recording_paths()
+                snapshot = self.scanner.scan(known_recordings=known)
+                self._require_source_admission()
+                if connection is not None:
+                    connection.execute("SELECT 1")  # Confirm ownership before publication.
+                return self.repository.apply_discovery(snapshot).recording_count
+        except RootScanError as error:
+            if error.diagnostic.code == "catalog_scan_in_progress":
+                return 0
+            raise
         finally:
             self._rescan_lock.release()
 
     def rescan(self) -> RescanResult:
         if not self._rescan_lock.acquire(blocking=False):
-            from .types import RootScanError
-
             raise RootScanError(
                 "catalog_scan_in_progress",
                 "A catalog rescan is already in progress.",
             )
         try:
-            self._require_source_admission()
-            snapshot = self.scanner.scan()
-            self._require_source_admission()
-            summary = (
-                self.repository.apply_snapshot(snapshot)
-                if self.rescan_scheduler is None
-                else self.repository.apply_snapshot(
-                    snapshot, schedule_outputs=self.rescan_scheduler
+            with self.repository.source_scan(full=True) as connection:
+                self._require_source_admission()
+                snapshot = self.scanner.scan(timing_cache=self.repository.load_timing_cache())
+                self._require_source_admission()
+                if connection is not None:
+                    connection.execute("SELECT 1")
+                summary = (
+                    self.repository.apply_snapshot(snapshot)
+                    if self.rescan_scheduler is None
+                    else self.repository.apply_snapshot(
+                        snapshot, schedule_outputs=self.rescan_scheduler
+                    )
                 )
-            )
-            state = self.repository.get_catalog_state()
+                state = self.repository.get_catalog_state()
         finally:
             self._rescan_lock.release()
         health_values = [recording.ros_health.value for recording in snapshot.recordings]
@@ -106,13 +114,14 @@ class CatalogService:
             completed_at=state.successful_completed_at,
         )
 
+    def rescan_running(self) -> bool:
+        return self.repository.rescan_running()
+
     def _require_source_admission(self) -> None:
         if self.source_admission_check is None:
             return
         diagnostic = self.source_admission_check()
         if diagnostic is not None:
-            from .types import RootScanError
-
             raise RootScanError(diagnostic.code, diagnostic.message)
 
     def list_recordings(self) -> tuple[CatalogRecording, ...]:

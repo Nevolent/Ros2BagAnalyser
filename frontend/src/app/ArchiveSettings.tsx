@@ -6,6 +6,7 @@ export function ArchiveSettings() {
   const service = useWorkspaceService();
   const snapshot = useWorkspace();
   const [demoScanning, setDemoScanning] = useState(false);
+  const [suppressHover, setSuppressHover] = useState(false);
   const scanning = service.rescan ? snapshot.scanning : demoScanning;
   useEffect(() => {
     if (!demoScanning) return;
@@ -14,6 +15,10 @@ export function ArchiveSettings() {
   }, [demoScanning]);
   async function rescan() {
     if (scanning || snapshot.busy) return;
+    // Dismiss the click's hover label while preserving keyboard focus. A new
+    // pointer entry or keyboard focus will show the current scan label again.
+    document.dispatchEvent(new CustomEvent('rail-tooltip-dismiss'));
+    setSuppressHover(true);
     if (!service.rescan) setDemoScanning(true);
     else await service.rescan();
   }
@@ -26,6 +31,10 @@ export function ArchiveSettings() {
         aria-disabled={scanning || snapshot.busy || undefined}
         aria-busy={scanning || undefined}
         data-rail-link=""
+        data-rescan-archive=""
+        data-suppress-hover={suppressHover || undefined}
+        onPointerLeave={() => setSuppressHover(false)}
+        onBlur={() => setSuppressHover(false)}
         onClick={() => void rescan()}
       >
         <Icon

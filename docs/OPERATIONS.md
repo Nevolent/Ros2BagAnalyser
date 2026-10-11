@@ -123,6 +123,9 @@ Frontend-only changes restart API only. Other application changes close writes
 and let active worker work finish; queued work remains saved. Dependency changes
 build a checked wheelhouse on the existing platform. OS/ROS/Python or service,
 proxy, firewall and private configuration changes use the site-upgrade procedure.
+The planner also accepts the reviewed installer change that publishes only
+`wheelhouse/SHA256SUMS` as `0644` after root ownership and before release publication;
+any accompanying installer change still requires a site upgrade.
 
 Migrations must be appended consecutively; existing migrations cannot change.
 Before migrating, the deployer stops API and worker, creates a protected dump,

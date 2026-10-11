@@ -53,6 +53,31 @@ def unit_documentation_only(repository, previous, candidate, path):
     return old != new and settings(old) == settings(new)
 
 
+def installer_checksum_metadata_only(repository, previous, candidate):
+    """Recognize the reviewed checksum-readability fix at release publication."""
+    path = 'deploy/scripts/install-release'
+    try:
+        old = git(repository, 'show', f'{previous}:{path}')
+        new = git(repository, 'show', f'{candidate}:{path}')
+    except subprocess.CalledProcessError:
+        return False
+    permissions = (
+        'chown -R root:root "$staging/release"\n'
+        'find "$staging/release" -type d -exec chmod 0755 {} +\n'
+        'find "$staging/release" -type f -exec chmod go-w {} +\n'
+    )
+    publication = 'mv -- "$staging/release" "$release_target"'
+    metadata = (
+        '# The wheelhouse builder protects its checksum file with mode 0600. Installed\n'
+        '# preflight runs as the service account and must be able to read this metadata.\n'
+        'chmod 0644 "$staging/release/wheelhouse/SHA256SUMS"\n'
+    )
+    anchor = permissions + publication
+    return old.count(anchor) == 1 and new == old.replace(
+        anchor, permissions + metadata + publication, 1
+    )
+
+
 def plan(repository, previous, candidate):
     changes = git(repository, 'diff', '--name-only', previous, candidate).splitlines()
     mode, migrate, dependencies = 'none', False, False
@@ -60,6 +85,11 @@ def plan(repository, previous, candidate):
         if path.startswith('deploy/systemd/') and unit_documentation_only(
             repository, previous, candidate, path
         ):
+            continue
+        if path == 'deploy/scripts/install-release' and installer_checksum_metadata_only(
+            repository, previous, candidate
+        ):
+            mode = 'both'
             continue
         if path.startswith('deploy/scripts/') and path not in (
             'deploy/scripts/deploy-from-git', 'deploy/scripts/deploy_release.py',

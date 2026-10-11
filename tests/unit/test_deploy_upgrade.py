@@ -101,6 +101,65 @@ def test_only_local_unit_documentation_links_bypass_site_upgrade(repository, ext
         assert deploy.plan(root, old, new) == ('none', False, False)
 
 
+@pytest.fixture
+def checksum_installer(repository):
+    root, _ = repository
+    current = (ROOT / 'deploy/scripts/install-release').read_text()
+    metadata = (
+        '# The wheelhouse builder protects its checksum file with mode 0600. Installed\n'
+        '# preflight runs as the service account and must be able to read this metadata.\n'
+        'chmod 0644 "$staging/release/wheelhouse/SHA256SUMS"\n'
+    )
+    assert current.count(metadata) == 1
+    previous = current.replace(metadata, '', 1)
+    path = root / 'deploy/scripts/install-release'
+    path.parent.mkdir()
+    path.write_text(previous)
+    return root, commit(root), path, current, metadata
+
+
+@pytest.mark.parametrize('application', [None, 'worker.py', 'web/react/index.html'])
+def test_reviewed_installer_metadata_fix_requires_a_new_release(checksum_installer, application):
+    root, old, path, current, _ = checksum_installer
+    path.write_text(current)
+    if application:
+        target = root / 'src/rosbag_analyser' / application
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('synthetic application change\n')
+    assert deploy.plan(root, old, commit(root)) == ('both', False, False)
+
+
+@pytest.mark.parametrize('change', ['extra', 'checksum', 'mode', 'location', 'delete', 'reverse'])
+def test_installer_exception_rejects_other_changes(checksum_installer, change):
+    root, old, path, current, metadata = checksum_installer
+    if change == 'extra':
+        path.write_text(current + '\nchmod 0644 /etc/rosbag-analyser/application.env\n')
+    elif change == 'checksum':
+        path.write_text(current.replace('[[ "$actual_sha256" == "$expected_sha256" ]]', 'true'))
+    elif change == 'mode':
+        path.write_text(current.replace('chmod 0644 "$staging/release/wheelhouse/SHA256SUMS"',
+                                        'chmod 0666 "$staging/release/wheelhouse/SHA256SUMS"'))
+    elif change == 'location':
+        path.write_text(metadata + current.replace(metadata, '', 1))
+    elif change == 'delete':
+        path.unlink()
+    else:
+        path.write_text(current)
+        old = commit(root)
+        path.write_text(current.replace(metadata, '', 1))
+    with pytest.raises(ValueError, match='site upgrade'):
+        deploy.plan(root, old, commit(root))
+
+
+def test_installer_exception_rejects_initial_installation(repository):
+    root, old = repository
+    path = root / 'deploy/scripts/install-release'
+    path.parent.mkdir()
+    path.write_text((ROOT / 'deploy/scripts/install-release').read_text())
+    with pytest.raises(ValueError, match='site upgrade'):
+        deploy.plan(root, old, commit(root))
+
+
 def upgrade_fixture(tmp_path, monkeypatch, failure=None):
     events = []
     marker = tmp_path / 'maintenance'

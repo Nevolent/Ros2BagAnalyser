@@ -86,7 +86,10 @@ def completion_request(images: list[bytes], timestamps: list[float]) -> dict:
         ],
         "temperature": 0, "seed": 0, "max_tokens": MAX_NEW_TOKENS,
         "stream": False, "cache_prompt": False,
-        "response_format": {"type": "json_schema", "schema": EVIDENCE_SCHEMA},
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "visual_evidence", "schema": EVIDENCE_SCHEMA},
+        },
     }
 
 

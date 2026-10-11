@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
@@ -121,15 +122,20 @@ class CatalogRepository:
         self.database_url = database_url
         self.target_planner = target_planner
 
-    def apply_snapshot(self, snapshot: ScanSnapshot) -> ApplySummary:
+    def apply_snapshot(
+        self,
+        snapshot: ScanSnapshot,
+        *,
+        schedule_outputs: Callable[[Any], None] | None = None,
+    ) -> ApplySummary:
         recording_paths = [item.archive_relative_path for item in snapshot.recordings]
         if len(recording_paths) != len(set(recording_paths)):
             raise ValueError("A scan snapshot contains duplicate recording identities.")
 
         component_count = 0
         with open_connection(self.database_url) as connection:
-            # Match preparation's queue-before-recording lock order. Thumbnail
-            # insertion and the successful catalog commit are one transaction.
+            # Match preparation's queue-before-recording lock order. Scheduling
+            # and the successful catalog commit are one transaction.
             from .processing_repository import _lock_job_queue
             _lock_job_queue(connection)
             connection.execute(
@@ -259,7 +265,10 @@ class CatalogRepository:
                     **counts,
                 },
             )
-            self._queue_thumbnails(connection, generation)
+            if schedule_outputs is None:
+                self._queue_thumbnails(connection, generation, retry=True)
+            else:
+                schedule_outputs(connection)
         return ApplySummary(
             recording_count=len(snapshot.recordings),
             component_count=component_count,
@@ -381,6 +390,8 @@ class CatalogRepository:
         connection: Any,
         generation: int,
         recording_ids: list[int] | None = None,
+        *,
+        retry: bool = False,
     ) -> None:
         connection.execute(
             """
@@ -398,10 +409,20 @@ class CatalogRepository:
                       AND kind = target.kind AND cache_identity = target.cache_identity)
               AND NOT EXISTS (
                   SELECT 1 FROM jobs WHERE recording_id = target.recording_id
-                      AND kind = target.kind AND cache_identity = target.cache_identity)
+                      AND kind = target.kind AND cache_identity = target.cache_identity
+                      AND (NOT %s OR state IN ('queued', 'running')))
+              AND NOT EXISTS (
+                  SELECT 1 FROM (
+                      SELECT error_code FROM jobs
+                      WHERE recording_id = target.recording_id
+                        AND kind = target.kind AND cache_identity = target.cache_identity
+                        AND state = 'failed'
+                      ORDER BY finished_at DESC, id DESC LIMIT 1
+                  ) AS latest_failure
+                  WHERE error_code = 'thumbnail_camera_unavailable')
             ORDER BY target.recording_id
             """,
-            (generation, recording_ids, recording_ids),
+            (generation, recording_ids, recording_ids, retry),
         )
 
     def get_catalog_state(self) -> CatalogState:

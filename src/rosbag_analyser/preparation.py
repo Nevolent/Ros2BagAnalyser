@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from collections.abc import Callable
-from typing import Mapping
+from typing import Any, Mapping
 
 from rosbag_analyser.artifact_store import ArtifactStore, ArtifactStoreError
-from rosbag_analyser.catalog.types import SafeDiagnostic
+from rosbag_analyser.catalog.types import RootScanError, SafeDiagnostic
 from rosbag_analyser.persistence.catalog_repository import CatalogRepository
 from rosbag_analyser.persistence.processing_repository import (
     FRONT_PREVIEW_KIND,
@@ -111,10 +111,39 @@ class PreparationService:
             for recording_id in recording_ids
         )
 
+    def prepare_rescan(self, connection: Any) -> None:
+        """Reconcile preparation in the catalog transaction, using saved targets."""
+        candidates = self.processing_repository.get_rescan_candidates(connection)
+        for previously_prepared in (False, True):
+            recording_ids = tuple(
+                recording_id
+                for recording_id, prepared in candidates
+                if prepared == previously_prepared
+            )
+            kinds = PROCESSING_KINDS if previously_prepared else (THUMBNAIL_KIND,)
+            for offset in range(0, len(recording_ids), 100):
+                result = self.prepare_selected(
+                    recording_ids[offset:offset + 100],
+                    kinds,
+                    connection=connection,
+                )
+                if any(
+                    output.outcome == "request_failed"
+                    for recording in result.recordings
+                    for output in recording.outputs
+                ):
+                    raise RootScanError(
+                        "catalog_preparation_schedule_failed",
+                        "The rescan could not schedule preparation. The previous catalog "
+                        "and queue were preserved; retry the full rescan.",
+                    )
+
     def prepare_selected(
         self,
         recording_ids: tuple[int, ...],
         output_kinds: tuple[str, ...] = PROCESSING_KINDS,
+        *,
+        connection: Any | None = None,
     ) -> PrepareSelectedResult:
         selected_kinds = tuple(kind for kind in PROCESSING_KINDS if kind in output_kinds)
         if (
@@ -123,7 +152,10 @@ class PreparationService:
             or set(selected_kinds) != set(output_kinds)
         ):
             raise ValueError("Select a unique non-empty set of supported outputs.")
-        existing = self.processing_repository.get_current_outputs(recording_ids)
+        transaction_options = {} if connection is None else {"connection": connection}
+        existing = self.processing_repository.get_current_outputs(
+            recording_ids, **transaction_options
+        )
         invalid_by_recording: dict[int, dict[str, int]] = {}
         baseline_states: dict[int, dict[str, str]] = {
             recording_id: {kind: "unavailable" for kind in PROCESSING_KINDS}
@@ -166,6 +198,7 @@ class PreparationService:
                     output_kinds=selected_kinds,
                     invalid_artifact_ids=invalid_by_recording.get(recording_id),
                     admission_diagnostic=admission_diagnostic,
+                    **transaction_options,
                 )
             except Exception:
                 logger.exception(
@@ -415,7 +448,7 @@ def _aggregate_state(outputs: Mapping[str, str]) -> str:
     front = outputs.get(FRONT_PREVIEW_KIND)
     states = tuple(outputs.values())
     if front in {"unavailable", "failed"} or "failed" in states:
-        return "failed"
+        return "partially_prepared" if "ready" in states else "failed"
     if "processing" in states:
         return "processing"
     if "queued" in states:

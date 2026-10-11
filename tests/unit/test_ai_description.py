@@ -157,7 +157,7 @@ def test_missing_description_is_partial_and_ready_requires_both_outputs(prepared
     assert _aggregate_state({"front_preview": "ready", "ai_description": "not_requested"}) == "partially_prepared"
     assert _aggregate_state({"front_preview": "ready", "ai_description": "ready", "imu_series": "unavailable"}) == "ready"
     assert _aggregate_state({"front_preview": "ready", "ai_description": "queued"}) == "queued"
-    assert _aggregate_state({"front_preview": "ready", "ai_description": "failed"}) == "failed"
+    assert _aggregate_state({"front_preview": "ready", "ai_description": "failed"}) == "partially_prepared"
 
 
 def test_migration_backfill_uses_the_runtime_identity_policy():

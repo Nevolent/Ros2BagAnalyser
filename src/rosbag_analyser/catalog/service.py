@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 import threading
+from typing import Any
 
 from rosbag_analyser.persistence.catalog_repository import (
     CatalogRecording,
@@ -42,10 +43,12 @@ class CatalogService:
         repository: CatalogRepository,
         *,
         source_admission_check: Callable[[], SafeDiagnostic | None] | None = None,
+        rescan_scheduler: Callable[[Any], None] | None = None,
     ) -> None:
         self.scanner = scanner
         self.repository = repository
         self.source_admission_check = source_admission_check
+        self.rescan_scheduler = rescan_scheduler
         self._rescan_lock = threading.Lock()
 
     def discover_new(self) -> int:
@@ -74,7 +77,13 @@ class CatalogService:
             self._require_source_admission()
             snapshot = self.scanner.scan()
             self._require_source_admission()
-            summary = self.repository.apply_snapshot(snapshot)
+            summary = (
+                self.repository.apply_snapshot(snapshot)
+                if self.rescan_scheduler is None
+                else self.repository.apply_snapshot(
+                    snapshot, schedule_outputs=self.rescan_scheduler
+                )
+            )
             state = self.repository.get_catalog_state()
         finally:
             self._rescan_lock.release()

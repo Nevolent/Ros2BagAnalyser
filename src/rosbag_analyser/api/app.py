@@ -230,6 +230,12 @@ def create_app(
                 "development"
             )
             application.state.admission_guard = None
+        if isinstance(application.state.catalog_service, CatalogService) and isinstance(
+            getattr(application.state, "preparation_service", None), PreparationService
+        ):
+            application.state.catalog_service.rescan_scheduler = (
+                application.state.preparation_service.prepare_rescan
+            )
         # These pools keep bounded catalog calls off the event loop while reserving
         # read capacity when a scan is active. They are not artifact workers.
         application.state.catalog_read_executor = ThreadPoolExecutor(

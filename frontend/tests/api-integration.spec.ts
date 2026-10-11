@@ -16,6 +16,12 @@ test('red catalog statuses show their own safe diagnostics on the left and suppo
     state: 'failed',
     diagnostic,
   };
+  api.catalog.recordings[0].analysis_state = 'failed';
+  api.catalog.recordings[0].outputs = api.catalog.recordings[0].outputs.map((output) =>
+    output.state === 'ready'
+      ? { kind: output.kind, state: 'not_requested', diagnostic: null }
+      : output,
+  );
   await page.goto('/');
   const damaged = page.locator('.bag-table tbody').getByText('Damaged', { exact: true });
   const failed = page.locator('.bag-table tbody').getByText('Failed', { exact: true });

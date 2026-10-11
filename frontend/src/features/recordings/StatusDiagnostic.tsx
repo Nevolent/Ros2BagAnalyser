@@ -143,23 +143,25 @@ export function StatusDiagnostic({
             onPointerEnter={show}
             onPointerLeave={leave}
           >
-            {visibleOutputs?.length
-              ? visibleOutputs.map((output) => (
-                  <p
-                    key={output.name}
-                    data-output-state={output.state}
-                    className={output.state === 'ready' ? 'status-success' : 'status-muted'}
-                  >
-                    {output.name}
-                    <span className="sr-only">
-                      {' '}
-                      — {output.state === 'ready' ? 'Prepared' : 'Needs preparation'}
-                    </span>
-                  </p>
-                ))
-              : (raw ? issues : conciseIssues(issues)).map((issue, index) => (
-                  <p key={index}>{issue}</p>
-                ))}
+            {!!visibleOutputs?.length &&
+              visibleOutputs.map((output) => (
+                <p
+                  key={output.name}
+                  data-output-state={output.state}
+                  className={output.state === 'ready' ? 'status-success' : 'status-muted'}
+                >
+                  {output.name}
+                  <span className="sr-only">
+                    {' '}
+                    — {output.state === 'ready' ? 'Prepared' : 'Needs preparation'}
+                  </span>
+                </p>
+              ))}
+            {(raw ? issues : conciseIssues(issues)).map((issue, index) => (
+              <p key={index} className={visibleOutputs?.length ? 'status-error' : undefined}>
+                {issue}
+              </p>
+            ))}
           </div>,
           document.body,
         )}

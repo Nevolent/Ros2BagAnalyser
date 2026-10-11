@@ -483,7 +483,7 @@ def test_selective_not_found_response_contains_only_requested_kinds() -> None:
     assert [item.kind for item in result.recordings[0].outputs] == ["imu_series"]
 
 
-def test_front_camera_is_required_even_when_optional_outputs_are_ready() -> None:
+def test_unavailable_front_preserves_partial_preparation_and_diagnostic() -> None:
     from dataclasses import replace
 
     for code in ("front_topic_unavailable", "front_topic_empty"):
@@ -497,10 +497,28 @@ def test_front_camera_is_required_even_when_optional_outputs_are_ready() -> None
             diagnostic_message="The configured front camera topic is empty.",
         ))
         analysis = _service()._analysis_for_group(7, group, GENERATION)
-        assert analysis.analysis_state == "failed"
+        assert analysis.analysis_state == "partially_prepared"
         assert analysis.outputs[0].diagnostic.code == code
         assert analysis.outputs[1].state == "ready"
         assert analysis.outputs[2].state == "ready"
+
+
+@pytest.mark.parametrize("failed_kind", PROCESSING_KINDS)
+def test_failed_output_preserves_ready_siblings_as_partial(failed_kind) -> None:
+    group = {
+        kind: CurrentOutputRecord(
+            _target(kind),
+            artifact=None if kind == failed_kind else _artifact(kind),
+            latest_failed_job=_job(kind, "failed") if kind == failed_kind else None,
+        )
+        for kind in PROCESSING_KINDS
+    }
+    analysis = _service()._analysis_for_group(7, group, GENERATION)
+    assert analysis.analysis_state == "partially_prepared"
+    failure = next(output for output in analysis.outputs if output.kind == failed_kind)
+    assert failure.state == "failed"
+    assert failure.diagnostic.code == "failed"
+    assert all(output.state == "ready" for output in analysis.outputs if output.kind != failed_kind)
 
 
 def test_camera_without_colour_frames_is_unavailable_instead_of_failed():

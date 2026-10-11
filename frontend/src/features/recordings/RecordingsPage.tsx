@@ -47,7 +47,7 @@ function Status({
         tone={preparation ? 'success' : 'error'}
         outputs={preparation ? outputs : undefined}
         issues={
-          status === 'Ready'
+          status === 'Ready' || (preparation && !issues.length)
             ? []
             : issues.length
               ? issues

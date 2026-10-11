@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 import json
@@ -610,15 +610,40 @@ class ProcessingRepository:
             ).fetchone()
         return None if row is None else _job_from_row(row)
 
+    def get_rescan_candidates(self, connection: Any) -> tuple[tuple[int, bool], ...]:
+        rows = connection.execute(
+            """
+            SELECT recording.id,
+                   (EXISTS (
+                       SELECT 1 FROM jobs
+                       WHERE recording_id = recording.id AND kind <> 'thumbnail'
+                   ) OR EXISTS (
+                       SELECT 1 FROM artifacts
+                       WHERE recording_id = recording.id AND kind <> 'thumbnail'
+                   )) AS previously_prepared
+            FROM recordings AS recording
+            CROSS JOIN catalog_state AS state
+            WHERE recording.source_present AND state.singleton
+              AND recording.last_seen_generation = state.successful_generation
+            ORDER BY recording.id
+            """
+        ).fetchall()
+        return tuple((int(row["id"]), bool(row["previously_prepared"])) for row in rows)
+
     def get_current_outputs(
         self,
         recording_ids: tuple[int, ...] | None = None,
+        *,
+        connection: Any | None = None,
     ) -> tuple[CurrentOutputRecord, ...]:
         selected_ids = None if recording_ids is None else list(recording_ids)
-        with open_connection(self.database_url) as connection:
-            connection.execute(
-                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
-            )
+        shared_transaction = connection is not None
+        context = nullcontext(connection) if shared_transaction else open_connection(self.database_url)
+        with context as connection:
+            if not shared_transaction:
+                connection.execute(
+                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                )
             target_rows = connection.execute(
                 """
                 SELECT target.recording_id, target.kind, target.scan_generation,
@@ -725,6 +750,7 @@ class ProcessingRepository:
         output_kinds: tuple[str, ...] = PROCESSING_KINDS,
         invalid_artifact_ids: Mapping[str, int] | None = None,
         admission_diagnostic: AdmissionDiagnostic | None = None,
+        connection: Any | None = None,
     ) -> PreparationSchedule:
         selected_kinds = tuple(kind for kind in PROCESSING_KINDS if kind in output_kinds)
         if not selected_kinds or len(output_kinds) != len(set(output_kinds)):
@@ -732,7 +758,8 @@ class ProcessingRepository:
         if set(selected_kinds) != set(output_kinds):
             raise ValueError("The preparation output kind is unsupported.")
         invalid_ids = {} if invalid_artifact_ids is None else invalid_artifact_ids
-        with open_connection(self.database_url) as connection:
+        context = nullcontext(connection) if connection is not None else open_connection(self.database_url)
+        with context as connection:
             _lock_job_queue(connection)
             recording = connection.execute(
                 """

@@ -1,5 +1,30 @@
 import { test, expect } from '@playwright/test';
-import { apiFixture } from './api-fixture';
+import { apiFixture, diagnostic } from './api-fixture';
+
+for (const kind of ['thumbnail', 'ai_description', 'front_preview'] as const) {
+  test(`failed ${kind} preserves partial preparation and its diagnostic`, async ({ page }) => {
+    const api = await apiFixture(page);
+    api.recording.analysis_state = 'partially_prepared';
+    api.recording.outputs = api.recording.outputs.filter((output) => output.kind !== kind);
+    api.recording.outputs.push({ kind, state: 'failed', diagnostic });
+    api.catalog.recordings = [api.recording];
+    await page.goto('/');
+    const status = page.getByRole('button', { name: 'Partially prepared', exact: true });
+    await expect(status).toBeVisible();
+    await expect(page.locator('.bag-table').getByText('Failed', { exact: true })).toHaveCount(0);
+    await status.focus();
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip.locator('[data-output-state=ready]')).not.toHaveCount(0);
+    await expect(tooltip).toContainText('<script>not markup</script> Output failed.');
+    await expect(tooltip.locator('script')).toHaveCount(0);
+    await expect(tooltip.locator('.status-error')).toContainText('Output failed.');
+    await status.press('Escape');
+    await expect(tooltip).toHaveCount(0);
+    await page.getByRole('button', { name: 'Filter by analysis' }).click();
+    await page.getByRole('menuitemradio', { name: 'Partially prepared', exact: true }).click();
+    await expect(page.locator('.bag-table tbody tr:visible')).toHaveCount(1);
+  });
+}
 
 for (const missing of ['camera', 'encoders'] as const) {
   test(`reusable outputs remain partially prepared when ${missing} need preparation`, async ({

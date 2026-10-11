@@ -224,14 +224,22 @@ def _snapshot(revision: str = "a" * 64) -> ScanSnapshot:
     return ScanSnapshot(recordings=(recording,), duration_ms=1)
 
 
-def _discovery_planner():
+def _discovery_planner(*, unique_identities=False):
+    import hashlib
     from rosbag_analyser.preparation_planner import PreparationTargetPlan
 
     class Planner:
+        planner_identities = PLANNER_IDENTITIES
+        target_identities = TARGET_IDENTITIES.copy()
+
+        def planner_identity(self, kind):
+            return self.planner_identities[kind]
+
         def plan_recording(self, recording_id, recording, *anchors):
             return tuple(
                 PreparationTargetPlan(kind, PLANNER_IDENTITIES[kind], "available",
-                                      TARGET_IDENTITIES[kind], None, 10)
+                                      hashlib.sha256(f'{recording_id}:{self.target_identities[kind]}'.encode()).hexdigest()
+                                      if unique_identities else self.target_identities[kind], None, 10)
                 for kind in PROCESSING_KINDS
             )
 
@@ -243,6 +251,158 @@ def _discovery_planner():
             )
 
     return Planner()
+
+
+@pytest.mark.postgres
+@pytest.mark.anyio
+async def test_full_rescan_retries_and_completes_prior_preparation_atomically(postgres_url, tmp_path):
+    from rosbag_analyser.artifact_store import ArtifactStoreError
+
+    names = ('prepared', 'thumbnail-only', 'new', 'no-camera', 'missing', 'canceled-work')
+    snapshot = ScanSnapshot(tuple(
+        replace(_snapshot().recordings[0], archive_relative_path=name, display_name=name)
+        for name in names
+    ), 1)
+    planner = _discovery_planner(unique_identities=True)
+    catalog = CatalogRepository(postgres_url, planner)
+    catalog.apply_snapshot(snapshot)
+    ids = {recording.display_name: recording.id for recording in catalog.list_recordings()}
+    repository = ProcessingRepository(postgres_url)
+    cache_ids = {(output.target.recording_id, output.target.kind): output.target.cache_identity
+                 for output in repository.get_current_outputs()}
+    while (job := repository.claim_next_job()) is not None:
+        if job.recording_id in (ids['prepared'], ids['thumbnail-only'], ids['no-camera']):
+            repository.fail_job(
+                job.id,
+                'thumbnail_camera_unavailable' if job.recording_id == ids['no-camera'] else 'thumbnail_query_timeout',
+                'Synthetic thumbnail failure.',
+            )
+        else:
+            repository.cancel_job(job.id)
+            repository.begin_cancel_cleanup(job.id)
+            repository.complete_cancellation(job.id)
+    imu = repository.request_job(ids['prepared'], 'imu_series', cache_ids[ids['prepared'], 'imu_series'])
+    assert repository.claim_next_job().id == imu.job.id
+    repository.fail_job(imu.job.id, 'imu_processing_failed', 'Synthetic IMU failure.')
+    active = repository.request_job(ids['prepared'], 'topdown_preview', cache_ids[ids['prepared'], 'topdown_preview'])
+    canceled = repository.request_job(ids['canceled-work'], 'imu_series', cache_ids[ids['canceled-work'], 'imu_series'])
+    repository.cancel_job(canceled.job.id)
+    front = tmp_path / 'ready-front.mp4'
+    front.write_bytes(b'Synthetic ready media')
+    with open_connection(postgres_url) as connection:
+        for name, kind in (('prepared', 'front_preview'), ('prepared', 'encoder_series'), ('missing', 'front_preview')):
+            connection.execute(
+                """
+                INSERT INTO artifacts (recording_id, kind, cache_identity, output_relative_path,
+                                       mime_type, size_bytes, coverage_start_ns, coverage_end_ns, manifest)
+                VALUES (%s, %s, %s, %s, 'video/mp4', 20, 0, 100, %s::jsonb)
+                """,
+                (ids[name], kind, cache_ids[ids[name], kind],
+                 'missing-encoder.json' if kind == 'encoder_series' else 'ready-front.mp4',
+                 json.dumps({'cache_identity': cache_ids[ids[name], kind]})),
+            )
+        saved_front = connection.execute(
+            "SELECT * FROM artifacts WHERE recording_id = %s AND kind = 'front_preview'", (ids['prepared'],),
+        ).fetchone()
+
+    class Store:
+        def validate_media(self, path, *args):
+            if path == 'missing-encoder.json':
+                raise ArtifactStoreError('artifact_missing', 'Synthetic missing artifact.')
+
+        validate_series_artifact = validate_media
+        validate_description_artifact = validate_media
+        validate_thumbnail_artifact = validate_media
+
+    preparation = PreparationService(catalog, repository, planner, {kind: Store() for kind in PROCESSING_KINDS})
+    partial = preparation.states_for_recordings((ids['prepared'],))[0]
+    assert partial.analysis_state == 'partially_prepared'
+    assert {output.kind for output in partial.outputs if output.state == 'failed'} == {'thumbnail', 'imu_series', 'encoder_series'}
+    present = replace(snapshot, recordings=tuple(item for item in snapshot.recordings if item.display_name != 'missing'))
+    service = CatalogService(SimpleNamespace(scan=lambda: present), catalog)
+    app = create_app(service, preparation_service=preparation)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+            response = await client.post('/api/v1/catalog/rescan')
+            assert response.status_code == 200
+            queued = repository.list_processing_jobs('queued', limit=100)
+            pairs = {(item.job.recording_id, item.job.kind) for item in queued}
+            assert pairs == {
+                *((ids['prepared'], kind) for kind in PROCESSING_KINDS if kind != 'front_preview'),
+                *((ids['canceled-work'], kind) for kind in PROCESSING_KINDS),
+                (ids['thumbnail-only'], 'thumbnail'), (ids['new'], 'thumbnail'),
+            }
+            assert next(item.job.id for item in queued if item.job.kind == 'topdown_preview'
+                        and item.job.recording_id == ids['prepared']) == active.job.id
+            assert not catalog.get_recording(ids['missing']).recording.source_present
+            with open_connection(postgres_url) as connection:
+                assert connection.execute("SELECT * FROM artifacts WHERE id = %s", (saved_front['id'],)).fetchone() == saved_front
+                assert connection.execute("SELECT * FROM artifacts WHERE recording_id = %s AND kind = 'encoder_series'",
+                                          (ids['prepared'],)).fetchone() is None
+            assert front.read_bytes() == b'Synthetic ready media'
+            # Repeat through the legacy endpoint: active work and valid output are reused.
+            assert (await client.post('/api/catalog/rescan')).status_code == 200
+            assert [item.job.id for item in repository.list_processing_jobs('queued', limit=100)] == [item.job.id for item in queued]
+            # A changed policy queues the current identity, retaining the previous artifact.
+            planner.target_identities['front_preview'] = '0' * 64
+            assert (await client.post('/api/v1/catalog/rescan')).status_code == 200
+            changed = repository.get_current_outputs((ids['prepared'],))
+            camera = next(output for output in changed if output.target.kind == 'front_preview')
+            assert camera.artifact is None
+            assert camera.active_job.cache_identity == camera.target.cache_identity
+            assert camera.active_job.cache_identity != cache_ids[ids['prepared'], 'front_preview']
+            with open_connection(postgres_url) as connection:
+                assert connection.execute("SELECT * FROM artifacts WHERE id = %s", (saved_front['id'],)).fetchone() == saved_front
+            assert front.read_bytes() == b'Synthetic ready media'
+
+
+@pytest.mark.postgres
+def test_full_rescan_rolls_back_catalog_and_all_scheduling_on_failure(postgres_url, monkeypatch):
+    from rosbag_analyser.persistence import processing_repository
+
+    planner = _discovery_planner()
+    catalog = CatalogRepository(postgres_url, planner)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    repository = ProcessingRepository(postgres_url)
+    requested = repository.prepare_recording(recording_id, PLANNER_IDENTITIES, output_kinds=('imu_series',))
+    repository.cancel_job(requested.outputs[0].job.id)
+    preparation = PreparationService(catalog, repository, planner, {})
+
+    def saved():
+        with open_connection(postgres_url) as connection:
+            return tuple(connection.execute(f'SELECT * FROM {table} ORDER BY 1').fetchall()
+                         for table in ('catalog_state', 'recordings', 'preparation_targets', 'jobs', 'artifacts'))
+
+    before = saved()
+    insert = processing_repository._insert_v1_job
+
+    def fail_imu(connection, target):
+        if target.kind == 'imu_series':
+            raise RuntimeError('Synthetic scheduling failure.')
+        return insert(connection, target)
+
+    monkeypatch.setattr(processing_repository, '_insert_v1_job', fail_imu)
+    with pytest.raises(RootScanError) as failure:
+        catalog.apply_snapshot(_snapshot(), schedule_outputs=preparation.prepare_rescan)
+    assert failure.value.diagnostic.code == 'catalog_preparation_schedule_failed'
+    assert saved() == before
+
+
+@pytest.mark.postgres
+def test_full_rescan_respects_preparation_admission(postgres_url):
+    planner = _discovery_planner()
+    catalog = CatalogRepository(postgres_url, planner)
+    repository = ProcessingRepository(postgres_url)
+    diagnostic = SafeDiagnostic('derived_capacity_low', 'Synthetic capacity limit.')
+    preparation = PreparationService(catalog, repository, planner, {}, admission_check=lambda: diagnostic)
+    catalog.apply_snapshot(_snapshot(), schedule_outputs=preparation.prepare_rescan)
+    assert len(catalog.list_recordings()) == 1
+    assert repository.list_processing_jobs('queued', limit=10) == ()
+    preparation.admission_check = lambda: None
+    catalog.apply_snapshot(_snapshot(), schedule_outputs=preparation.prepare_rescan)
+    queued = repository.list_processing_jobs('queued', limit=10)
+    assert len(queued) == 1 and queued[0].job.kind == 'thumbnail'
 
 
 @pytest.mark.postgres
@@ -3231,9 +3391,11 @@ async def test_automatic_thumbnail_lifecycle_and_identity_bound_api(postgres_url
     failed = repository.claim_next_job()
     repository.fail_job(failed.id, 'thumbnail_processing_failed', 'Synthetic failure.')
     service.rescan()
-    assert not repository.list_processing_jobs('queued', limit=10)
+    retried = repository.list_processing_jobs('queued', limit=10)
+    assert len(retried) == 1 and retried[0].job.id != failed.id
     requested = preparation.prepare_selected((recording_id,), ('thumbnail',))
-    assert requested.recordings[0].outputs[0].outcome == 'retry_queued'
+    assert requested.recordings[0].outputs[0].outcome == 'active_reused'
+    assert requested.recordings[0].outputs[0].job_id == retried[0].job.id
     decoded = []
     def decode(data):
         decoded.append(data[0])
@@ -3285,6 +3447,7 @@ async def test_automatic_thumbnail_lifecycle_and_identity_bound_api(postgres_url
     assert len(queued) == 1
     repository.cancel_job(queued[0].job.id)
     service.rescan()
-    assert not repository.list_processing_jobs('queued', limit=10)
+    retried = repository.list_processing_jobs('queued', limit=10)
+    assert len(retried) == 1 and retried[0].job.id != queued[0].job.id
     assert preparation.prepare_selected((recording_id,), ('thumbnail',)).has_active_work
     assert (derived / artifact.output_relative_path).read_bytes() == original

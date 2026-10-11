@@ -12,8 +12,10 @@
    Opening or refreshing the page silently discovers new readable bags. Known
    recordings stay unchanged; for source changes, moved/removed bags or a complete
    inspection, use the bottom-left **Full rescan** icon.
-   Discovery queues thumbnails for new bags; full rescan also queues unattempted
-   recordings. These checks do not prepare full videos, descriptions or telemetry. Thumbnail placeholders
+   Discovery queues thumbnails for new bags. Full rescan also retries failed or
+   cancelled thumbnails and fills missing, failed or outdated outputs for recordings
+   previously submitted for preparation. Valid compatible output and active work are
+   reused; new or thumbnail-only recordings receive only thumbnails. Thumbnail placeholders
    show No Thumbnail, Queued, Processing or Thumbnail failed. Failed or cancelled
    thumbnails can be retried in Processing or through Prepare Selected.
    A recording with no supported colour camera shows No Thumbnail and does not offer
@@ -67,12 +69,13 @@ analysis position persist while switching pages during the browser session.
 | Not planned | No output is ready and no output is active or failed |
 | Queued / Processing | Work is waiting or running |
 | Ready | Front preview, AI description and all other available outputs are validated, with no active or failed output |
-| Partially prepared | Some outputs are ready; others need preparation, including changed processing or newly supported sensors |
-| Failed | Front input is unavailable or an output failed |
+| Partially prepared | Some outputs are ready; others need preparation or failed, including changed processing or newly supported sensors |
+| Failed | No output is ready and front input is unavailable or an output failed |
 | Worker offline | Saved jobs are waiting for the worker |
 
 Hover or focus a red status for its diagnostic, or **Ready** / **Partially prepared**
 for a fixed-order list with prepared outputs in green and available pending outputs in grey.
+Partially prepared recordings also show failed-output diagnostics below that list.
 Unavailable inputs are omitted. Analysis has Details and Topics
 views. Details shows the short AI description after the source components, with a
 **Bunker** tag only when the model identifies all required visual cues. Diagnostics
@@ -84,7 +87,7 @@ graph and in Review health diagnostics; gaps alone do not prove data loss.
 The processing percentage compares elapsed time with an estimate, capped at
 99%. **Estimate exceeded** means processing has taken longer than predicted.
 Cancellation takes effect at a safe checkpoint. Browser refresh preserves jobs;
-a worker restart interrupts running work, which requires retry. Camera loading
+a worker restart interrupts running work, which requires Retry, Prepare Selected or Full rescan. Camera loading
 retries automatically, then offers a **Retry** button if needed.
 
 ## Supported data

@@ -37,9 +37,12 @@ them and closing request resources, so stalled media reads cannot prevent restar
 
 The scanner has depth, entry, directory and recording limits and never follows
 symlinks. A damaged recording is isolated. An incomplete scan cannot replace the
-last successful catalog or mark unseen recordings missing. A successful scan queues
-only unattempted, available thumbnails, atomically with the catalog update. Compatible
-artifacts and prior attempts are retained; failures and cancellations require explicit retry.
+last successful catalog or mark unseen recordings missing. A successful full rescan
+queues missing, failed or cancelled thumbnails and completes available outputs for
+recordings with prior non-thumbnail jobs or artifacts. Scheduling and catalog updates
+commit atomically; a scheduling error rolls both back. Valid compatible artifacts and
+active jobs are reused, and unavailable inputs are skipped. New or thumbnail-only
+recordings receive only thumbnail work. Preparation admission still applies.
 
 Each browser page load silently requests addition-only discovery in the catalog scan
 pool; concurrent requests share one operation. Discovery skips known recording
@@ -82,13 +85,14 @@ and `thumbnail`. Each output
 independently reuses ready/active work, queues missing work or reports unavailability. Active
 identities cannot be duplicated. Retry resolves current inputs.
 
-The recording state precedence is failed, processing, queued, ready, partially
-prepared, not planned.
-Any failed output or unavailable front input makes it Failed. Ready requires a
+Failed outputs or unavailable front input make a recording Partially prepared when
+any output is validated and ready, and Failed otherwise. Other state precedence is
+processing, queued, ready, partially prepared, not planned. Ready requires a
 validated front preview and AI description, with all available outputs ready and
 no active or failed output. Any ready output with other preparation still needed
-is Partially prepared, including after a rescan changes a camera target or adds
-an encoder target. Unavailable top-down, IMU and encoder inputs are optional;
+is Partially prepared, including after another output fails or a rescan changes a
+camera target or adds an encoder target. Output failures retain their diagnostics
+and Processing retry controls. Unavailable top-down, IMU and encoder inputs are optional;
 Analysis can review available output independently.
 
 Thumbnails are independent jobs reading the default eligible colour camera directly
@@ -109,7 +113,7 @@ in a bounded 10,000-entry cache; anchored path/manifest checks still run on each
 Identity derives from saved front-source identity and the fixed thumbnail policy;
 no prepared preview is required. Thumbnail
 estimates use one work unit per image. Migration 0013 derives targets from saved front
-facts without source access or creating jobs; full rescan queues unattempted thumbnails,
+facts without source access or creating jobs; full rescan retries missing or failed thumbnails,
 and Prepare Selected fills missing output or retries failed/cancelled attempts.
 
 AI descriptions are separate jobs after the front preview. They read its default
@@ -134,7 +138,8 @@ verified and separate from application startup and recording processing.
 A PostgreSQL advisory lock permits one worker. Claim, insertion, reordering and
 queued cancellation share a stable queue order. Durable pause/resume/cancel
 requests take effect at safe processing and publication checkpoints. Worker
-restart marks abandoned running or paused work interrupted; retry is explicit.
+restart marks abandoned running or paused work interrupted; retry is explicit through
+job controls, Prepare Selected or Full rescan.
 The UI exposes cancellation; pause/resume remains available through the API.
 
 Elapsed and active time come from persisted timestamps. Estimates use the ten

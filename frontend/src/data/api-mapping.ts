@@ -99,17 +99,16 @@ export function recording(row: CatalogRecording): Recording {
       : row.presentation_health === 'review' || row.duration_ns === '0'
         ? 'Review'
         : 'Readable',
-    analysis:
-      row.outputs.some((output) => output.state === 'failed') ||
-      row.outputs.some(
-        (output) => output.kind === 'front_preview' && output.state === 'unavailable',
-      )
-        ? 'Failed'
-        : ['not_planned', 'ready', 'partially_prepared', 'processing', 'queued', 'failed'].includes(
-              row.analysis_state,
-            )
-          ? (labels[row.analysis_state] as Recording['analysis'])
-          : 'Not planned',
+    analysis: [
+      'not_planned',
+      'ready',
+      'partially_prepared',
+      'processing',
+      'queued',
+      'failed',
+    ].includes(row.analysis_state)
+      ? (labels[row.analysis_state] as Recording['analysis'])
+      : 'Not planned',
   };
 }
 export function folders(rows: Catalog['folders']): Folder[] {

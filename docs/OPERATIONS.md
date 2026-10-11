@@ -298,8 +298,11 @@ code can read a newer schema.
 ## Source checks and incidents
 
 Rescan explicitly through the operator interface/API. It refreshes saved catalog
-and identities and queues available, unattempted thumbnails. Use Prepare Selected
-for remaining outputs and explicit retries; use queue controls rather than database edits.
+and identities, retries thumbnails and completes available outputs for previously
+prepared recordings, reusing validated compatible artifacts and active jobs.
+Use Prepare Selected for a recording's first full preparation or a selective retry;
+use queue controls rather than database edits. Code updates and deployment alone do
+not retry saved failures.
 
 Bound source checks to an identified root, selected recordings and intended work.
 Use `rosbag-analyser-source-manifest` for lightweight before/after inventories,

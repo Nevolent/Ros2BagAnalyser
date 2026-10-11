@@ -17,6 +17,7 @@ import { RecordingThumbnail, RecordingDescription } from './RecordingThumbnail';
 import { SortableHeader } from '../../components/SortableHeader';
 import { useTableSort, durationInSeconds, sizeInBytes } from '../../lib/useTableSort';
 import { formatDateTime } from '../../lib/format';
+import { outputNames } from '../../data/api-mapping';
 import type { Recording, RecordingStatus } from '../../data/types';
 
 const recordingSort = {
@@ -78,7 +79,9 @@ export function RecordingsPage() {
       new Map(
         failures.map((job) => [
           job.recordingId ?? job.name,
-          job.failures?.map((failure) => `${failure.output}: ${failure.code}`) ?? [],
+          job.failures
+            ?.filter((failure) => failure.output !== outputNames.thumbnail)
+            .map((failure) => `${failure.output}: ${failure.code}`) ?? [],
         ]),
       ),
     [failures],
@@ -375,9 +378,9 @@ export function RecordingsPage() {
                         status={recording.analysis}
                         outputs={recording.analysisOutputs}
                         issues={
-                          recording.analysisIssues?.length
-                            ? recording.analysisIssues
-                            : (failureIssues.get(recording.id) ?? failureIssues.get(recording.name))
+                          recording.analysisIssues ??
+                          failureIssues.get(recording.id) ??
+                          failureIssues.get(recording.name)
                         }
                       />
                     </td>

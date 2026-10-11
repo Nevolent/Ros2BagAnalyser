@@ -5,7 +5,7 @@ import type { Recording } from '../../data/types';
 
 let activeDiagnostic: { id: string; close: () => void } | null = null;
 
-/** Keep diagnostics outside the scrolling table so the left-hand popup is never clipped. */
+/** Keep diagnostics outside the scrolling table so the popup is never clipped. */
 export function StatusDiagnostic({
   status,
   issues,
@@ -14,6 +14,7 @@ export function StatusDiagnostic({
   className = '',
   raw = false,
   navigable = false,
+  side = 'left',
 }: {
   status: string;
   issues: string[];
@@ -22,6 +23,7 @@ export function StatusDiagnostic({
   className?: string;
   raw?: boolean;
   navigable?: boolean;
+  side?: 'left' | 'right';
 }) {
   const visibleOutputs = outputs?.filter((output) => output.state !== 'unavailable');
   const id = useId();
@@ -50,19 +52,24 @@ export function StatusDiagnostic({
     if (!open || !popup.current || !target.current) return;
     const anchor = target.current.getBoundingClientRect();
     const rect = popup.current.getBoundingClientRect();
-    const left = Math.max(8, anchor.left - rect.width - 8);
+    const left = Math.max(
+      8,
+      Math.min(
+        innerWidth - rect.width - 8,
+        side === 'right' ? anchor.right + 8 : anchor.left - rect.width - 8,
+      ),
+    );
+    const beside = side === 'right' ? left >= anchor.right : left + rect.width <= anchor.left;
     const top = Math.max(
       8,
       Math.min(
         innerHeight - rect.height - 8,
-        left + rect.width <= anchor.left
-          ? anchor.top + (anchor.height - rect.height) / 2
-          : anchor.bottom + 8,
+        beside ? anchor.top + (anchor.height - rect.height) / 2 : anchor.bottom + 8,
       ),
     );
     popup.current.style.left = `${left}px`;
     popup.current.style.top = `${top}px`;
-  }, [open, issues, outputs]);
+  }, [open, issues, outputs, side]);
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();

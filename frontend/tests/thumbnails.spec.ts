@@ -79,22 +79,32 @@ test('Thumbnail placeholders truthfully track queued, processing, missing, faile
   page,
 }) => {
   const api = await apiFixture(page);
-  api.catalog.recordings = ['not_requested', 'queued', 'processing', 'failed', 'ready'].map(
-    (state, index) => ({
-      ...detail(42 + index),
-      thumbnail_url: state === 'ready' ? '/api/recordings/46/thumbnail/media/9' : null,
-      outputs: [
-        {
-          kind: 'thumbnail',
-          state,
-          diagnostic:
-            state === 'failed'
-              ? { code: 'thumbnail_processing_failed', message: 'Synthetic thumbnail failure.' }
+  api.catalog.recordings = [
+    'not_requested',
+    'queued',
+    'processing',
+    'failed',
+    'ready',
+    'unavailable',
+  ].map((state, index) => ({
+    ...detail(42 + index),
+    thumbnail_url: state === 'ready' ? '/api/recordings/46/thumbnail/media/9' : null,
+    outputs: [
+      {
+        kind: 'thumbnail',
+        state,
+        diagnostic:
+          state === 'failed'
+            ? { code: 'thumbnail_processing_failed', message: 'Synthetic thumbnail failure.' }
+            : state === 'unavailable'
+              ? {
+                  code: 'thumbnail_camera_unavailable',
+                  message: 'No supported colour camera is available for a thumbnail.',
+                }
               : null,
-        },
-      ],
-    }),
-  );
+      },
+    ],
+  }));
   api.override = async (route, path) => {
     if (!path.includes('/thumbnail/media/')) return false;
     await route.fulfill({ status: 404 });
@@ -109,9 +119,29 @@ test('Thumbnail placeholders truthfully track queued, processing, missing, faile
     'Processing',
     'Thumbnail failed',
     'Thumbnail failed',
+    'No Thumbnail',
   ]);
   await placeholders.nth(3).hover();
-  await expect(page.getByRole('tooltip')).toHaveText('Synthetic thumbnail failure.');
+  const tooltip = page.getByRole('tooltip');
+  await expect(tooltip).toHaveText('Synthetic thumbnail failure.');
+  const thumbnailBox = (await placeholders.nth(3).boundingBox())!;
+  const tooltipBox = (await tooltip.boundingBox())!;
+  expect(tooltipBox.x).toBeGreaterThanOrEqual(thumbnailBox.x + thumbnailBox.width);
+  expect(tooltipBox.y + tooltipBox.height / 2).toBeCloseTo(
+    thumbnailBox.y + thumbnailBox.height / 2,
+    0,
+  );
+  await tooltip.screenshot({ path: test.info().outputPath('thumbnail-error-right.png') });
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+  await placeholders.nth(5).hover();
+  await expect(tooltip).toHaveText('No supported colour camera is available for a thumbnail.');
+  await page.setViewportSize({ width: 390, height: 1000 });
+  await placeholders.nth(5).hover();
+  await expect(tooltip).toBeVisible();
+  const narrowBox = (await tooltip.boundingBox())!;
+  expect(narrowBox.x).toBeGreaterThanOrEqual(8);
+  expect(narrowBox.x + narrowBox.width).toBeLessThanOrEqual(382);
   await page.keyboard.press('Escape');
 });
 

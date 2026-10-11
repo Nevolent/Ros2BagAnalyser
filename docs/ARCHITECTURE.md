@@ -85,11 +85,12 @@ and `thumbnail`. Each output
 independently reuses ready/active work, queues missing work or reports unavailability. Active
 identities cannot be duplicated. Retry resolves current inputs.
 
-Failed outputs or unavailable front input make a recording Partially prepared when
-any output is validated and ready, and Failed otherwise. Other state precedence is
+Analysis readiness excludes thumbnails. Failed analysis outputs or unavailable front input
+make a recording Partially prepared when any analysis output is validated and ready,
+and Failed otherwise. Other state precedence is
 processing, queued, ready, partially prepared, not planned. Ready requires a
-validated front preview and AI description, with all available outputs ready and
-no active or failed output. Any ready output with other preparation still needed
+validated front preview and AI description, with all available analysis outputs ready and
+no active or failed analysis output. Any ready analysis output with other preparation still needed
 is Partially prepared, including after another output fails or a rescan changes a
 camera target or adds an encoder target. Output failures retain their diagnostics
 and Processing retry controls. Unavailable top-down, IMU and encoder inputs are optional;

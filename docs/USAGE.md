@@ -66,17 +66,19 @@ analysis position persist while switching pages during the browser session.
 | --- | --- |
 | Readable / Damaged | Source health; inspect the diagnostic for details |
 | Review | Timestamp gaps or zero metadata duration need inspection |
-| Not planned | No output is ready and no output is active or failed |
-| Queued / Processing | Work is waiting or running |
-| Ready | Front preview, AI description and all other available outputs are validated, with no active or failed output |
-| Partially prepared | Some outputs are ready; others need preparation or failed, including changed processing or newly supported sensors |
-| Failed | No output is ready and front input is unavailable or an output failed |
+| Not planned | No analysis output is ready and no analysis output is active or failed |
+| Queued / Processing | Analysis work is waiting or running |
+| Ready | Front preview, AI description and all other available analysis outputs are validated, with no active or failed analysis output |
+| Partially prepared | Some analysis outputs are ready; others need preparation or failed, including changed processing or newly supported sensors |
+| Failed | No analysis output is ready and front input is unavailable or an analysis output failed |
 | Worker offline | Saved jobs are waiting for the worker |
 
 Hover or focus a red status for its diagnostic, or **Ready** / **Partially prepared**
 for a fixed-order list with prepared outputs in green and available pending outputs in grey.
 Partially prepared recordings also show failed-output diagnostics below that list.
-Unavailable inputs are omitted. Analysis has Details and Topics
+Unavailable inputs are omitted. Thumbnails do not affect Analysis status or appear in
+its hover list or diagnostics. Thumbnail diagnostics appear beside the thumbnail on the right.
+Analysis has Details and Topics
 views. Details shows the short AI description after the source components, with a
 **Bunker** tag only when the model identifies all required visual cues. Diagnostics
 appear below the description. The description uses

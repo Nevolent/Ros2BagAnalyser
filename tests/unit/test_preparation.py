@@ -175,7 +175,7 @@ def test_aggregate_precedence_is_failed_processing_queued_ready_not_planned() ->
     assert ready.analysis_state == "ready"
 
 
-@pytest.mark.parametrize("pending_kind", PROCESSING_KINDS)
+@pytest.mark.parametrize("pending_kind", [kind for kind in PROCESSING_KINDS if kind != "thumbnail"])
 def test_any_missing_compatible_output_makes_preparation_partial(pending_kind) -> None:
     # A rescan invalidates only the changed output; siblings remain reusable.
     group = {
@@ -503,7 +503,7 @@ def test_unavailable_front_preserves_partial_preparation_and_diagnostic() -> Non
         assert analysis.outputs[2].state == "ready"
 
 
-@pytest.mark.parametrize("failed_kind", PROCESSING_KINDS)
+@pytest.mark.parametrize("failed_kind", [kind for kind in PROCESSING_KINDS if kind != "thumbnail"])
 def test_failed_output_preserves_ready_siblings_as_partial(failed_kind) -> None:
     group = {
         kind: CurrentOutputRecord(
@@ -545,3 +545,40 @@ def test_unprepared_front_camera_does_not_become_ready_from_imu_alone() -> None:
     analysis = _service()._analysis_for_group(7, group, GENERATION)
     assert analysis.analysis_state == "partially_prepared"
     assert analysis.outputs[0].state == "not_requested"
+
+
+@pytest.mark.parametrize("thumbnail_state", [
+    "not_requested", "unavailable", "ready", "failed", "queued", "processing",
+])
+@pytest.mark.parametrize("analysis_states, expected", [
+    ({}, "not_planned"),
+    ({"front_preview": "ready", "ai_description": "ready"}, "ready"),
+    ({"imu_series": "ready"}, "partially_prepared"),
+    ({"front_preview": "failed"}, "failed"),
+    ({"front_preview": "queued"}, "queued"),
+    ({"front_preview": "processing"}, "processing"),
+])
+def test_thumbnail_state_is_independent_of_analysis_readiness(thumbnail_state, analysis_states, expected):
+    from rosbag_analyser.preparation import _aggregate_state
+
+    assert _aggregate_state({**analysis_states, "thumbnail": thumbnail_state}) == expected
+
+
+@pytest.mark.parametrize("thumbnail_state", ["not_requested", "failed"])
+def test_ready_analysis_retains_separate_thumbnail_facts(thumbnail_state):
+    group = {
+        kind: CurrentOutputRecord(_target(kind), artifact=_artifact(kind))
+        for kind in PROCESSING_KINDS if kind != "thumbnail"
+    }
+    group["thumbnail"] = CurrentOutputRecord(
+        _target("thumbnail"),
+        latest_failed_job=_job("thumbnail", "failed") if thumbnail_state == "failed" else None,
+    )
+
+    analysis = _service()._analysis_for_group(7, group, GENERATION)
+
+    assert analysis.analysis_state == "ready"
+    thumbnail = next(output for output in analysis.outputs if output.kind == "thumbnail")
+    assert thumbnail.state == thumbnail_state
+    if thumbnail_state == "failed":
+        assert thumbnail.diagnostic.code == "failed"

@@ -1,12 +1,17 @@
 import { test, expect } from '@playwright/test';
 import { apiFixture, diagnostic } from './api-fixture';
 
-for (const kind of ['thumbnail', 'ai_description', 'front_preview'] as const) {
+for (const kind of ['ai_description', 'front_preview'] as const) {
   test(`failed ${kind} preserves partial preparation and its diagnostic`, async ({ page }) => {
     const api = await apiFixture(page);
     api.recording.analysis_state = 'partially_prepared';
     api.recording.outputs = api.recording.outputs.filter((output) => output.kind !== kind);
     api.recording.outputs.push({ kind, state: 'failed', diagnostic });
+    api.recording.outputs.push({
+      kind: 'thumbnail',
+      state: 'failed',
+      diagnostic: { code: 'thumbnail_processing_failed', message: 'Separate thumbnail failure.' },
+    });
     api.catalog.recordings = [api.recording];
     await page.goto('/');
     const status = page.getByRole('button', { name: 'Partially prepared', exact: true });
@@ -18,12 +23,71 @@ for (const kind of ['thumbnail', 'ai_description', 'front_preview'] as const) {
     await expect(tooltip).toContainText('<script>not markup</script> Output failed.');
     await expect(tooltip.locator('script')).toHaveCount(0);
     await expect(tooltip.locator('.status-error')).toContainText('Output failed.');
+    await expect(tooltip).not.toContainText('Thumbnail');
+    await expect(tooltip).not.toContainText('Separate thumbnail failure.');
     await status.press('Escape');
     await expect(tooltip).toHaveCount(0);
     await page.getByRole('button', { name: 'Filter by analysis' }).click();
     await page.getByRole('menuitemradio', { name: 'Partially prepared', exact: true }).click();
     await expect(page.locator('.bag-table tbody tr:visible')).toHaveCount(1);
   });
+}
+
+for (const analysis of ['ready', 'partially_prepared'] as const) {
+  for (const thumbnailState of ['ready', 'not_requested', 'failed'] as const) {
+    test(`${analysis} hover excludes ${thumbnailState} thumbnail output and diagnostics`, async ({
+      page,
+    }) => {
+      const api = await apiFixture(page);
+      api.recording.analysis_state = analysis;
+      if (analysis === 'partially_prepared') {
+        api.recording.outputs.push({
+          kind: 'encoder_series',
+          state: 'not_requested',
+          diagnostic: null,
+        });
+      }
+      api.recording.outputs.push({
+        kind: 'thumbnail',
+        state: thumbnailState,
+        diagnostic: {
+          code: 'thumbnail_processing_failed',
+          message: 'Separate thumbnail failure.',
+        },
+      });
+      api.failures = [
+        {
+          ...api.failures[0],
+          recording_id: api.recording.id,
+          kind: 'thumbnail',
+          diagnostic: {
+            code: 'thumbnail_processing_failed',
+            message: 'Separate thumbnail failure.',
+          },
+        },
+      ];
+      api.catalog.recordings = [api.recording];
+      await page.goto('/');
+      const status = page.getByRole('button', {
+        name: analysis === 'ready' ? 'Ready' : 'Partially prepared',
+        exact: true,
+      });
+      await status.focus();
+      const tooltip = page.getByRole('tooltip');
+      await expect(tooltip.locator('[data-output-state]')).toHaveCount(
+        analysis === 'ready' ? 4 : 5,
+      );
+      await expect(tooltip).not.toContainText('Thumbnail');
+      await expect(tooltip).not.toContainText('Separate thumbnail failure.');
+      await expect(tooltip.locator('.status-error')).toHaveCount(0);
+      await status.press('Escape');
+      await expect(tooltip).toHaveCount(0);
+      if (thumbnailState === 'failed') {
+        await page.locator('.recording-thumbnail').hover();
+        await expect(tooltip).toHaveText('Separate thumbnail failure.');
+      }
+    });
+  }
 }
 
 for (const missing of ['camera', 'encoders'] as const) {

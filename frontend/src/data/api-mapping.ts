@@ -51,6 +51,7 @@ export function recording(row: CatalogRecording): Recording {
   )
     throw new Error('Invalid thumbnail URL.');
   const description = row.outputs.find((output) => output.kind === 'ai_description');
+  const analysisOutputs = row.outputs.filter((output) => output.kind !== 'thumbnail');
   return {
     aiDescription: description?.state === 'ready' ? row.ai_description : null,
     thumbnail: {
@@ -71,7 +72,7 @@ export function recording(row: CatalogRecording): Recording {
         ? ['Metadata reports zero duration. Message timestamps have not been verified.']
         : []),
     ],
-    analysisIssues: row.outputs
+    analysisIssues: analysisOutputs
       .filter(
         (output) =>
           output.state === 'failed' ||
@@ -85,7 +86,7 @@ export function recording(row: CatalogRecording): Recording {
               : `${labels[output.state] ?? output.state}. No diagnostic was provided.`
           }`,
       ),
-    analysisOutputs: row.outputs.map((output) => ({
+    analysisOutputs: analysisOutputs.map((output) => ({
       name: outputNames[output.kind],
       state:
         output.state === 'ready'

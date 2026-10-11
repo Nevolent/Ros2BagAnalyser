@@ -36,9 +36,12 @@ export function RecordingThumbnail({
           />
           {loadedUrl !== url && <span className="thumbnail-loading">Loading…</span>}
         </>
-      ) : thumbnail?.state === 'failed' || (failedUrl === url && !!url) ? (
+      ) : thumbnail?.state === 'failed' ||
+        (thumbnail?.state === 'unavailable' && thumbnail.issue) ||
+        (failedUrl === url && !!url) ? (
         <StatusDiagnostic
           navigable={navigable}
+          side="right"
           status={label}
           className="thumbnail-diagnostic"
           issues={[

@@ -730,7 +730,7 @@ def test_deployment_gate_does_not_claim_or_change_queued_jobs(tmp_path, monkeypa
     assert repository.job is None
 
 
-def test_all_camera_streams_are_validated_and_published_as_one_bundle(tmp_path):
+def test_only_main_camera_is_processed_and_published(tmp_path):
     repository = FakeRepository(_job())
     store = FakeArtifactStore(tmp_path)
     resolver = FakeResolver()
@@ -745,8 +745,8 @@ def test_all_camera_streams_are_validated_and_published_as_one_bundle(tmp_path):
             return super().process(descriptor, output_path, **kwargs)
     assert _worker(repository, Processor(), store, resolver).run_once()
     assert repository.failures == []
-    assert seen == [("/busiest", "preview.mp4"), ("/second", "stream-1.mp4")]
-    assert [stream["topic"] for stream in store.published_manifest["streams"]] == ["/busiest", "/second"]
+    assert seen == [("/busiest", "preview.mp4")]
+    assert [stream["topic"] for stream in store.published_manifest["streams"]] == ["/busiest"]
     assert store.published_manifest["source"]["topic"] == "/busiest"
 
 
@@ -770,7 +770,7 @@ def test_excluded_stream_does_not_hide_supported_colour_stream_or_report_failure
     assert store.published_manifest.get("skipped_streams", []) == []
 
 
-def test_encoding_failure_in_eligible_stream_prevents_partial_bundle_publication(tmp_path):
+def test_secondary_camera_encoding_failure_does_not_affect_main_front(tmp_path):
     repository = FakeRepository(_job())
     store = FakeArtifactStore(tmp_path)
     resolver = FakeResolver()
@@ -786,9 +786,9 @@ def test_encoding_failure_in_eligible_stream_prevents_partial_bundle_publication
             return super().process(descriptor, output_path, **kwargs)
 
     assert _worker(repository, Processor(), store, resolver).run_once()
-    assert repository.failures == [(5, "front_encoding_unsupported", "Encoding changed")]
-    assert repository.completed == []
-    assert store.published_manifest is None
+    assert repository.failures == []
+    assert len(repository.completed) == 1
+    assert store.published_manifest['source']['topic'] == '/front/color'
 
 
 def test_recording_without_colour_streams_reports_no_eligible_camera(tmp_path):

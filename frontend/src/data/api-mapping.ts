@@ -67,6 +67,7 @@ export function recording(row: CatalogRecording): Recording {
     duration: duration(row.duration_ns),
     size: bytes(row.total_source_size_bytes),
     healthIssues: [
+      frameCount: row.thumbnail_frame_count === 5 ? 5 : 1,
       ...(row.diagnostic ? [diagnosticMessage(row.diagnostic)] : []),
       ...(row.presentation_health === 'readable' && row.duration_ns === '0'
         ? ['Metadata reports zero duration. Message timestamps have not been verified.']

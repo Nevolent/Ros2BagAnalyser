@@ -131,6 +131,32 @@ test('a paused seek that never completes requests recovery without another inter
   expect(await page.evaluate(() => (window as any).decoder.stalls)).toBe(1);
 });
 
+test('advancing camera buffers extend loading time while a stalled transfer still recovers', async ({
+  page,
+}) => {
+  await decoder(page, null);
+  await page.evaluate(() => {
+    const d = (window as any).decoder;
+    d.bufferEnd = 0;
+    Object.defineProperty(d.video, 'buffered', {
+      get: () => ({ length: d.bufferEnd ? 1 : 0, end: () => d.bufferEnd }),
+    });
+    d.time = 20;
+    d.sync();
+  });
+  for (let i = 1; i <= 3; i++) {
+    await page.clock.runFor(6000);
+    await page.evaluate((end) => {
+      const d = (window as any).decoder;
+      d.bufferEnd = end;
+      d.sync();
+    }, i);
+    expect(await page.evaluate(() => (window as any).decoder.stalls)).toBe(0);
+  }
+  await page.clock.runFor(9000);
+  expect(await page.evaluate(() => (window as any).decoder.stalls)).toBe(1);
+});
+
 test('unchanged camera status causes no DOM mutations during clock updates', async ({ page }) => {
   await decoder(page, 0);
   await page.evaluate(() => {

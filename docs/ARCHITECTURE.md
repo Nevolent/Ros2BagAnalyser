@@ -108,24 +108,29 @@ camera target or adds an encoder target. Output failures retain their diagnostic
 and Processing retry controls. Unavailable top-down, IMU and encoder inputs are optional;
 Analysis can review available output independently.
 
-Thumbnails are independent jobs reading the default eligible colour camera directly
+Thumbnails are independent jobs reading the main eligible front colour camera directly
 from immutable source SQLite, without preparing videos or AI descriptions. Two sequential
-message-header scans select the first frame at or after the stream's record-time midpoint, keeping
-the last message at duplicate timestamps. At most 256 candidate streams are inspected;
+message-header scans select five frames at approximate sixths of the record-time span,
+keeping the last message at duplicate timestamps. The middle frame is the default.
+All five selections share the second scan; repeated selections decode once.
+At most 256 candidate streams are inspected;
 monochrome first frames are excluded before colour-image validation. Payloads are bounded
-and only candidate first frames and the chosen frame are decoded. Scans retain only stream
-endpoints and the selected frame, checkpoint every 1,024 rows, and have a 30-second
+and only candidate first frames and the five chosen frames are decoded. Scans retain only stream
+endpoints and five selections, checkpoint every 1,024 rows, and have a 30-second
 budget between checkpoints; expiration reports `thumbnail_query_timeout`. No source index is changed.
 A completed inspection with no supported colour camera is unavailable for that input identity;
 it retains the attempt diagnostic without appearing as an actionable failure or queuing another
-identical attempt. Changed inputs require an explicit rescan. The PNG retains aspect ratio, has a maximum side of
-480 pixels and a 1 MiB limit, and is validated with dimensions, decoded content and a
+identical attempt. Changed inputs require an explicit rescan. Each tile retains aspect ratio
+within 480 pixels per side; five tiles share a horizontal PNG strip capped at 5 MiB.
+The strip is validated with tile dimensions, timestamps, decoded content and a
 SHA-256 digest before publication and delivery.
 Unchanged catalog image validation is cached against full file facts and manifest identity
-in a bounded 10,000-entry cache; anchored path/manifest checks still run on each poll.
+in a bounded 10,000-entry cache; anchored path/manifest checks still run on each poll and delivery.
+Unchanged delivery reuses the validation cache. Identity-bound URLs use private
+24-hour browser caching, so browsing and hover require one download per strip.
 Identity derives from saved front-source identity and the fixed thumbnail policy;
 no prepared preview is required. Thumbnail
-estimates use one work unit per image. Migration 0013 derives targets from saved front
+estimates use one work unit per strip. Migration 0013 derives targets from saved front
 facts without source access or creating jobs; full rescan retries missing or failed thumbnails,
 and Prepare Selected fills missing output or retries failed/cancelled attempts.
 
@@ -179,8 +184,8 @@ Queued work and recordings are preserved; recovery is in [Operations](OPERATIONS
 
 | Output | Format and identity |
 | --- | --- |
-| Thumbnail | `thumbnail-v1:default-colour:record-midpoint:side480:png`; validated PNG from one source image |
-| Front preview | `front-preview-v6`; validated MP4 per supported raw CDR Image stream |
+| Thumbnail | `thumbnail-v2:default-front:record-sixths:five:side480:png-strip`; schema-2 PNG strip with five source frames |
+| Front preview | `front-preview-v7`; validated MP4 for the main supported raw CDR Image stream |
 | Top-down preview | `topdown-preview-v2`; AVI frames timed by CSV Unix timestamps; H.264/yuv420p MP4 |
 | AI description | `ai-description-v2`; bounded JSON with the short description and bunker boolean, tied to front identity and fixed model/prompt/sampling policy |
 | IMU | `imu-series-v2`; schema-2 JSON with three angular-velocity and three linear-acceleration axes |
@@ -191,10 +196,10 @@ image uses `rgb8`, `bgr8`, `rgba8` or `bgra8`. Alpha is discarded for video prev
 Other encodings, including monochrome Ouster measurement images, are excluded
 before camera validation and produce no stream-failure diagnostics. Every frame
 of an eligible stream must satisfy the colour-image and timing contracts.
-All eligible topics form one job and bundle. Names with a `front` component
-(including camelCase) come first, then message count descending and topic name
-ascending; the first eligible stream is the default. Each MP4 is timed and
-validated independently before atomic bundle publication. Stream URLs use
+Known ceiling, top, rear, back and downward views are excluded from front inputs.
+Names with a `front` component (including camelCase) come first, then message count
+descending and topic name ascending. Only the first eligible colour stream is processed,
+timed and validated before atomic publication. Stream URLs use
 artifact identity and numeric manifest index, never a topic name as a path.
 IMU selection uses a valid configured preference or one
 unique standard IMU stream; ambiguous streams are not combined. Encoder selection
@@ -279,7 +284,8 @@ seeks. Each decoder finishes an in-flight seek before taking the latest request.
 Automatic correction waits 500 ms after seeking; explicit seeks bypass this wait.
 An eight-second no-progress watchdog works even while paused. Stalls and load
 failures share three bounded reload attempts, then offer a manual Retry control.
-Recovery retains the shared clock and clears that camera's diagnostic. Navigation
+Buffer advances refresh the watchdog's progress deadline. Recovery retains the
+shared clock and clears that camera's diagnostic. Navigation
 disposes media, listeners, observers, timers and animation frames.
 
 ## Browser and HTTP
@@ -292,7 +298,10 @@ the synthetic launcher serves only loopback assets without backend services.
 `api-types.ts` defines contracts, `api-mapping.ts` maps domain models and
 `api-workspace.ts` owns polling and commands. Route cleanup aborts reads and
 timers. Mutations invalidate older reads and are never replayed automatically.
-Initial loading is separate from cached refresh. Preparation/retry keeps an
+Initial loading is separate from cached refresh. Recording details and cameras render
+before telemetry downloads; IMU and encoder loads run concurrently. JSON requests
+have a 30-second deadline and telemetry transfers a 60-second deadline, including
+bodies. Preparation/retry keeps an
 empty queue loading until the request and refresh finish, including navigation;
 counts come from server results. Errors restore dismissed data and appear in
 the dismissible shell message.

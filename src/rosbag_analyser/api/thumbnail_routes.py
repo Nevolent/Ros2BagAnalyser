@@ -25,7 +25,7 @@ async def get_thumbnail(recording_id: Annotated[int, Path(gt=0)],
         return RangeFileResponse(
             opened.descriptor, media_type="image/png", stat_result=opened.stat_result,
             executor=request.app.state.media_read_executor,
-            headers={"Cache-Control": "private, no-cache, must-revalidate",
+            headers={"Cache-Control": "private, max-age=86400, immutable",
                      "ETag": f'"thumbnail-{artifact.id}-{artifact.cache_identity}"'},
         )
     except BaseException:

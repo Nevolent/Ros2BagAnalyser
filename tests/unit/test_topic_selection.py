@@ -46,7 +46,14 @@ def test_multiple_front_names_use_count_then_name_and_ignore_ineligible_types():
               topic("/front/empty", 0), topic("/front/z", 100),
               topic("/front/a", 100), topic("/front/slow", 30), topic("/rear", 5000))
     assert [item.name for item in usable_topics(topics, IMAGE)] == [
-        "/front/a", "/front/z", "/front/slow", "/rear"]
+        "/front/a", "/front/z", "/front/slow"]
+
+
+def test_ceiling_camera_is_not_a_front_input_even_with_front_prefix():
+    main = topic('/camera/front/image_raw', 100)
+    ceiling = topic('/front/ceiling_camera/image_raw', 5000)
+    assert usable_topics((ceiling, main), IMAGE) == (main,)
+    assert select_topic((ceiling,), '', IMAGE) is None
 
 
 def test_configured_name_cannot_make_a_non_image_stream_eligible():

@@ -313,7 +313,11 @@ export function createApiWorkspace(): WorkspaceService {
           const number = numericId(id);
           const detail = await request<Detail>(`/api/v1/recordings/${number}`, controller.signal);
           if (detail.id !== number) throw new Error('Recording identity does not match.');
-          const next = await analysisRecording(detail, controller.signal, analysis);
+          const next = await analysisRecording(detail, controller.signal, analysis, (partial) => {
+            if (controller.signal.aborted) return;
+            analysis = partial;
+            publish({ analysisLoading: true, analysisError: '' });
+          });
           if (controller.signal.aborted) return;
           // Preserve the playback clock and chart memoization when only job metadata changed.
           if (

@@ -3,7 +3,7 @@ export type RecordingStatus =
   'Ready' | 'Partially prepared' | 'Failed' | 'Not planned' | 'Queued' | 'Processing';
 export interface Recording {
   aiDescription?: { description: string; bunker: boolean } | null;
-  thumbnail?: { state: string; url?: string; issue?: string };
+  thumbnail?: { state: string; url?: string; frameCount?: number; issue?: string };
   id: string;
   name: string;
   folderId: string;

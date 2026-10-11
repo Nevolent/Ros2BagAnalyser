@@ -41,6 +41,7 @@ export interface Output {
 export interface CatalogRecording {
   ai_description?: { description: string; bunker: boolean } | null;
   thumbnail_url?: string | null;
+  thumbnail_frame_count?: number;
   id: number;
   name: string;
   folder_path: string;

@@ -316,7 +316,7 @@ export function RecordingsPage() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((recording) => (
+                {sorted.map((recording, index) => (
                   <tr
                     key={recording.id}
                     data-folder-id={recording.folderId}
@@ -336,7 +336,11 @@ export function RecordingsPage() {
                           href={`#/analysis/${recording.id}`}
                           aria-label={`Analyze ${recording.name}`}
                         >
-                          <RecordingThumbnail recording={recording} navigable />
+                          <RecordingThumbnail
+                            recording={recording}
+                            navigable
+                            priority={index < 8}
+                          />
                           <div className="recording-thumbnail-copy">
                             <span className="bag-name recording-link" title={recording.name}>
                               {recording.name}

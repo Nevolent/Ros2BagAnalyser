@@ -9,7 +9,7 @@ import av
 import numpy as np
 
 from rosbag_analyser.front_preview import COLOUR_IMAGE_CHANNELS
-from rosbag_analyser.thumbnail import MAX_THUMBNAIL_SIDE
+from rosbag_analyser.thumbnail import MAX_THUMBNAIL_SIDE, THUMBNAIL_FRAME_COUNT
 from .front_preview import (
     FrontPreviewProcessingError, _open_source_database, _topic_id, _message_data,
     _decode_image, _validate_image, deserialize_ros_image,
@@ -54,36 +54,64 @@ class ThumbnailProcessor:
                 if image.encoding not in COLOUR_IMAGE_CHANNELS:
                     continue
                 _validate_image(image)
-                midpoint = first_message[1] + (last[topic_id] - first_message[1]) // 2
-                chosen = first_message if midpoint == first_message[1] else None
-                if chosen is None:
-                    for message_id, candidate_id, timestamp in _metadata_rows(connection, checkpoint):
-                        if candidate_id == topic_id and timestamp >= midpoint:
-                            if chosen is None or (timestamp, -message_id) < (chosen[1], -chosen[0]):
-                                chosen = (message_id, timestamp)
-                if chosen[0] != first_message[0]:
-                    image = _read_image(connection, chosen[0], self.image_decoder)
-                    _validate_image(image)
+                targets = [first_message[1] + (last[topic_id] - first_message[1]) * n // 6
+                           for n in range(1, THUMBNAIL_FRAME_COUNT + 1)]
+                chosen = [None] * THUMBNAIL_FRAME_COUNT
+                # Select all five in the same pass. Approximate sixths are enough;
+                # no video decode, timestamp index creation or scan per frame.
+                for message_id, candidate_id, timestamp in _metadata_rows(connection, checkpoint):
+                    if candidate_id != topic_id:
+                        continue
+                    for index, target in enumerate(targets):
+                        previous = chosen[index]
+                        if timestamp >= target and (previous is None or
+                                (timestamp, -message_id) < (previous[1], -previous[0])):
+                            chosen[index] = (message_id, timestamp)
+                scale = min(1, MAX_THUMBNAIL_SIDE / max(image.width, image.height))
+                width, height = max(1, round(image.width * scale)), max(1, round(image.height * scale))
+                decoded = {first_message[0]: _pixels(image, width, height)}
+                del image
+                tiles = []
+                for message_id, timestamp in chosen:
+                    checkpoint()
+                    tile = decoded.get(message_id)
+                    if tile is None:
+                        frame_image = _read_image(connection, message_id, self.image_decoder)
+                        _validate_image(frame_image)
+                        tile = _pixels(frame_image, width, height)
+                        decoded[message_id] = tile
+                        del frame_image
+                    tiles.append(tile)
                 break
             else:
                 raise FrontPreviewProcessingError("thumbnail_camera_unavailable", "No supported colour camera is available for a thumbnail.")
         checkpoint()
-        channels = COLOUR_IMAGE_CHANNELS[image.encoding]
-        pixels = np.frombuffer(image.data, dtype=np.uint8).reshape(image.height, image.step)
-        pixels = pixels[:, :image.width * channels].reshape(image.height, image.width, channels)
-        pixel_format = {"rgb8": "rgb24", "bgr8": "bgr24", "rgba8": "rgba", "bgra8": "bgra"}[image.encoding]
-        frame = av.VideoFrame.from_ndarray(np.ascontiguousarray(pixels), format=pixel_format)
-        scale = min(1, MAX_THUMBNAIL_SIDE / max(image.width, image.height))
-        width, height = max(1, round(image.width * scale)), max(1, round(image.height * scale))
-        frame = frame.reformat(width=width, height=height, format="rgb24")
+        frame = av.VideoFrame.from_ndarray(np.concatenate(tiles, axis=1), format="rgb24")
         codec = av.CodecContext.create("png", "w")
-        codec.width, codec.height, codec.pix_fmt = width, height, "rgb24"
+        codec.width, codec.height, codec.pix_fmt = width * THUMBNAIL_FRAME_COUNT, height, "rgb24"
         data = b"".join(bytes(packet) for packet in codec.encode(frame) + codec.encode(None))
         output_path.write_bytes(data)
         checkpoint()
-        timestamp = chosen[1] - descriptor.bag_start_ns
-        return {"topic": topic.name, "record_timestamp_ns": str(chosen[1]),
-                "coverage_ns": timestamp, "width": width, "height": height}
+        timestamp = chosen[2][1] - descriptor.bag_start_ns
+        return {"topic": topic.name, "record_timestamp_ns": str(chosen[2][1]),
+                "record_timestamps_ns": [str(item[1]) for item in chosen],
+                "coverage_ns": timestamp, "width": width * THUMBNAIL_FRAME_COUNT,
+                "frame_width": width, "frame_count": THUMBNAIL_FRAME_COUNT, "height": height}
+
+
+def _pixels(image, width, height):
+    channels = COLOUR_IMAGE_CHANNELS[image.encoding]
+    pixels = np.frombuffer(image.data, dtype=np.uint8).reshape(image.height, image.step)
+    pixels = pixels[:, :image.width * channels].reshape(image.height, image.width, channels)
+    pixel_format = {"rgb8": "rgb24", "bgr8": "bgr24", "rgba8": "rgba", "bgra8": "bgra"}[image.encoding]
+    frame = av.VideoFrame.from_ndarray(np.ascontiguousarray(pixels), format=pixel_format)
+    scale = min(width / image.width, height / image.height)
+    resized = frame.reformat(width=max(1, round(image.width * scale)),
+                             height=max(1, round(image.height * scale)), format="rgb24").to_ndarray()
+    tile = np.zeros((height, width, 3), dtype=np.uint8)
+    y, x = (height - resized.shape[0]) // 2, (width - resized.shape[1]) // 2
+    tile[y:y + resized.shape[0], x:x + resized.shape[1]] = resized
+    return tile
 
 
 def _metadata_rows(connection, checkpoint):

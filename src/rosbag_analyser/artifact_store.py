@@ -514,7 +514,7 @@ class ArtifactStore:
                                   output_name="thumbnail.png", replace_conflicting=replace_conflicting)
 
     def open_thumbnail(self, relative_path, expected_size, cache_identity, expected_manifest):
-        return self._open_thumbnail(relative_path, expected_size, cache_identity, expected_manifest)
+        return self._open_thumbnail(relative_path, expected_size, cache_identity, expected_manifest, cached=True)
 
     def _open_thumbnail(self, relative_path, expected_size, cache_identity, expected_manifest, *, cached=False):
         from rosbag_analyser.thumbnail import MAX_THUMBNAIL_BYTES, validate_thumbnail
@@ -548,8 +548,7 @@ class ArtifactStore:
 
     def validate_thumbnail_artifact(self, relative_path, expected_size, cache_identity, expected_manifest):
         # Catalog polling checks held-file facts and manifests each time; only
-        # unchanged PNG content validation is cached. HTTP delivery always reads
-        # and validates the bytes again.
+        # unchanged PNG content validation is cached for catalog and delivery.
         opened = self._open_thumbnail(relative_path, expected_size, cache_identity, expected_manifest, cached=True)
         os.close(opened.descriptor)
 

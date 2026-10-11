@@ -66,9 +66,7 @@ test('sidebar tabs lead the panel; all topics are scrollable, safe and truncated
   await expect(page.getByRole('region', { name: 'Timestamp inspection' })).toHaveCount(0);
 });
 
-test('camera selector changes identity and coverage without resetting the timeline', async ({
-  page,
-}) => {
+test('older multi-stream artifacts use only the default front camera', async ({ page }) => {
   const api = await apiFixture(page);
   const artifact = api.recording.outputs[0].artifact!;
   artifact.streams = ['/busiest/image', '/secondary/image'].map((topic, index) => ({
@@ -85,18 +83,14 @@ test('camera selector changes identity and coverage without resetting the timeli
     return true;
   };
   await page.goto('/#/analysis/42');
-  const select = page.getByRole('combobox', { name: 'Front camera stream' });
-  await expect(select).toHaveValue('/busiest/image');
+  await expect(page.getByRole('combobox', { name: 'Front camera stream' })).toHaveCount(0);
   const video = page.locator('.analysis-camera-front video');
-  await expect(video).toHaveAttribute('src', artifact.url + '/streams/0');
+  await expect(video).toHaveAttribute('src', artifact.url);
   const timeline = page.getByRole('slider', { name: 'Recording timeline', exact: true });
   await timeline.focus();
   await page.keyboard.press('ArrowRight');
-  const before = await timeline.getAttribute('aria-valuenow');
-  await select.selectOption('/secondary/image');
-  await expect(video).toHaveAttribute('src', artifact.url + '/streams/1');
-  await expect(video).toHaveAttribute('data-coverage-start', '1');
-  await expect(timeline).toHaveAttribute('aria-valuenow', before!);
+  await expect(timeline).toHaveAttribute('aria-valuenow', '1');
+  await expect(video).toHaveAttribute('src', artifact.url);
   await expect
     .poll(() => video.evaluate((el: HTMLVideoElement) => el.readyState))
     .toBeGreaterThanOrEqual(2);
@@ -113,7 +107,7 @@ test('one stream needs no camera selector; missing topic inventory asks for a sc
   await expect(page.getByText('Rescan to load topic names.')).toBeVisible();
 });
 
-test('front default and keyboard selection expose only prepared colour streams', async ({
+test('secondary colour streams and legacy exclusion diagnostics do not add camera controls', async ({
   page,
 }) => {
   const api = await apiFixture(page);
@@ -139,21 +133,10 @@ test('front default and keyboard selection expose only prepared colour streams',
     return true;
   };
   await page.goto('/#/analysis/42');
-  const select = page.getByRole('combobox', { name: 'Front camera stream' });
-  await expect(select).toHaveValue('/robot/camera_front/color');
-  await expect(select.locator('option')).toHaveCount(2);
-  await expect(select.locator('option').last()).toHaveText('/other/<script>rgb</script>');
-  await expect(select.locator('script')).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Front camera stream' })).toHaveCount(0);
+  await expect(page.locator('.analysis-camera-front video')).toHaveAttribute('src', artifact.url);
+  await expect(page.locator('.analysis-camera-front script')).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Recording errors' })).toHaveCount(0);
-  await expect(select.locator('..')).toContainText('Front');
+  await expect(page.locator('.analysis-camera-front')).toContainText('Front');
   await page.screenshot({ path: test.info().outputPath('front-camera-default.png') });
-  await select.focus();
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
-  await expect(select).toHaveValue('/other/<script>rgb</script>');
-  await expect(select).toBeFocused();
-  await expect(page.locator('.analysis-camera-front video')).toHaveAttribute(
-    'src',
-    `${artifact.url}/streams/1`,
-  );
 });

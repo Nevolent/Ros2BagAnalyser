@@ -6,11 +6,13 @@ from .catalog.metadata import TopicFact
 TOPIC_SELECTION_POLICY = "typed-streams-v1"
 
 
-def _camera_order(topic: TopicFact) -> tuple[bool, int, str]:
+def _camera_order(topic: TopicFact) -> tuple[bool, bool, int, str]:
     # Match front as a name component, including camelCase camera names.
     name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", topic.name).lower()
-    named_front = "front" in re.split(r"[^a-z0-9]+", name)
-    return (not named_front, -topic.message_count, topic.name)
+    parts = re.split(r"[^a-z0-9]+", name)
+    named_front = "front" in parts
+    other_view = any(part in parts for part in ("ceiling", "top", "topdown", "rear", "back", "down"))
+    return (other_view, not named_front, -topic.message_count, topic.name)
 
 
 def usable_topics(topics, message_type: str) -> tuple[TopicFact, ...]:
@@ -20,7 +22,8 @@ def usable_topics(topics, message_type: str) -> tuple[TopicFact, ...]:
         and topic.serialization_format == "cdr" and topic.message_count > 0
     )
     if message_type == "sensor_msgs/msg/Image":
-        return tuple(sorted(candidates, key=_camera_order))
+        return tuple(sorted((topic for topic in candidates if not _camera_order(topic)[0]),
+                            key=_camera_order))
     return tuple(sorted(candidates, key=lambda topic: (-topic.message_count, topic.name)))
 
 

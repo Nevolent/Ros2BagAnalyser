@@ -200,12 +200,14 @@ class SerialWorker:
             result = self.thumbnail_processor.process(descriptor, path, control=control)
             details = path.stat(follow_symlinks=False)
             manifest = {
-                "schema_version": 1, "artifact_kind": THUMBNAIL_KIND,
+                "schema_version": 2, "artifact_kind": THUMBNAIL_KIND,
                 "cache_identity": job.cache_identity, "processor_version": THUMBNAIL_POLICY,
                 "front_source_identity": descriptor.cache_identity,
-                "source": {"topic": result["topic"], "record_timestamp_ns": result["record_timestamp_ns"]},
+                "source": {"topic": result["topic"], "record_timestamp_ns": result["record_timestamp_ns"],
+                           "record_timestamps_ns": result["record_timestamps_ns"]},
                 "output": {"file_name": "thumbnail.png", "mime_type": "image/png",
                            "size_bytes": details.st_size, "width": result["width"], "height": result["height"],
+                           "frame_width": result["frame_width"], "frame_count": result["frame_count"],
                            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                            "file_identity": {"device_id": details.st_dev, "inode": details.st_ino,
                                              "mtime_ns": details.st_mtime_ns}},
@@ -449,6 +451,7 @@ class SerialWorker:
                     "timing": stream_manifest["timing"],
                     "frames": stream_manifest["frames"],
                 })
+                break  # Publish only the first eligible main front camera.
             if result is None or manifest is None:
                 raise FrontPreviewProcessingError(
                     "front_colour_stream_unavailable",

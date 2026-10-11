@@ -14,10 +14,7 @@ function Camera({
   camera: AnalysisRecording['cameras'][number];
   onError(id: string, message: string): void;
 }) {
-  const [selectedTopic, setSelectedTopic] = useState('');
-  const stream =
-    sourceCamera.streams?.find((item) => item.topic === selectedTopic) ?? sourceCamera.streams?.[0];
-  const camera = stream ? { ...sourceCamera, ...stream } : sourceCamera;
+  const camera = sourceCamera;
   const video = useRef<HTMLVideoElement>(null);
   const retry = useRef<() => void>(() => {});
   const [failed, setFailed] = useState(false);
@@ -103,22 +100,7 @@ function Camera({
         <img src={camera.src} alt={camera.alt} />
       )}
       <div className="camera-caption">
-        <span className="camera-label">
-          {camera.label}
-          {camera.streams && camera.streams.length > 1 && (
-            <select
-              aria-label="Front camera stream"
-              value={stream?.topic}
-              onChange={(event) => setSelectedTopic(event.target.value)}
-            >
-              {camera.streams.map((item) => (
-                <option key={item.topic} value={item.topic}>
-                  {item.topic}
-                </option>
-              ))}
-            </select>
-          )}
-        </span>
+        <span className="camera-label">{camera.label}</span>
       </div>
     </section>
   );

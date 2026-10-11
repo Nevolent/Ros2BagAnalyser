@@ -1,6 +1,6 @@
 export async function request<T>(path: string, signal?: AbortSignal, body?: unknown): Promise<T> {
   const response = await fetch(path, {
-    signal,
+    signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30000)]),
     credentials: 'same-origin',
     cache: 'no-store',
     ...(body !== undefined

@@ -93,6 +93,7 @@ class DescriptionResponse(BaseModel):
 class CatalogRecordingResponse(BaseModel):
     ai_description: DescriptionResponse | None = None
     thumbnail_url: str | None = None
+    thumbnail_frame_count: int = 1
     id: int
     name: str
     folder_path: str
@@ -390,6 +391,13 @@ def _thumbnail_url(recording_id: int, analysis: RecordingAnalysis) -> str | None
                  and output.artifact is not None), None)
 
 
+def _thumbnail_frame_count(analysis: RecordingAnalysis) -> int:
+    return next((output.artifact.manifest.get("output", {}).get("frame_count", 1)
+                 for output in analysis.outputs
+                 if output.kind == "thumbnail" and output.state == "ready"
+                 and output.artifact is not None), 1)
+
+
 def catalog_response(view: V1CatalogView) -> CatalogResponse:
     return CatalogResponse(
         scan=_scan_response(view.scan),
@@ -422,6 +430,7 @@ def catalog_response(view: V1CatalogView) -> CatalogResponse:
                 analysis_state=item.analysis.analysis_state,
                 ai_description=_description(item.analysis),
                 thumbnail_url=_thumbnail_url(item.recording.id, item.analysis),
+                thumbnail_frame_count=_thumbnail_frame_count(item.analysis),
                 outputs=[_output_fact(output) for output in item.analysis.outputs],
             )
             for item in view.recordings
@@ -445,6 +454,7 @@ def recording_detail_response(detail: V1RecordingDetail) -> RecordingDetailRespo
         diagnostic=_diagnostic(recording.diagnostic),
         analysis_state=detail.analysis.analysis_state,
         thumbnail_url=_thumbnail_url(recording.id, detail.analysis),
+        thumbnail_frame_count=_thumbnail_frame_count(detail.analysis),
         topics=(recording.scan_details or {}).get("topics"),
         timing=(recording.scan_details or {}).get("timing"),
         metadata_version=recording.metadata_version,

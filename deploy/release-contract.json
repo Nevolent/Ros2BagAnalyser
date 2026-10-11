@@ -5,7 +5,7 @@
     "front_preview_manifest": 1,
     "imu_series_schema": 2,
     "topdown_preview_manifest": 1,
-    "thumbnail_manifest": 1
+    "thumbnail_manifest": 2
   },
   "database_schema": "six-domain-tables-migrations-0001-through-0013",
   "platform": {
@@ -18,11 +18,11 @@
   "processors": {
     "ai_description": "ai-description-v2:qwen3-vl-2b-q8-52d6c8ff-llama-8345f333-cpu-v1:ordered-images:frames6:side448:tokens160:prompt-v1:formatter-v1",
     "encoder_series": "encoder-series-v1",
-    "front_preview": "front-preview-v6",
+    "front_preview": "front-preview-v7",
     "front_timing_policy": "image_header_affine_or_all_zero_record_timestamp_v3",
     "imu_series": "imu-series-v2",
     "topdown_preview": "topdown-preview-v2",
-    "thumbnail": "thumbnail-v1:default-colour:record-midpoint:side480:png"
+    "thumbnail": "thumbnail-v2:default-front:record-sixths:five:side480:png-strip"
   },
   "schema_version": 1
 }

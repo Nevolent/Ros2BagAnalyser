@@ -76,7 +76,10 @@ export async function loadTelemetry(
   const maximum = 256 * 1024 * 1024;
   if (Number(expected.size_bytes) > maximum || Number(metadata.artifact.size_bytes) > maximum)
     throw new Error(`${label} data exceeds the 256 MiB limit.`);
-  const response = await fetch(expected.url, { signal, credentials: 'same-origin' });
+  const response = await fetch(expected.url, {
+    signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
+    credentials: 'same-origin',
+  });
   if (!response.ok || !response.body) throw new Error(`${label} data could not be loaded.`);
   let size = 0;
   const bounded = response.body.pipeThrough(

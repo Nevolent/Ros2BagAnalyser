@@ -46,17 +46,19 @@ def source(tmp_path):
                            processor=ThumbnailProcessor(decode))
 
 
-def test_midpoint_reads_only_two_payloads_preserving_source_and_aspect(source, tmp_path):
+def test_five_frames_share_scans_and_duplicate_payloads_preserving_source_and_aspect(source, tmp_path):
     before = inventory(source.root)
     output = tmp_path / 'thumbnail.png'
     result = source.processor.process(source.descriptor, output)
-    assert source.decoded == [1, 4]
+    assert source.decoded == [1, 4, 5]
     assert result == {'topic': '/camera/front', 'record_timestamp_ns': '60',
-                      'coverage_ns': 60, 'width': 480, 'height': 270}
+                      'record_timestamps_ns': ['60', '60', '60', '90', '90'],
+                      'coverage_ns': 60, 'width': 2400, 'height': 270,
+                      'frame_width': 480, 'frame_count': 5}
     with av.open(str(output)) as container:
         frames = list(container.decode(video=0))
     assert len(frames) == 1
-    assert (frames[0].width, frames[0].height) == (480, 270)
+    assert (frames[0].width, frames[0].height) == (2400, 270)
     assert inventory(source.root) == before
 
 
@@ -70,7 +72,7 @@ def test_monochrome_stream_is_skipped_before_default_colour_camera(source, tmp_p
     colour_decode = source.processor.image_decoder
     source.processor.image_decoder = lambda data: DecodedImage(1, 1, 'mono8', 1, b'x') if data == bytes([6]) else colour_decode(data)
     assert source.processor.process(descriptor, tmp_path / 'thumbnail.png')['topic'] == '/camera/front'
-    assert source.decoded == [1, 4]
+    assert source.decoded == [1, 4, 5]
 
 
 def test_midpoint_selection_handles_unordered_rows_and_duplicate_endpoints(source, tmp_path):
@@ -82,7 +84,7 @@ def test_midpoint_selection_handles_unordered_rows_and_duplicate_endpoints(sourc
     descriptor = replace(source.descriptor, database_identity=source_file_identity(source.descriptor.database_path.stat()))
     before = inventory(source.root)
     result = source.processor.process(descriptor, tmp_path / 'thumbnail.png')
-    assert source.decoded == [5, 4]
+    assert source.decoded == [5, 4, 1]
     assert result['record_timestamp_ns'] == '60'
     assert inventory(source.root) == before
 
@@ -252,7 +254,7 @@ def test_catalog_reuses_validation_only_for_unchanged_file_and_manifest(worker, 
     assert len(validated) == 1
     opened = worker.store.open_thumbnail(*arguments)
     os.close(opened.descriptor)
-    assert len(validated) == 2
+    assert len(validated) == 1
     path = worker.derived / artifact.output_relative_path
     stamp = path.stat()
     data = bytearray(path.read_bytes())
@@ -261,4 +263,25 @@ def test_catalog_reuses_validation_only_for_unchanged_file_and_manifest(worker, 
     os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
     with pytest.raises(ArtifactStoreError):
         worker.store.validate_thumbnail_artifact(*arguments)
-    assert len(validated) == 3
+    assert len(validated) == 2
+
+
+def test_regular_stream_samples_five_sixths_with_only_two_header_scans(source, tmp_path, monkeypatch):
+    import rosbag_analyser.processors.thumbnail as module
+    with sqlite3.connect(source.descriptor.database_path) as connection:
+        connection.execute('DELETE FROM messages')
+        connection.executemany('INSERT INTO messages VALUES (?, 1, ?, ?)',
+                               [(i + 1, i * 6, bytes([i + 1])) for i in range(101)])
+    descriptor = replace(source.descriptor, database_identity=source_file_identity(source.descriptor.database_path.stat()))
+    scans = []
+    original = module._metadata_rows
+    def metadata(*args):
+        scans.append(True)
+        yield from original(*args)
+    monkeypatch.setattr(module, '_metadata_rows', metadata)
+    before = inventory(source.root)
+    result = source.processor.process(descriptor, tmp_path / 'thumbnail.png')
+    assert len(scans) == 2
+    assert result['record_timestamps_ns'] == ['102', '204', '300', '402', '504']
+    assert len(source.decoded) == 6  # Eligibility plus five chosen payloads.
+    assert inventory(source.root) == before

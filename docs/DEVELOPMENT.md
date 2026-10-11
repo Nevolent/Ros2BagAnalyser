@@ -85,9 +85,11 @@ or empty selects one unique supported stream automatically. Existing private
 configuration needs no new setting for automatic selection. Restart services after
 configuration changes, then rescan.
 
-Colour-camera discovery and default selection use `front-preview-v6`. After
+Main front-camera discovery and selection use `front-preview-v7`. After
 updating an existing installation, explicitly rescan and prepare recordings to
-save current targets and generate bundles with the new eligibility policy.
+save current targets and generate output with the new selection policy.
+Five-frame thumbnail strips use `thumbnail-v2`; rescan updates their targets.
+Other compatible output is reused. No additional migration is needed for these policy changes.
 
 ## Frontend
 

@@ -8,6 +8,7 @@ interface CameraState {
   retryAfter: number;
   hasFrame: boolean;
   lastTime: number;
+  bufferEnd: number;
   progressAt: number;
   recovering: boolean;
   timer?: ReturnType<typeof setTimeout>;
@@ -54,6 +55,7 @@ export function syncCamera(
       retryAfter: 0,
       hasFrame: false,
       lastTime: video.currentTime,
+      bufferEnd: 0,
       progressAt: now,
       recovering: false,
       clock: { time, playing, seekVersion },
@@ -61,6 +63,11 @@ export function syncCamera(
     states.set(video, state);
   }
   state.clock = { time, playing, seekVersion };
+  const bufferedEnd = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
+  if (bufferedEnd > state.bufferEnd) {
+    state.bufferEnd = bufferedEnd;
+    state.progressAt = now;
+  }
   if (seekVersion !== state.seekVersion) {
     state.seekVersion = seekVersion;
     state.userSeek = true;

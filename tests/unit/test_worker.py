@@ -17,6 +17,8 @@ from rosbag_analyser.config import V0_PREVIEW_PROFILE
 from rosbag_analyser.front_preview import (
     FRONT_ALL_ZERO_HEADER_TIMING_POLICY,
     FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE,
+    FRONT_ARRAY_TIMING_POLICY,
+    FRONT_ARRAY_TIMESTAMP_PROVENANCE,
 )
 from rosbag_analyser.imu_series import IMU_SERIES_DEFINITIONS
 from rosbag_analyser.job_control import JobCanceled
@@ -442,6 +444,29 @@ def test_worker_records_all_zero_header_record_time_provenance(tmp_path: Path) -
     assert "affine_scale_denominator" not in timing
 
 
+def test_worker_publishes_headerless_camera_with_distinct_record_time_provenance(tmp_path):
+    class ArrayProcessor(SuccessfulProcessor):
+        def process(self, descriptor, output_path, **kwargs):
+            return replace(super().process(descriptor, output_path, **kwargs),
+                header_span_ns=0, timing_policy=FRONT_ARRAY_TIMING_POLICY,
+                timestamp_provenance=FRONT_ARRAY_TIMESTAMP_PROVENANCE)
+
+    repository = FakeRepository(_job())
+    store = FakeArtifactStore(tmp_path)
+    resolver = FakeResolver()
+    resolver.descriptor.topic = SimpleNamespace(
+        name="/robot/front_camera/actually_raw_image",
+        message_type="std_msgs/msg/UInt16MultiArray", serialization_format="cdr")
+    assert _worker(repository, ArrayProcessor(), store, resolver).run_once()
+    assert repository.failures == [] and len(repository.completed) == 1
+    timing = store.published_manifest["timing"]
+    assert timing["timestamp_provenance"] == FRONT_ARRAY_TIMESTAMP_PROVENANCE
+    assert timing["policy"] == FRONT_ARRAY_TIMING_POLICY
+    assert timing["image_header_stamps"] == "absent"
+    assert timing["header_span_ns"] == "0"
+    assert "affine_scale_denominator" not in timing
+
+
 def test_worker_leaves_queue_untouched_when_admission_is_paused(
     tmp_path: Path,
 ) -> None:
@@ -801,6 +826,6 @@ def test_recording_without_colour_streams_reports_no_eligible_camera(tmp_path):
 
     assert _worker(repository, Processor(), store).run_once()
     assert repository.failures == [
-        (5, "front_colour_stream_unavailable", "No eligible colour-camera stream was found.")]
+        (5, "front_colour_stream_unavailable", "No supported camera stream was found.")]
     assert repository.completed == []
     assert store.published_manifest is None

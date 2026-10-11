@@ -18,6 +18,9 @@ from rosbag_analyser.catalog.paths import SourceFileIdentity, source_file_identi
 from rosbag_analyser.config import PreviewProfile
 from rosbag_analyser.front_preview import (
     COLOUR_IMAGE_CHANNELS,
+    IMAGE_BYTES_PER_PIXEL,
+    FRONT_ARRAY_TIMING_POLICY,
+    FRONT_ARRAY_TIMESTAMP_PROVENANCE,
     FRONT_ALL_ZERO_HEADER_TIMING_POLICY,
     FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE,
     FRONT_HEADER_TIMING_POLICY,
@@ -25,6 +28,7 @@ from rosbag_analyser.front_preview import (
     FrontSourceDescriptor,
     IMAGE_MESSAGE_TYPE,
 )
+from rosbag_analyser.topic_selection import is_named_camera_topic, is_uint16_camera_topic
 from rosbag_analyser.job_control import JobControlToken
 from rosbag_analyser.timeline import media_pts_digest_chunk, nanoseconds_to_media_pts
 
@@ -57,6 +61,8 @@ class DecodedImage:
     header_stamp_available: bool = False
     header_stamp_sec: int | None = None
     header_stamp_nanosec: int | None = None
+    record_timestamp_only: bool = False
+    is_bigendian: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,18 +91,22 @@ class FrontTimingPlan:
 
     @property
     def timing_policy(self) -> str:
+        if self.mode == "headerless_record_timestamp":
+            return FRONT_ARRAY_TIMING_POLICY
         if self.mode == "all_zero_record_timestamp":
             return FRONT_ALL_ZERO_HEADER_TIMING_POLICY
         return FRONT_HEADER_TIMING_POLICY
 
     @property
     def timestamp_provenance(self) -> str:
+        if self.mode == "headerless_record_timestamp":
+            return FRONT_ARRAY_TIMESTAMP_PROVENANCE
         if self.mode == "all_zero_record_timestamp":
             return FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE
         return FRONT_TIMESTAMP_PROVENANCE
 
     def validate_header(self, header: HeaderStamp) -> None:
-        expected_kind = (
+        expected_kind = "record_only" if self.mode == "headerless_record_timestamp" else (
             "all_zero" if self.mode == "all_zero_record_timestamp" else "valid"
         )
         if header.kind != expected_kind:
@@ -109,7 +119,7 @@ class FrontTimingPlan:
         self, record_timestamp_ns: int, header: HeaderStamp
     ) -> int:
         self.validate_header(header)
-        if self.mode == "all_zero_record_timestamp":
+        if self.mode in {"all_zero_record_timestamp", "headerless_record_timestamp"}:
             if (
                 record_timestamp_ns < self.record_start_ns
                 or record_timestamp_ns > self.record_end_ns
@@ -192,7 +202,8 @@ class FrontPreviewProcessor:
         *,
         control: JobControlToken | None = None,
     ) -> FrontPreviewResult:
-        timing = _load_timing_plan(descriptor, self.image_decoder)
+        decoder = decoder_for_topic(descriptor.topic, self.image_decoder)
+        timing = _load_timing_plan(descriptor, decoder)
         if control is not None:
             control.checkpoint("processing", force=True)
         messages = _iter_topic_messages(descriptor)
@@ -204,6 +215,7 @@ class FrontPreviewProcessor:
         encoded_frames = 0
         duplicates = 0
         source_size: tuple[int, int] | None = None
+        source_encoding: str | None = None
         output_size: tuple[int, int] | None = None
         container: av.container.OutputContainer | None = None
         stream: av.video.stream.VideoStream | None = None
@@ -222,8 +234,13 @@ class FrontPreviewProcessor:
                 if control is not None:
                     control.checkpoint("processing")
                 input_frames += 1
-                image = _decode_image(self.image_decoder, serialized)
+                image = _decode_image(decoder, serialized)
                 _validate_image(image)
+                if source_encoding is None:
+                    source_encoding = image.encoding
+                elif image.encoding != source_encoding:
+                    raise FrontPreviewProcessingError(
+                        "front_encoding_unsupported", "The camera image encoding changed within the stream.")
                 header = _header_stamp(image)
                 timing.validate_header(header)
                 if header.kind == "valid":
@@ -436,7 +453,59 @@ def deserialize_ros_image(serialized: bytes) -> DecodedImage:
             int(message.header.stamp.sec) * 1_000_000_000
             + int(message.header.stamp.nanosec)
         ),
+        is_bigendian=bool(message.is_bigendian),
     )
+
+
+def decoder_for_topic(topic, decoder):
+    if decoder is deserialize_ros_image and is_uint16_camera_topic(topic):
+        return deserialize_uint16_camera
+    return decoder
+
+
+def deserialize_uint16_camera(serialized: bytes) -> DecodedImage:
+    try:
+        from rclpy.serialization import deserialize_message
+        from std_msgs.msg import UInt16MultiArray
+    except ImportError as error:
+        raise FrontPreviewProcessingError(
+            "ros_runtime_unavailable", "The ROS 2 Humble Python environment is unavailable to the worker.") from error
+    try:
+        message = deserialize_message(serialized, UInt16MultiArray)
+        return uint16_camera_image(message)
+    except FrontPreviewProcessingError:
+        raise
+    except Exception as error:
+        raise FrontPreviewProcessingError(
+            "front_image_deserialization_failed", "A front-camera array could not be decoded.") from error
+
+
+def uint16_camera_image(message) -> DecodedImage:
+    """The recorded KuupKulgur height/width layout contains packed intensities."""
+    dims = message.layout.dim
+    if len(dims) != 2 or [dim.label for dim in dims] != ["height", "width"]:
+        raise FrontPreviewProcessingError(
+            "front_array_layout_invalid", "The camera array needs labelled height and width dimensions.")
+    height, width = (int(dim.size) for dim in dims)
+    offset = int(message.layout.data_offset)
+    if (not 0 < width <= MAX_IMAGE_WIDTH or not 0 < height <= MAX_IMAGE_HEIGHT
+            or int(dims[0].stride) != height * width or int(dims[1].stride) != width
+            or offset < 0 or len(message.data) != offset + height * width
+            or len(message.data) * 2 > MAX_IMAGE_PAYLOAD_BYTES):
+        raise FrontPreviewProcessingError(
+            "front_array_layout_invalid", "The camera array dimensions, strides or payload are invalid.")
+    values = np.asarray(message.data)
+    if (values.ndim != 1 or values.dtype.kind not in "ui"
+            or np.any(values < 0) or np.any(values > 65535)):
+        raise FrontPreviewProcessingError(
+            "front_payload_invalid", "The camera array contains invalid 16-bit values.")
+    return DecodedImage(width, height, "mono16", width * 2,
+                        values[offset:].astype("<u2").tobytes(), record_timestamp_only=True)
+
+
+def eligible_camera_image(image, topic) -> bool:
+    return (image.encoding in COLOUR_IMAGE_CHANNELS
+            or image.encoding in {"mono8", "mono16"} and is_named_camera_topic(topic))
 
 
 def _load_timing_plan(
@@ -473,7 +542,7 @@ def _load_timing_plan(
             image_decoder,
             _message_data(connection.cursor(), int(first[0]), first[2]),
         )
-        if first_image.encoding not in COLOUR_IMAGE_CHANNELS:
+        if not eligible_camera_image(first_image, descriptor.topic):
             raise FrontPreviewStreamExcluded()
         _validate_image(first_image)
         last_image = _decode_image(
@@ -488,13 +557,14 @@ def _load_timing_plan(
                 "front_header_timestamps_mixed",
                 "Front-camera image headers mix zero and non-zero timestamps.",
             )
-        if first_header.kind == "all_zero":
+        if first_header.kind in {"all_zero", "record_only"}:
             plan = FrontTimingPlan(
                 record_start_ns=int(first[1]),
                 record_end_ns=int(last[1]),
                 header_start_ns=None,
                 header_end_ns=None,
-                mode="all_zero_record_timestamp",
+                mode=("headerless_record_timestamp" if first_header.kind == "record_only"
+                      else "all_zero_record_timestamp"),
             )
         else:
             assert first_header.timestamp_ns is not None
@@ -545,6 +615,11 @@ def _decode_image(image_decoder: ImageDecoder, serialized: bytes) -> DecodedImag
 
 
 def _header_stamp(image: DecodedImage) -> HeaderStamp:
+    if image.record_timestamp_only:
+        if image.header_stamp_available or image.header_timestamp_ns is not None:
+            raise FrontPreviewProcessingError(
+                "front_header_timestamp_invalid", "A headerless camera array has conflicting timing facts.")
+        return HeaderStamp("record_only", None)
     if image.header_stamp_available:
         seconds = image.header_stamp_sec
         nanoseconds = image.header_stamp_nanosec
@@ -694,7 +769,8 @@ def _topic_id(connection: sqlite3.Connection, descriptor: FrontSourceDescriptor)
             "The configured front-camera topic is unavailable in the database.",
         )
     topic_id, message_type, serialization = topic_rows[0]
-    if message_type != IMAGE_MESSAGE_TYPE or serialization != "cdr":
+    if (message_type != descriptor.topic.message_type or serialization != "cdr"
+            or message_type != IMAGE_MESSAGE_TYPE and not is_uint16_camera_topic(descriptor.topic)):
         raise FrontPreviewProcessingError(
             "front_topic_contract_changed",
             "The front-camera topic no longer matches its catalogued type.",
@@ -730,7 +806,7 @@ def _message_data(
 
 
 def _validate_image(image: DecodedImage) -> None:
-    if image.encoding not in COLOUR_IMAGE_CHANNELS:
+    if image.encoding not in IMAGE_BYTES_PER_PIXEL:
         raise FrontPreviewProcessingError(
             "front_encoding_unsupported",
             "The front-camera image encoding is unsupported.",
@@ -744,7 +820,7 @@ def _validate_image(image: DecodedImage) -> None:
         raise FrontPreviewProcessingError(
             "front_dimensions_invalid", "A front-camera image has invalid dimensions."
         )
-    packed_step = image.width * COLOUR_IMAGE_CHANNELS[image.encoding]
+    packed_step = image.width * IMAGE_BYTES_PER_PIXEL[image.encoding]
     if image.step < packed_step:
         raise FrontPreviewProcessingError(
             "front_step_invalid", "A front-camera image has an invalid row step."
@@ -828,6 +904,13 @@ def _bgr_pixels(image: DecodedImage) -> np.ndarray:
     """Return validated packed pixels in the format used by the encoder."""
 
     rows = np.frombuffer(image.data, dtype=np.uint8).reshape(image.height, image.step)
+    if image.encoding in {"mono8", "mono16"}:
+        packed = np.ascontiguousarray(rows[:, :image.width * IMAGE_BYTES_PER_PIXEL[image.encoding]])
+        if image.encoding == "mono16":
+            # Fixed full-range conversion preserves brightness between frames.
+            packed = (packed.view(">u2" if image.is_bigendian else "<u2") >> 8).astype(np.uint8)
+        gray = packed.reshape(image.height, image.width)
+        return np.repeat(gray[:, :, None], 3, axis=2)
     channels = COLOUR_IMAGE_CHANNELS[image.encoding]
     pixels = rows[:, : image.width * channels].reshape(image.height, image.width, channels)
     pixels = pixels[:, :, :3]  # Video previews omit alpha.

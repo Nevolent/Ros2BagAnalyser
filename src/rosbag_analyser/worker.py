@@ -28,6 +28,7 @@ from rosbag_analyser.deployment import (
 )
 from rosbag_analyser.front_preview import (
     FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE,
+    FRONT_ARRAY_TIMESTAMP_PROVENANCE,
     FRONT_TIMESTAMP_PROVENANCE,
     PROCESSOR_VERSION,
     FrontSourceResolver,
@@ -363,6 +364,8 @@ class SerialWorker:
             == FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE
         ):
             timing_manifest["image_header_stamps"] = "all_zero"
+        elif result.timestamp_provenance == FRONT_ARRAY_TIMESTAMP_PROVENANCE:
+            timing_manifest["image_header_stamps"] = "absent"
         else:
             raise FrontPreviewProcessingError(
                 "front_timing_provenance_invalid",
@@ -455,7 +458,7 @@ class SerialWorker:
             if result is None or manifest is None:
                 raise FrontPreviewProcessingError(
                     "front_colour_stream_unavailable",
-                    "No eligible colour-camera stream was found.",
+                    "No supported camera stream was found.",
                 )
             manifest["streams"] = streams
             current = self.resolver.resolve(job.recording_id)

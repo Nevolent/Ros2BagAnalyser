@@ -112,8 +112,11 @@ retries automatically, then offers a **Retry** button if needed.
 The application reads uncompressed, single-file ROS 2 SQLite recordings.
 Front previews discover raw `sensor_msgs/msg/Image` streams by type and support
 `rgb8`, `bgr8`, `rgba8` and `bgra8`, without requiring a configured topic name.
-Monochrome streams such as `mono8`/`mono16`, including Ouster LiDAR measurement
-images, are excluded without camera-failure diagnostics.
+Named camera streams also support `mono8`/`mono16`. KuupKulgur's
+`front_camera/actually_raw_image` `UInt16MultiArray` is shown as grayscale when its
+height/width layout is valid, using ROS recording timestamps. Sixteen-bit intensity
+uses a fixed full-range conversion; no per-frame brightness adjustment is applied.
+Ouster LiDAR measurement images remain excluded.
 Top-down previews use companion AVI/CSV files. IMU data has six raw angular
 velocity (`rad/s`) and linear acceleration (`m/s²`) axes. Multiple IMU topics
 require an operator preference. Encoders support the custom KuupKulgur

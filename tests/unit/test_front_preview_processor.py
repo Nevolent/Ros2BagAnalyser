@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import shutil
@@ -722,6 +723,8 @@ def test_colour_frames_are_normalized_to_bgr_and_encoded(tmp_path: Path, encodin
 def test_non_colour_stream_is_excluded_before_payload_and_header_validation(tmp_path, encoding):
     database = tmp_path / "recording.db3"
     _create_image_database(database, [100, 200])
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE topics SET name = '/ouster/image'")
     before = inventory(tmp_path)
     decoded = []
 
@@ -732,7 +735,9 @@ def test_non_colour_stream_is_excluded_before_payload_and_header_validation(tmp_
 
     with pytest.raises(FrontPreviewStreamExcluded):
         FrontPreviewProcessor(V0_PREVIEW_PROFILE, decoder).process(
-            _descriptor(database, 0, 2), tmp_path / "preview.mp4")
+            replace(_descriptor(database, 0, 2),
+                topic=TopicFact("/ouster/image", "sensor_msgs/msg/Image", "cdr", 2)),
+            tmp_path / "preview.mp4")
     assert decoded == [b"\x01"]
     assert inventory(tmp_path) == before
 

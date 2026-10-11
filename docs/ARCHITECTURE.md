@@ -109,13 +109,13 @@ camera target or adds an encoder target. Output failures retain their diagnostic
 and Processing retry controls. Unavailable top-down, IMU and encoder inputs are optional;
 Analysis can review available output independently.
 
-Thumbnails are independent jobs reading the main eligible front colour camera directly
+Thumbnails are independent jobs reading the main eligible front camera directly
 from immutable source SQLite, without preparing videos or AI descriptions. Two sequential
 message-header scans select five frames at approximate sixths of the record-time span,
 keeping the last message at duplicate timestamps. The middle frame is the default.
 All five selections share the second scan; repeated selections decode once.
 At most 256 candidate streams are inspected;
-monochrome first frames are excluded before colour-image validation. Payloads are bounded
+Ouster measurement images are excluded before camera validation. Payloads are bounded
 and only candidate first frames and the five chosen frames are decoded. Scans retain only stream
 endpoints and five selections, checkpoint every 1,024 rows, and have a 30-second
 budget between checkpoints; expiration reports `thumbnail_query_timeout`. No source index is changed.
@@ -186,20 +186,25 @@ Queued work and recordings are preserved; recovery is in [Operations](OPERATIONS
 | Output | Format and identity |
 | --- | --- |
 | Thumbnail | `thumbnail-v2:default-front:record-sixths:five:side480:png-strip`; schema-2 PNG strip with five source frames |
-| Front preview | `front-preview-v7`; validated MP4 for the main supported raw CDR Image stream |
+| Front preview | `front-preview-v8`; validated MP4 for the main supported raw CDR camera stream |
 | Top-down preview | `topdown-preview-v2`; AVI frames timed by CSV Unix timestamps; H.264/yuv420p MP4 |
 | AI description | `ai-description-v2`; bounded JSON with the short description and bunker boolean, tied to front identity and fixed model/prompt/sampling policy |
 | IMU | `imu-series-v2`; schema-2 JSON with three angular-velocity and three linear-acceleration axes |
 | Encoders | `encoder-series-v1`; schema-2 JSON with six RPM channels in FL, FR, ML, MR, RL, RR order |
 
 Front discovery accepts nonempty CDR `sensor_msgs/msg/Image` streams whose first
-image uses `rgb8`, `bgr8`, `rgba8` or `bgra8`. Alpha is discarded for video previews.
-Other encodings, including monochrome Ouster measurement images, are excluded
+image uses `rgb8`, `bgr8`, `rgba8` or `bgra8`. Named camera streams also support
+`mono8` and `mono16`. The KuupKulgur `front_camera/actually_raw_image` topic supports
+CDR `std_msgs/msg/UInt16MultiArray` with exactly two labelled `height`/`width`
+dimensions, packed strides and a validated offset and payload. Arrays are grayscale
+intensities, never inferred colour/Bayer images. Sixteen-bit previews use the upper
+eight bits with a fixed 0–65535 range, preserving brightness between frames.
+Alpha is discarded for video previews. Other encodings and Ouster measurement images are excluded
 before camera validation and produce no stream-failure diagnostics. Every frame
-of an eligible stream must satisfy the colour-image and timing contracts.
+of an eligible stream must satisfy the image and timing contracts; encodings cannot change midstream.
 Known ceiling, top, rear, back and downward views are excluded from front inputs.
 Names with a `front` component (including camelCase) come first, then message count
-descending and topic name ascending. Only the first eligible colour stream is processed,
+descending and topic name ascending. Only the first eligible camera stream is processed,
 timed and validated before atomic publication. Stream URLs use
 artifact identity and numeric manifest index, never a topic name as a path.
 IMU selection uses a valid configured preference or one
@@ -241,7 +246,9 @@ saved catalog state. Mount, release and schema checks fail closed.
 
 Front coverage uses ROS record endpoints. Strictly increasing valid image-header
 timestamps map affinely between those endpoints. Only streams whose headers are
-all exactly zero use ROS record cadence directly. Mixed, missing, invalid or
+all exactly zero use ROS record cadence directly. Headerless UInt16 camera arrays
+also use record cadence, with distinct timing policy and provenance in the manifest.
+Mixed, missing, invalid or
 unordered headers fail. Duplicate front record times keep the last frame;
 no fixed frame rate or interpolated frames are invented.
 

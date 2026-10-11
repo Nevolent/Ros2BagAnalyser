@@ -144,7 +144,7 @@ def test_generated_ros_images_select_the_exact_v3_timing_mode(
 
 
 @pytest.mark.parametrize("front_name", ["/robot/camera_front/raw", "/alternative/image"])
-def test_ros_colour_bundle_excludes_ouster_images_and_selects_default(tmp_path, front_name):
+def test_ros_main_preview_excludes_ouster_images_and_selects_default(tmp_path, front_name):
     from types import SimpleNamespace
     import os
     import shutil
@@ -208,8 +208,7 @@ def test_ros_colour_bundle_excludes_ouster_images_and_selects_default(tmp_path, 
     worker._run_front_job(SimpleNamespace(id=1, recording_id=1, kind="front_preview", cache_identity="a" * 64))
     assert failures == []
     artifact = completed[0][1]
-    expected_topics = [topics[1], topics[0], topics[3], topics[2]] if "front" in front_name else [
-        topics[0], topics[1], topics[3], topics[2]]
+    expected_topics = [topics[1] if "front" in front_name else topics[0]]
     assert artifact.manifest["source"]["topic"] == expected_topics[0].name
     assert [stream["topic"] for stream in artifact.manifest["streams"]] == [
         topic.name for topic in expected_topics]

@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from conftest import create_recording, metadata_document
+from rosbag_analyser.catalog.metadata import TopicFact
 from rosbag_analyser.catalog.scanner import CatalogScanner
 from rosbag_analyser.catalog.types import SourceCondition
 from rosbag_analyser.config import V0_PREVIEW_PROFILE
@@ -70,6 +71,31 @@ def test_plans_all_five_available_targets_from_one_scan(tmp_path: Path) -> None:
     assert all(target.cache_identity is not None for target in targets)
     assert all(target.work_units is not None and target.work_units > 0 for target in targets)
     assert all(target.diagnostic is None for target in targets)
+
+
+def test_nonempty_uint16_camera_supplies_front_description_and_thumbnail_targets(tmp_path):
+    recording = _scanned_recording(tmp_path)
+    facts = recording.preparation_facts
+    array_topic = TopicFact("/robot/front_camera/actually_raw_image", "std_msgs/msg/UInt16MultiArray", "cdr", 172)
+    empty_image = TopicFact("/robot/front_camera/image_raw", "sensor_msgs/msg/Image", "cdr", 0)
+    recording = replace(recording, preparation_facts=replace(facts,
+        metadata=replace(facts.metadata, topics=(empty_image, array_topic))))
+    targets = {t.kind: t for t in _planner().plan_recording(11, recording)}
+    for kind in ("front_preview", "ai_description", "thumbnail"):
+        assert targets[kind].target_state == "available"
+        assert targets[kind].cache_identity is not None
+
+
+def test_lidar_only_recording_has_unavailable_camera_targets_without_camera_jobs(tmp_path):
+    recording = _scanned_recording(tmp_path)
+    facts = recording.preparation_facts
+    measurement = TopicFact("/robot/ouster/range_image", "sensor_msgs/msg/Image", "cdr", 20)
+    recording = replace(recording, preparation_facts=replace(facts,
+        metadata=replace(facts.metadata, topics=(measurement,))))
+    targets = {t.kind: t for t in _planner().plan_recording(11, recording)}
+    for kind in ("front_preview", "ai_description", "thumbnail"):
+        assert targets[kind].target_state == "unavailable"
+        assert targets[kind].cache_identity is None
 
 
 def test_unique_imu_is_discovered_without_a_matching_configured_name(

@@ -8,11 +8,11 @@ import time
 import av
 import numpy as np
 
-from rosbag_analyser.front_preview import COLOUR_IMAGE_CHANNELS
 from rosbag_analyser.thumbnail import MAX_THUMBNAIL_SIDE, THUMBNAIL_FRAME_COUNT
 from .front_preview import (
     FrontPreviewProcessingError, _open_source_database, _topic_id, _message_data,
-    _decode_image, _validate_image, deserialize_ros_image,
+    _decode_image, _validate_image, deserialize_ros_image, decoder_for_topic,
+    eligible_camera_image, _bgr_pixels,
 )
 
 
@@ -50,8 +50,9 @@ class ThumbnailProcessor:
                 first_message = first.get(topic_id)
                 if first_message is None:
                     continue
-                image = _read_image(connection, first_message[0], self.image_decoder)
-                if image.encoding not in COLOUR_IMAGE_CHANNELS:
+                decoder = decoder_for_topic(topic, self.image_decoder)
+                image = _read_image(connection, first_message[0], decoder)
+                if not eligible_camera_image(image, topic):
                     continue
                 _validate_image(image)
                 targets = [first_message[1] + (last[topic_id] - first_message[1]) * n // 6
@@ -70,14 +71,18 @@ class ThumbnailProcessor:
                 scale = min(1, MAX_THUMBNAIL_SIDE / max(image.width, image.height))
                 width, height = max(1, round(image.width * scale)), max(1, round(image.height * scale))
                 decoded = {first_message[0]: _pixels(image, width, height)}
+                image_encoding = image.encoding
                 del image
                 tiles = []
                 for message_id, timestamp in chosen:
                     checkpoint()
                     tile = decoded.get(message_id)
                     if tile is None:
-                        frame_image = _read_image(connection, message_id, self.image_decoder)
+                        frame_image = _read_image(connection, message_id, decoder)
                         _validate_image(frame_image)
+                        if frame_image.encoding != image_encoding:
+                            raise FrontPreviewProcessingError(
+                                "front_encoding_unsupported", "The camera image encoding changed within the stream.")
                         tile = _pixels(frame_image, width, height)
                         decoded[message_id] = tile
                         del frame_image
@@ -100,11 +105,7 @@ class ThumbnailProcessor:
 
 
 def _pixels(image, width, height):
-    channels = COLOUR_IMAGE_CHANNELS[image.encoding]
-    pixels = np.frombuffer(image.data, dtype=np.uint8).reshape(image.height, image.step)
-    pixels = pixels[:, :image.width * channels].reshape(image.height, image.width, channels)
-    pixel_format = {"rgb8": "rgb24", "bgr8": "bgr24", "rgba8": "rgba", "bgra8": "bgra"}[image.encoding]
-    frame = av.VideoFrame.from_ndarray(np.ascontiguousarray(pixels), format=pixel_format)
+    frame = av.VideoFrame.from_ndarray(_bgr_pixels(image), format="bgr24")
     scale = min(width / image.width, height / image.height)
     resized = frame.reformat(width=max(1, round(image.width * scale)),
                              height=max(1, round(image.height * scale)), format="rgb24").to_ndarray()

@@ -133,7 +133,7 @@ def test_completion_keeps_six_images_ordered_and_constrains_output():
     assert [part["text"] for part in content if part.get("text", "").startswith("Frame")] == [
         f"Frame {i + 1}, timestamp {i:.3f} seconds:" for i in range(6)]
     assert len([part for part in content if part["type"] == "image_url"]) == 6
-    assert payload["response_format"]["schema"]["additionalProperties"] is False
+    assert payload["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
     assert payload["max_tokens"] == runtime.MAX_NEW_TOKENS
     with pytest.raises(ValueError, match="frame policy"):
         inference.completion_request([b"image"], [0])

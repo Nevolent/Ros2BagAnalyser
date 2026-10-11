@@ -4,6 +4,24 @@ import re
 from .catalog.metadata import TopicFact
 
 TOPIC_SELECTION_POLICY = "typed-streams-v1"
+UINT16_IMAGE_MESSAGE_TYPE = "std_msgs/msg/UInt16MultiArray"
+
+
+def is_uint16_camera_topic(topic: TopicFact) -> bool:
+    return (topic.message_type == UINT16_IMAGE_MESSAGE_TYPE
+            and topic.name.endswith("/front_camera/actually_raw_image"))
+
+
+def is_named_camera_topic(topic: TopicFact) -> bool:
+    name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", topic.name).lower()
+    parts = re.split(r"[^a-z0-9]+", name)
+    return "ouster" not in parts and any(part in parts for part in ("camera", "front"))
+
+
+def is_ouster_measurement_topic(topic: TopicFact) -> bool:
+    parts = topic.name.lower().split("/")
+    return "ouster" in parts and parts[-1] in {
+        "range_image", "signal_image", "reflec_image", "nearir_image"}
 
 
 def _camera_order(topic: TopicFact) -> tuple[bool, bool, int, str]:
@@ -18,11 +36,13 @@ def _camera_order(topic: TopicFact) -> tuple[bool, bool, int, str]:
 def usable_topics(topics, message_type: str) -> tuple[TopicFact, ...]:
     candidates = (
         topic for topic in topics
-        if topic.message_type == message_type
+        if (topic.message_type == message_type
+            or message_type == "sensor_msgs/msg/Image" and is_uint16_camera_topic(topic))
         and topic.serialization_format == "cdr" and topic.message_count > 0
     )
     if message_type == "sensor_msgs/msg/Image":
-        return tuple(sorted((topic for topic in candidates if not _camera_order(topic)[0]),
+        return tuple(sorted((topic for topic in candidates
+                             if not _camera_order(topic)[0] and not is_ouster_measurement_topic(topic)),
                             key=_camera_order))
     return tuple(sorted(candidates, key=lambda topic: (-topic.message_count, topic.name)))
 

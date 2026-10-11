@@ -22,7 +22,9 @@ from rosbag_analyser.catalog.types import (
     SourceRole,
 )
 from rosbag_analyser.config import PreviewProfile
-from rosbag_analyser.topic_selection import select_topic, TOPIC_SELECTION_POLICY
+from rosbag_analyser.topic_selection import (
+    select_topic, TOPIC_SELECTION_POLICY, is_uint16_camera_topic, UINT16_IMAGE_MESSAGE_TYPE,
+)
 from rosbag_analyser.front_preview import (
     CDR_SERIALIZATION,
     FRONT_TIMING_POLICY,
@@ -271,7 +273,9 @@ class PreparationPlanner:
         topic = select_topic(facts.metadata.topics, self.front_topic, IMAGE_MESSAGE_TYPE)
         diagnostic = _topic_diagnostic(
             topic,
-            expected_type=IMAGE_MESSAGE_TYPE,
+            expected_type=(UINT16_IMAGE_MESSAGE_TYPE
+                           if topic is not None and is_uint16_camera_topic(topic)
+                           else IMAGE_MESSAGE_TYPE),
             missing_code="front_topic_unavailable",
             type_code="front_topic_type_unsupported",
             serialization_code="front_serialization_unsupported",

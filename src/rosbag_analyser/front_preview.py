@@ -25,7 +25,7 @@ from rosbag_analyser.catalog.paths import (
     source_file_identity,
 )
 from rosbag_analyser.catalog.types import SafeDiagnostic
-from rosbag_analyser.topic_selection import select_topic, usable_topics
+from rosbag_analyser.topic_selection import select_topic, usable_topics, is_uint16_camera_topic
 from rosbag_analyser.config import PreviewProfile
 from rosbag_analyser.persistence.processing_repository import (
     ArtifactRecord,
@@ -40,7 +40,7 @@ from rosbag_analyser.persistence.processing_repository import (
 FRONT_PREVIEW_V2_PROCESSOR_VERSION = "front-preview-v2"
 FRONT_PREVIEW_V3_PROCESSOR_VERSION = "front-preview-v3"
 FRONT_TIMING_POLICY_V2 = "capture_header_affine_to_record_span_v2"
-PROCESSOR_VERSION = "front-preview-v7"
+PROCESSOR_VERSION = "front-preview-v8"
 FRONT_TIMING_POLICY = "image_header_affine_or_all_zero_record_timestamp_v3"
 FRONT_HEADER_TIMING_POLICY = FRONT_TIMING_POLICY_V2
 FRONT_ALL_ZERO_HEADER_TIMING_POLICY = (
@@ -50,9 +50,12 @@ FRONT_TIMESTAMP_PROVENANCE = "ros_image_header_affine_to_record_span"
 FRONT_ALL_ZERO_HEADER_TIMESTAMP_PROVENANCE = (
     "ros_record_timestamp_all_zero_image_headers"
 )
+FRONT_ARRAY_TIMING_POLICY = "ros_record_timestamp_headerless_uint16_camera_v1"
+FRONT_ARRAY_TIMESTAMP_PROVENANCE = "ros_record_timestamp_headerless_uint16_camera"
 IMAGE_MESSAGE_TYPE = "sensor_msgs/msg/Image"
 CDR_SERIALIZATION = "cdr"
 COLOUR_IMAGE_CHANNELS = {"rgb8": 3, "bgr8": 3, "rgba8": 4, "bgra8": 4}
+IMAGE_BYTES_PER_PIXEL = {**COLOUR_IMAGE_CHANNELS, "mono8": 1, "mono16": 2}
 
 
 @dataclass(frozen=True)
@@ -167,7 +170,7 @@ class FrontSourceResolver:
                     "front_topic_unavailable",
                     "No usable raw image stream was found.",
                 )
-            if topic.message_type != IMAGE_MESSAGE_TYPE:
+            if topic.message_type != IMAGE_MESSAGE_TYPE and not is_uint16_camera_topic(topic):
                 return self._unavailable(
                     record,
                     "front_topic_type_unsupported",

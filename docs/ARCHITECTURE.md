@@ -249,7 +249,9 @@ strings; lookup selects the last sample at or before the clock, including duplic
 times. Non-finite values are per-channel null gaps. JSON is capped at 256 MiB and
 validated row by row. The browser streams parsing and reduces visible points while
 preserving spikes and gaps; large sample bundles stay outside subscribed UI state.
-For display, brief extreme excursions become trace gaps and inspectable markers,
+Observed timestamp pauses meeting the catalog cadence rule break displayed telemetry
+traces and clear readouts until samples resume; straight lines do not bridge them.
+For encoders only, brief extreme excursions become trace gaps and inspectable markers,
 without changing recorded samples. With at least twenty finite reference values
 (uniformly sampled up to 4,096), the envelope uses the 10th/90th percentiles plus
 ten times their magnitude or range (minimum 0.001). Excursions must return to
@@ -270,7 +272,10 @@ view boundaries, with 4% range padding and five evenly spaced ticks. Constant
 signals use 1% magnitude padding (minimum 0.001). Selected traces share one axis;
 multi-channel traces use modest opacity. Encoder traces share one RPM axis in the six-wheel
 view; individual wheel selection uses the same samples. Without IMU, the clock
-uses recording metadata Unix time, or relative seconds. Window arrows pan by 20%
+uses recording metadata Unix time; a missing origin shows unavailable timestamps.
+Engineers see Unix timestamps (seconds since the epoch, with milliseconds), never
+elapsed recording positions. Durations and internal clock offsets remain in
+seconds. Window arrows pan by 20%
 of the current span without seeking or changing playback; spike activation seeks
 to its recorded sample and preserves playback.
 Playback follows the cursor while it is visible; panning or zooming away keeps

@@ -16,6 +16,7 @@ export interface Parsed {
   coverageEnd: number;
 }
 interface Graph {
+  timestampGapSamples(samples: Sample[]): Sample[];
   parseSeriesStream(body: ReadableStream<Uint8Array>, artifact: unknown): Promise<Parsed>;
   selectSeries(parsed: Parsed, id: string): { samples: Sample[] };
   sampleAtOrBefore(samples: Sample[], time: number): Sample | null;

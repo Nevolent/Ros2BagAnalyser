@@ -171,14 +171,22 @@ export const Timeline = memo(function Timeline({
   const displaySeries = useMemo(
     () =>
       new Map(
-        activeNames.map((name) => [name, graph.extremeSpikeGaps(channels[name].samples ?? [])]),
+        activeNames.map((name) => {
+          const samples = graph.timestampGapSamples(channels[name].samples ?? []);
+          return [
+            name,
+            name.startsWith('encoder.')
+              ? graph.extremeSpikeGaps(samples)
+              : { samples, spikes: [], gaps: [] },
+          ];
+        }),
       ),
     [activeNames, channels],
   );
   // Keep the first line just below the readouts; the scale label has its own left lane.
   const top = Math.max(plotTop, hasTelemetry ? measurementHeight + 12 : 0);
   const formatUnix = (seconds: number) =>
-    bundle.absoluteTime === false ? `${seconds.toFixed(3)} s` : (startUnix + seconds).toFixed(3);
+    bundle.absoluteTime === false ? '—' : (startUnix + seconds).toFixed(3);
   function update(next: Partial<TimelineState> | ((previous: TimelineState) => TimelineState)) {
     current.current =
       typeof next === 'function' ? next(current.current) : { ...current.current, ...next };
@@ -377,6 +385,7 @@ export const Timeline = memo(function Timeline({
         'loadedmetadata',
         'loadeddata',
         'canplay',
+        'progress',
         'waiting',
         'seeking',
         'seeked',
@@ -437,7 +446,7 @@ export const Timeline = memo(function Timeline({
         setNotice(
           bundle.absoluteTime !== false
             ? `Zoomed to Unix time ${formatUnix(windowStart)} through ${formatUnix(windowStart + span)}.`
-            : `Zoomed to recording position ${windowStart.toFixed(1)} through ${(windowStart + span).toFixed(1)} seconds.`,
+            : 'Zoomed timeline. Unix time is unavailable because the recording has no time origin.',
         );
         resume = false;
       }
@@ -845,6 +854,25 @@ export const Timeline = memo(function Timeline({
                 className={`timeline-axes${encoderGraph ? ' is-encoder' : ''}`}
                 role="group"
                 aria-label={encoderGraph ? 'Encoder wheels' : 'IMU axes'}
+                aria-describedby={
+                  wheelGuideOpen && encoderGraph ? 'encoder-wheel-guide' : undefined
+                }
+                onPointerEnter={(event) => {
+                  if (encoderGraph && event.pointerType !== 'touch')
+                    setWheelGuide({ x: event.clientX, y: event.clientY });
+                }}
+                onPointerMove={(event) => {
+                  if (encoderGraph && event.pointerType !== 'touch')
+                    setWheelGuide({ x: event.clientX, y: event.clientY });
+                }}
+                onPointerLeave={() => setWheelGuide(null)}
+                onFocus={(event) => {
+                  if (encoderGraph) {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setWheelGuide({ x: rect.right, y: rect.bottom });
+                  }
+                }}
+                onBlur={() => setWheelGuide(null)}
               >
                 {(encoderGraph ? encoderChannels.map((name) => name.slice(8) as Wheel) : axes).map(
                   (key, index) => (
@@ -885,6 +913,10 @@ export const Timeline = memo(function Timeline({
                                 ? [...selectedAxes, key as Axis]
                                 : selectedAxes.filter((axis) => axis !== key),
                             });
+                          // A pointer selection must not leave Space targeting
+                          // the checkbox when the engineer pauses playback.
+                          if ((event.nativeEvent as MouseEvent).detail > 0)
+                            plot.current?.focus({ preventScroll: true });
                         }}
                       />
                       <span>{key.toUpperCase()}</span>
@@ -1007,13 +1039,13 @@ export const Timeline = memo(function Timeline({
           aria-valuenow={Number(state.time.toFixed(3))}
           aria-valuetext={
             hasTelemetry
-              ? `${bundle.absoluteTime === false ? 'Recording position' : 'Unix time'} ${formatUnix(state.time)}, ends at ${formatUnix(duration)}, ${activeNames
+              ? `${bundle.absoluteTime === false ? 'Unix time unavailable' : 'Unix time'} ${formatUnix(state.time)}, ends at ${formatUnix(duration)}, ${activeNames
                   .map(
                     (name) =>
                       `${channelLabel(name)}: ${sample(state.time, channels[name], name)?.toFixed(3) ?? '—'} ${signal.spokenUnit}`,
                   )
                   .join(', ')}`
-              : `Recording position ${state.time.toFixed(1)} of ${duration.toFixed(1)} seconds`
+              : `Unix time ${formatUnix(state.time)}, ends at ${formatUnix(duration)}`
           }
 
           aria-orientation="horizontal"
@@ -1341,6 +1373,9 @@ export const Timeline = memo(function Timeline({
                 const recorded =
                   source.samples && graph.sampleAtOrBefore(source.samples, state.time);
                 const isSpike =
+                  encoderGraph &&
+                  recorded &&
+                  displaySeries.get(name)!.spikes.includes(recorded) &&
                   value === null &&
                   recorded?.value != null &&
                   state.time >= source.coverageStart! &&
@@ -1392,7 +1427,6 @@ export const Timeline = memo(function Timeline({
           )}
           {wheelGuide &&
             encoderGraph &&
-            activeNames.length > 0 &&
             createPortal(
               <div
                 ref={wheelGuideTip}
@@ -1428,8 +1462,7 @@ export const Timeline = memo(function Timeline({
                 <time>{formatUnix(hover.time)}</time>
                 {hover.spikes.map(({ name, sample }, index) => (
                   <span key={index} className="timeline-spike-detail">
-                    {name.split('.')[1]} extreme spike: {sample.value} {signal.unit} at{' '}
-                    {formatUnix(sample.timeSeconds)}.
+                    {name.split('.')[1]} extreme spike: {sample.value} {signal.unit}.
                   </span>
                 ))}
                 <span className="timeline-spike-detail">
@@ -1440,10 +1473,7 @@ export const Timeline = memo(function Timeline({
             )}
         </div>
         {duration > 0 && (
-          <div
-            className="timeline-axis"
-            aria-label={bundle.absoluteTime === false ? 'Recording seconds' : 'Unix timestamps'}
-          >
+          <div className="timeline-axis" aria-label="Unix timestamps">
             <time
               data-timeline-time=""
               dateTime={
@@ -1451,9 +1481,7 @@ export const Timeline = memo(function Timeline({
                   ? undefined
                   : new Date((startUnix + state.time) * 1000).toISOString()
               }
-              title={
-                bundle.absoluteTime === false ? 'Current recording position' : 'Current Unix time'
-              }
+              title={bundle.absoluteTime === false ? 'Unix time unavailable' : 'Current Unix time'}
             >
               {formatUnix(state.time)}
             </time>
@@ -1493,7 +1521,7 @@ export const Timeline = memo(function Timeline({
                     ).toISOString()
               }
               title={
-                bundle.absoluteTime === false ? 'Visible end position' : 'Visible end Unix time'
+                bundle.absoluteTime === false ? 'Unix time unavailable' : 'Visible end Unix time'
               }
             >
               {formatUnix(Math.min(duration, state.start + state.span))}

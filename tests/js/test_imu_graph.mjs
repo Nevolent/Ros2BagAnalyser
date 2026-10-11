@@ -2,6 +2,32 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import ImuGraph from "../../frontend/src/data/imu-graph.js";
 
+test("timestamp pauses break traces and blank stale readings while preserving measured samples", () => {
+  const samples = Array.from({ length: 60 }, (_, i) => {
+    const timeNs = BigInt(i * 10_000_000 + (i >= 30 ? 6_000_000_000 : 0));
+    return { timeNs, timeSeconds: Number(timeNs) / 1e9, value: i };
+  });
+  const original = samples.slice();
+  const display = ImuGraph.timestampGapSamples(samples);
+  assert.deepEqual(samples, original);
+  assert.equal(display.length, 61);
+  assert.equal(display[30].value, null);
+  assert.equal(ImuGraph.sampleAtOrBefore(display, 4).value, null);
+  assert.equal(ImuGraph.sampleAtOrBefore(display, 6.3).value, 30);
+  const segments = ImuGraph.visibleTraceSegments(display, 0, 7, 1000);
+  assert.equal(segments.length, 2);
+  assert.equal(segments[0].at(-1), samples[29]);
+  assert.equal(segments[1][0], samples[30]);
+});
+
+test("cadence checks preserve slow regular streams, sparse streams and normal jitter", () => {
+  for (const times of [Array.from({ length: 60 }, (_, i) => i * 10), [0, 1, 80],
+                      Array.from({ length: 60 }, (_, i) => i * 0.05 + (i % 2) * 0.01)]) {
+    const samples = times.map((timeSeconds) => ({ timeSeconds, timeNs: BigInt(Math.round(timeSeconds * 1e9)), value: 1 }));
+    assert.equal(ImuGraph.timestampGapSamples(samples), samples);
+  }
+});
+
 const definitions = [
   ["angular_velocity_x", "angular_velocity.x", "IMU angular_velocity.x (rad/s)", "rad/s"],
   ["angular_velocity_y", "angular_velocity.y", "IMU angular_velocity.y (rad/s)", "rad/s"],

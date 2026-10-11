@@ -342,6 +342,35 @@ function traceSegments(samples) {
   return segments;
 }
 
+// Break the displayed trace across observed timestamp pauses; preserve all
+// recorded points. The same conservative cadence rule is used by catalog scans.
+function timestampGapSamples(samples) {
+  const intervals = [];
+  for (let i = 1; i < samples.length && intervals.length < 1024; i++) {
+    const delta = samples[i].timeSeconds - samples[i - 1].timeSeconds;
+    if (delta > 0) intervals.push(delta);
+  }
+  if (intervals.length < 20) return samples;
+  intervals.sort((a, b) => a - b);
+  const middle = Math.floor(intervals.length / 2);
+  const cadence =
+    intervals.length % 2 ? intervals[middle] : (intervals[middle - 1] + intervals[middle]) / 2;
+  const threshold = Math.max(1, cadence * 20);
+  let display = null;
+  for (let i = 1; i < samples.length; i++) {
+    if (samples[i].timeSeconds - samples[i - 1].timeSeconds >= threshold) {
+      if (!display) display = samples.slice(0, i);
+      display.push({
+        timeNs: samples[i - 1].timeNs + 1n,
+        timeSeconds: samples[i - 1].timeSeconds + 1e-9,
+        value: null,
+      });
+    }
+    if (display) display.push(samples[i]);
+  }
+  return display ?? samples;
+}
+
 // A display-only, conservative envelope: brief excursions at least ten times
 // the usual magnitude/range become gaps. Keep the original samples for inspection.
 function extremeSpikeGaps(samples) {
@@ -517,6 +546,7 @@ export default Object.freeze({
   timeFromPlotPosition,
   snappedCursorPosition,
   traceSegments,
+  timestampGapSamples,
   extremeSpikeGaps,
   visibleSpikes,
   visibleTraceSegments,

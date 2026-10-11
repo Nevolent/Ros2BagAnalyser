@@ -94,6 +94,13 @@ test('six wheel traces use recorded values, last duplicates, per-wheel gaps and 
   await expect(page.locator('[data-encoder-trace]')).toHaveCount(6);
   await expect(page.getByRole('group', { name: 'Wheel encoder readings' })).toBeVisible();
   const plot = page.getByRole('slider', { name: 'Recording timeline' });
+  await page.getByRole('checkbox', { name: 'FL wheel' }).hover();
+  await expect(page.getByRole('tooltip')).toContainText('Front left wheel');
+  await page.keyboard.press('Escape');
+  await page.getByRole('checkbox', { name: 'FL wheel' }).focus();
+  await expect(page.getByRole('tooltip')).toContainText('Rear right wheel');
+  await plot.focus();
+  await expect(page.getByRole('tooltip')).toHaveCount(0);
   const reading = (wheel: string) => page.locator(`[data-encoder-value="encoder.${wheel}"]`);
   await plot.press('Home');
   await expect(reading('FL')).toHaveText('—');
@@ -233,6 +240,9 @@ test('encoder checkboxes combine solid colored traces and keep readings above th
     page.locator('[data-encoder-trace], [data-encoder-value], .timeline-grid text'),
   ).toHaveCount(0);
   await expect(page.locator('.timeline-grid line')).toHaveCount(5);
+  await page.getByRole('checkbox', { name: 'FL wheel' }).hover();
+  await expect(page.getByRole('tooltip')).toContainText('Front left wheel');
+  await page.keyboard.press('Escape');
 });
 
 test('extreme encoder glitches leave inspectable gaps without stretching the scale or readouts', async ({

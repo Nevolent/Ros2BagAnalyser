@@ -315,7 +315,10 @@ test('damaged recording keeps metadata time and hides IMU readouts', async ({ pa
   await slider.focus();
   await page.keyboard.press('End');
   await expect(slider).toHaveAttribute('aria-valuenow', '6');
-  await expect(slider).toHaveAttribute('aria-valuetext', 'Recording position 6.0 of 6.0 seconds');
+  await expect(slider).toHaveAttribute(
+    'aria-valuetext',
+    'Unix time 1767083106.000, ends at 1767083106.000',
+  );
   await expect(page.locator('[data-selection-start], [data-selection-end]')).toHaveCount(0);
 });
 
@@ -711,8 +714,8 @@ test('zero-duration and camera-only recordings retain truthful controls', async 
   await expect(page.locator('[data-timeline-time]')).toHaveText('1767083106.000');
   api.recording.start_time_ns = null;
   await page.reload();
-  await expect(page.getByLabel('Recording seconds', { exact: true })).toBeVisible();
-  await expect(page.locator('[data-timeline-time]')).toHaveText('0.000 s');
+  await expect(page.getByLabel('Unix timestamps', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-timeline-time]')).toHaveText('—');
 });
 
 for (const width of [390, 1440]) {

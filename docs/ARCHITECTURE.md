@@ -92,12 +92,16 @@ an encoder target. Unavailable top-down, IMU and encoder inputs are optional;
 Analysis can review available output independently.
 
 Thumbnails are independent jobs reading the default eligible colour camera directly
-from immutable source SQLite, without preparing videos or AI descriptions. Timestamp-only
-queries select the first frame at or after the stream's record-time midpoint, keeping
+from immutable source SQLite, without preparing videos or AI descriptions. Two sequential
+message-header scans select the first frame at or after the stream's record-time midpoint, keeping
 the last message at duplicate timestamps. At most 256 candidate streams are inspected;
 monochrome first frames are excluded before colour-image validation. Payloads are bounded
-and only candidate first frames and the chosen frame are decoded. Queries have a 30-second
-budget between control checkpoints. The PNG retains aspect ratio, has a maximum side of
+and only candidate first frames and the chosen frame are decoded. Scans retain only stream
+endpoints and the selected frame, checkpoint every 1,024 rows, and have a 30-second
+budget between checkpoints; expiration reports `thumbnail_query_timeout`. No source index is changed.
+A completed inspection with no supported colour camera is unavailable for that input identity;
+it retains the attempt diagnostic without appearing as an actionable failure or queuing another
+identical attempt. Changed inputs require an explicit rescan. The PNG retains aspect ratio, has a maximum side of
 480 pixels and a 1 MiB limit, and is validated with dimensions, decoded content and a
 SHA-256 digest before publication and delivery.
 Unchanged catalog image validation is cached against full file facts and manifest identity
@@ -195,6 +199,13 @@ hashes tolerate CIFS device/inode differences; live reads still compare full
 device/inode/mode/size/mtime/ctime facts. Derived CIFS timestamp handling does not
 relax source checks.
 
+New thumbnail, description and telemetry manifests bind validated bytes with SHA-256.
+Publication flushes owned output and refreshes its final file facts only after verifying
+that digest. Delivery may accept CIFS device/inode/timestamp changes only when the held
+file still matches the saved content digest; hash checks are cached against complete live
+file facts in a bounded 256-entry cache. Legacy manifests retain strict file-fact checks;
+rejected legacy artifacts require explicit regeneration, never automatic repair.
+
 Processors use bounded payload reads and one ordered SQLite query per stream.
 Video validation streams packet timestamps through ffprobe with bounded,
 size-dependent timeouts. Worker control checks reuse its advisory-lock session
@@ -212,7 +223,7 @@ no fixed frame rate or interpolated frames are invented.
 
 IMU and encoder series use database record time and preserve source order. Nanoseconds are decimal
 strings; lookup selects the last sample at or before the clock, including duplicate
-times. Non-finite values are per-channel null gaps. JSON is capped at 64 MiB and
+times. Non-finite values are per-channel null gaps. JSON is capped at 256 MiB and
 validated row by row. The browser streams parsing and reduces visible points while
 preserving spikes and gaps; large sample bundles stay outside subscribed UI state.
 For display, brief extreme excursions become trace gaps and inspectable markers,

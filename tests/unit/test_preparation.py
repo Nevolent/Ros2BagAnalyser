@@ -503,6 +503,22 @@ def test_front_camera_is_required_even_when_optional_outputs_are_ready() -> None
         assert analysis.outputs[2].state == "ready"
 
 
+def test_camera_without_colour_frames_is_unavailable_instead_of_failed():
+    from dataclasses import replace
+    group = {kind: CurrentOutputRecord(_target(kind)) for kind in PROCESSING_KINDS}
+    group['thumbnail'] = CurrentOutputRecord(
+        _target('thumbnail'), latest_failed_job=replace(
+            _job('thumbnail', 'failed'), error_code='thumbnail_camera_unavailable',
+            error_message='No supported colour camera is available for a thumbnail.',
+        ),
+    )
+    analysis = _service()._analysis_for_group(7, group, GENERATION)
+    thumbnail = next(output for output in analysis.outputs if output.kind == 'thumbnail')
+    assert thumbnail.state == 'unavailable'
+    assert thumbnail.diagnostic.code == 'thumbnail_camera_unavailable'
+    assert analysis.analysis_state == 'not_planned'
+
+
 def test_unprepared_front_camera_does_not_become_ready_from_imu_alone() -> None:
     group = {kind: CurrentOutputRecord(_target(kind)) for kind in PROCESSING_KINDS}
     group["imu_series"] = CurrentOutputRecord(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -288,3 +289,87 @@ def test_invalid_imu_manifest_uses_artifact_neutral_failure_text(
     assert captured.value.code == "artifact_manifest_invalid"
     assert "artifact" in captured.value.safe_message.lower()
     assert "preview" not in captured.value.safe_message.lower()
+
+
+def test_content_bound_series_survives_cifs_file_fact_changes_but_rejects_tampering(tmp_path):
+    derived = tmp_path / 'derived'
+    derived.mkdir()
+    store = _store(derived)
+    workspace = store.create_workspace(40)
+    series = workspace / 'series.json'
+    payload = b'{"schema_version":2,"samples":[["0",1,1,1,1,1,1]]}'
+    series.write_bytes(payload)
+    identity = '6' * 64
+    manifest = _manifest(series, identity)
+    manifest['output']['sha256'] = hashlib.sha256(payload).hexdigest()
+    details = series.stat()
+    os.utime(series, ns=(details.st_atime_ns, details.st_mtime_ns + 1_000_000_000))
+    published = store.publish_series(workspace, 40, identity, manifest)
+    path = derived / published.output_relative_path
+    assert manifest['output']['file_identity']['mtime_ns'] == path.stat().st_mtime_ns
+    # Simulate CIFS remount/replacement exposing different inode/timestamp facts.
+    replacement = path.with_name('replacement.json')
+    replacement.write_bytes(payload)
+    replacement.replace(path)
+    store.validate_series_artifact(published.output_relative_path, len(payload), identity, manifest)
+    details = path.stat()
+    path.write_bytes(payload.replace(b'1,1', b'2,1', 1))
+    os.utime(path, ns=(details.st_atime_ns, details.st_mtime_ns))
+    with pytest.raises(ArtifactStoreError) as captured:
+        store.validate_series_artifact(published.output_relative_path, len(payload), identity, manifest)
+    assert captured.value.code == 'artifact_file_changed'
+
+
+def test_changed_content_cannot_replace_valid_series_or_refresh_its_manifest(tmp_path):
+    derived = tmp_path / 'derived'
+    derived.mkdir()
+    store = _store(derived)
+    identity = '7' * 64
+    payload = b'{"schema_version":2,"samples":[["0",1,1,1,1,1,1]]}'
+    workspace = store.create_workspace(41)
+    series = workspace / 'series.json'
+    series.write_bytes(payload)
+    manifest = _manifest(series, identity)
+    manifest['output']['sha256'] = hashlib.sha256(payload).hexdigest()
+    published = store.publish_series(workspace, 41, identity, manifest)
+    path = derived / published.output_relative_path
+    original = path.read_bytes(), path.stat()
+    replacement_workspace = store.create_workspace(42)
+    candidate = replacement_workspace / 'series.json'
+    candidate.write_bytes(payload)
+    candidate_manifest = _manifest(candidate, identity)
+    candidate_manifest['output']['sha256'] = hashlib.sha256(payload).hexdigest()
+    candidate.write_bytes(payload.replace(b'1,1', b'2,1', 1))
+    with pytest.raises(ArtifactStoreError):
+        store.publish_series(replacement_workspace, 42, identity, candidate_manifest, replace_conflicting=True)
+    assert (path.read_bytes(), path.stat()) == original
+    store.clean_workspace(replacement_workspace, 42)
+
+
+def test_series_above_previous_size_limit_preserves_all_rows(tmp_path):
+    derived = tmp_path / 'derived'
+    derived.mkdir()
+    store = _store(derived)
+    workspace = store.create_workspace(43)
+    series = workspace / 'series.json'
+    value = 1.2345678901234567
+    row = json.dumps(['0'] + [value] * 6, separators=(',', ':')).encode('ascii')
+    count = (64 * 1024 * 1024) // (len(row) + 1) + 1
+    with series.open('wb') as output:
+        output.write(b'{"schema_version":2,"samples":[')
+        output.write(row)
+        batch = (b',' + row) * 1000
+        batches, remaining = divmod(count - 1, 1000)
+        for _ in range(batches):
+            output.write(batch)
+        output.write((b',' + row) * remaining)
+        output.write(b']}')
+    assert series.stat().st_size > 64 * 1024 * 1024
+    validation = store.validate_series(
+        series, expected_schema_version=2, expected_sample_count=count,
+        expected_columns=_columns(count, 0, value, value),
+        expected_coverage_start_ns=0, expected_coverage_end_ns=0,
+    )
+    assert validation.sample_count == count
+    assert validation.size_bytes == series.stat().st_size
+    assert validation.sha256 == hashlib.sha256(series.read_bytes()).hexdigest()

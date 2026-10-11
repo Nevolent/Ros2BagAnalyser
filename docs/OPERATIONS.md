@@ -36,7 +36,7 @@ Workstation connection settings belong in mode-0600/0400
 
 Each command writes private reports to a new ignored
 `.vm-reports/<timestamp>-<action>/` directory, including JSON, stdout, stderr,
-SSH errors and checksums. Logs include the last 200 API/worker journal lines
+SSH errors and checksums. Logs include separate snapshots of the last 200 lines from each API/worker journal
 with common secrets and paths redacted. Review reports before sharing.
 
 `status` needs no sudo. Missing checks produce an incomplete report and nonzero
@@ -62,7 +62,8 @@ Raw output may contain private values. `deploy/scripts/collect-support-bundle`
 creates a bundle in a new protected directory; review it before sharing.
 Readiness reports capabilities: source loss or low derived space can disable
 new work while saved state remains readable. Check individual units as well as
-the grouping target.
+the grouping target. Service health does not establish job success; use the
+Processing failure diagnostics and the worker journal for preparation failures.
 
 ## Deploy a commit
 

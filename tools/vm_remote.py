@@ -102,8 +102,12 @@ def status_report(release: dict) -> dict:
 
 
 def sanitized_logs() -> str:
-    text = command_text(["journalctl", "-u", SERVICES[0], "-u", SERVICES[1],
-                         "--lines=200", "--no-pager", "--output=short-iso"])
+    # Keep API polling from displacing the worker's failures from the snapshot.
+    text = "\n".join(
+        command_text(["journalctl", "-u", service, "--lines=200",
+                      "--no-pager", "--output=short-iso"])
+        for service in SERVICES[:2]
+    )
     text = re.sub(r"postgresql(?:\+[A-Za-z0-9_.-]+)?://\S+", "[database-url]", text, flags=re.I)
     text = re.sub(r"(?i)\b(authorization|cookie|password|secret|token|private[_ -]?key)\s*[:=]\s*\S+",
                   lambda m: m[1] + "=[redacted]", text)

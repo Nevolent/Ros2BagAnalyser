@@ -8,6 +8,7 @@ from typing import Any, Mapping, Protocol
 
 import psycopg
 
+from rosbag_analyser.thumbnail import unavailable_thumbnail
 from rosbag_analyser.estimation import (
     EstimateSample,
     MAX_ESTIMATE_SAMPLES,
@@ -862,7 +863,13 @@ class ProcessingRepository:
                                 failed_before = _select_latest_failed_job(
                                     connection, recording_id, kind, target.cache_identity
                                 )
-                                if admission_diagnostic is not None:
+                                if failed_before is not None and unavailable_thumbnail(kind, failed_before["error_code"]):
+                                    scheduled = ScheduledOutput(
+                                        kind, "unavailable", "unavailable", target,
+                                        diagnostic_code=str(failed_before["error_code"]),
+                                        diagnostic_message=str(failed_before["error_message"]),
+                                    )
+                                elif admission_diagnostic is not None:
                                     scheduled = ScheduledOutput(
                                         kind,
                                         "unavailable",
@@ -1003,6 +1010,15 @@ class ProcessingRepository:
                         job=job,
                     ),
                 )
+            latest_failure = _select_latest_failed_job(connection, recording_id, kind, target.cache_identity)
+            if latest_failure is not None and unavailable_thumbnail(kind, latest_failure["error_code"]):
+                return RetrySchedule(
+                    True, True, ScheduledOutput(
+                        kind, "unavailable", "unavailable", target,
+                        diagnostic_code=str(latest_failure["error_code"]),
+                        diagnostic_message=str(latest_failure["error_message"]),
+                    ),
+                )
             if admission_diagnostic is not None:
                 return RetrySchedule(
                     True,
@@ -1040,7 +1056,7 @@ class ProcessingRepository:
                 """
                 WITH latest_failures AS (
                     SELECT DISTINCT ON (job.recording_id, job.kind)
-                           job.id, job.recording_id, job.kind, job.cache_identity
+                           job.id, job.recording_id, job.kind, job.cache_identity, job.error_code
                     FROM jobs AS job
                     JOIN preparation_targets AS target
                       ON target.recording_id = job.recording_id
@@ -1052,7 +1068,8 @@ class ProcessingRepository:
                 ), actionable_failures AS (
                     SELECT failure.id, failure.recording_id
                     FROM latest_failures AS failure
-                    WHERE NOT EXISTS (
+                    WHERE NOT (failure.kind = 'thumbnail' AND failure.error_code = 'thumbnail_camera_unavailable')
+                      AND NOT EXISTS (
                         SELECT 1 FROM jobs AS active
                         WHERE active.recording_id = failure.recording_id
                           AND active.kind = failure.kind
@@ -1252,7 +1269,8 @@ class ProcessingRepository:
                     )
                     SELECT latest.*
                     FROM latest
-                    WHERE NOT EXISTS (
+                    WHERE NOT (latest.kind = 'thumbnail' AND latest.error_code = 'thumbnail_camera_unavailable')
+                      AND NOT EXISTS (
                         SELECT 1 FROM jobs AS active
                         WHERE active.recording_id = latest.recording_id
                           AND active.kind = latest.kind

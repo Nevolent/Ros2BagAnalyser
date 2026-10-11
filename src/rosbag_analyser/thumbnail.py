@@ -13,6 +13,10 @@ MAX_THUMBNAIL_SIDE = 480
 MAX_THUMBNAIL_BYTES = 1024 * 1024
 
 
+def unavailable_thumbnail(kind: str, code: str | None) -> bool:
+    return kind == "thumbnail" and code == "thumbnail_camera_unavailable"
+
+
 def thumbnail_cache_identity(front_identity: str) -> str:
     return hashlib.sha256(f"{front_identity}:{THUMBNAIL_POLICY}".encode()).hexdigest()
 

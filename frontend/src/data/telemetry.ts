@@ -73,9 +73,9 @@ export async function loadTelemetry(
     metadata.artifact.data_url !== expected.url
   )
     throw new Error(`${label} artifact identity changed. Reloading recording details is required.`);
-  const maximum = 64 * 1024 * 1024;
+  const maximum = 256 * 1024 * 1024;
   if (Number(expected.size_bytes) > maximum || Number(metadata.artifact.size_bytes) > maximum)
-    throw new Error(`${label} data exceeds the 64 MiB limit.`);
+    throw new Error(`${label} data exceeds the 256 MiB limit.`);
   const response = await fetch(expected.url, { signal, credentials: 'same-origin' });
   if (!response.ok || !response.body) throw new Error(`${label} data could not be loaded.`);
   let size = 0;
@@ -83,7 +83,7 @@ export async function loadTelemetry(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         size += chunk.byteLength;
-        if (size > maximum) throw new Error(`${label} data exceeds the 64 MiB limit.`);
+        if (size > maximum) throw new Error(`${label} data exceeds the 256 MiB limit.`);
         controller.enqueue(chunk);
       },
     }),

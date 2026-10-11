@@ -21,7 +21,7 @@ from rosbag_analyser.job_control import JobControlToken
 
 
 MAX_SERIALIZED_IMU_BYTES = 1024 * 1024
-MAX_SERIES_BYTES = 64 * 1024 * 1024
+MAX_SERIES_BYTES = 256 * 1024 * 1024
 
 
 class ImuSeriesProcessingError(RuntimeError):

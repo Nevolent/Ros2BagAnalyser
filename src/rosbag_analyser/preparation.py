@@ -21,6 +21,7 @@ from rosbag_analyser.persistence.processing_repository import (
     ProcessingRepository,
 )
 from rosbag_analyser.preparation_planner import PreparationPlanner
+from rosbag_analyser.thumbnail import unavailable_thumbnail
 
 
 logger = logging.getLogger(__name__)
@@ -278,7 +279,7 @@ class PreparationService:
                 outputs.append(
                     OutputFact(
                         kind,
-                        "failed",
+                        "unavailable" if unavailable_thumbnail(kind, failed.error_code) else "failed",
                         SafeDiagnostic(
                             failed.error_code or "processing_failed",
                             failed.error_message or "Processing failed.",

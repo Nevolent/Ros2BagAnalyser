@@ -73,6 +73,61 @@ def test_monochrome_stream_is_skipped_before_default_colour_camera(source, tmp_p
     assert source.decoded == [1, 4]
 
 
+def test_midpoint_selection_handles_unordered_rows_and_duplicate_endpoints(source, tmp_path):
+    with sqlite3.connect(source.descriptor.database_path) as connection:
+        connection.execute("DELETE FROM messages")
+        for message_id, timestamp in ((1, 90), (2, 60), (3, 10), (4, 60), (5, 10)):
+            connection.execute("INSERT INTO messages VALUES (?, 1, ?, ?)",
+                               (message_id, timestamp, bytes([message_id])))
+    descriptor = replace(source.descriptor, database_identity=source_file_identity(source.descriptor.database_path.stat()))
+    before = inventory(source.root)
+    result = source.processor.process(descriptor, tmp_path / 'thumbnail.png')
+    assert source.decoded == [5, 4]
+    assert result['record_timestamp_ns'] == '60'
+    assert inventory(source.root) == before
+
+
+def test_large_metadata_scan_can_cancel_before_reading_image_payloads(source, tmp_path):
+    with sqlite3.connect(source.descriptor.database_path) as connection:
+        connection.executemany("INSERT INTO messages VALUES (?, 99, ?, ?)",
+                               ((100 + i, i, b'unrelated') for i in range(5000)))
+    descriptor = replace(source.descriptor, database_identity=source_file_identity(source.descriptor.database_path.stat()))
+
+    class Control:
+        calls = 0
+
+        def checkpoint(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 4:
+                raise JobCanceled('cancelled')
+
+    before = inventory(source.root)
+    with pytest.raises(JobCanceled):
+        source.processor.process(descriptor, tmp_path / 'thumbnail.png', control=Control())
+    assert source.decoded == []
+    assert not (tmp_path / 'thumbnail.png').exists()
+    assert inventory(source.root) == before
+
+
+def test_expired_metadata_query_reports_timeout_instead_of_database_failure(source, tmp_path, monkeypatch):
+    import rosbag_analyser.processors.thumbnail as module
+    with sqlite3.connect(source.descriptor.database_path) as connection:
+        connection.executemany("INSERT INTO messages VALUES (?, 99, ?, ?)",
+                               ((100 + i, i, b'x') for i in range(5000)))
+    descriptor = replace(source.descriptor, database_identity=source_file_identity(source.descriptor.database_path.stat()))
+    calls = 0
+
+    def clock():
+        nonlocal calls
+        calls += 1
+        return (calls - 1) * 31
+
+    monkeypatch.setattr(module.time, 'monotonic', clock)
+    with pytest.raises(FrontPreviewProcessingError) as captured:
+        source.processor.process(descriptor, tmp_path / 'thumbnail.png')
+    assert captured.value.code == 'thumbnail_query_timeout'
+
+
 def test_source_changed_or_symlinked_is_rejected(source, tmp_path):
     source.descriptor.database_path.touch()
     with pytest.raises(FrontPreviewProcessingError, match='changed'):
@@ -127,6 +182,28 @@ def test_worker_publishes_validated_identity_bound_thumbnail_without_preview(wor
     os.close(opened.descriptor)
     assert inventory(source.root) == before
     assert not list(worker.store.work_root.iterdir())
+
+
+def test_thumbnail_publication_finalizes_timestamp_without_accepting_changed_bytes(worker, monkeypatch):
+    import rosbag_analyser.thumbnail as module
+    original = module.validate_thumbnail
+
+    def finalize(data, manifest):
+        original(data, manifest)
+        path = next(worker.store.work_root.glob('*/thumbnail.png'))
+        details = path.stat()
+        os.utime(path, ns=(details.st_atime_ns, details.st_mtime_ns + 1_000_000_000))
+
+    monkeypatch.setattr(module, 'validate_thumbnail', finalize)
+    worker.instance._run_job(worker.job)
+    assert worker.repository.failures == []
+    artifact = worker.repository.completed[0]
+    path = worker.derived / artifact.output_relative_path
+    assert artifact.manifest['output']['file_identity']['mtime_ns'] == path.stat().st_mtime_ns
+    monkeypatch.setattr(module, 'validate_thumbnail', original)
+    opened = worker.store.open_thumbnail(artifact.output_relative_path, artifact.size_bytes,
+                                         artifact.cache_identity, artifact.manifest)
+    os.close(opened.descriptor)
 
 
 def test_invalid_replacement_and_changed_source_preserve_valid_output(worker, source):

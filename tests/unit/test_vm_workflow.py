@@ -190,6 +190,23 @@ def test_log_redaction(monkeypatch):
     assert "/private/source" not in remote.sanitized_logs()
 
 
+def test_logs_keep_a_separate_worker_snapshot_when_api_access_is_busy(monkeypatch):
+    units = []
+
+    def journal(command):
+        assert command.count('-u') == 1
+        unit = command[command.index('-u') + 1]
+        units.append(unit)
+        return ('HTTP 200\n' * 200 if unit == remote.SERVICES[0]
+                else 'Thumbnail job 1 failed with code thumbnail_query_timeout.\n')
+
+    monkeypatch.setattr(remote, 'command_text', journal)
+    logs = remote.sanitized_logs()
+    assert units == list(remote.SERVICES[:2])
+    assert logs.count('HTTP 200') == 200
+    assert 'thumbnail_query_timeout' in logs
+
+
 @pytest.mark.parametrize("interactive", [False, True])
 def test_sudo_transport_preserves_input_output_exit_and_cleans_up(tmp_path, monkeypatch, interactive):
     fake_ssh = tmp_path / "ssh"

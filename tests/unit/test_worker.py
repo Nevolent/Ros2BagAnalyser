@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -301,6 +303,7 @@ class FakeArtifactStore:
             column_count=6,
             coverage_start_ns=100_000_000,
             coverage_end_ns=900_000_000,
+            sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
         )
 
     def publish_series(

@@ -28,7 +28,7 @@ from rosbag_analyser.timeline import media_pts_digest_chunk
 
 logger = logging.getLogger(__name__)
 MAX_MANIFEST_BYTES = 1024 * 1024
-MAX_SERIES_ARTIFACT_BYTES = 64 * 1024 * 1024
+MAX_SERIES_ARTIFACT_BYTES = 256 * 1024 * 1024
 SUPPORTED_ARTIFACT_KINDS = frozenset(
     {"front_preview", "topdown_preview", "imu_series", "encoder_series", "ai_description", "thumbnail"}
 )
@@ -80,6 +80,7 @@ class SeriesValidation:
     column_count: int
     coverage_start_ns: int
     coverage_end_ns: int
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,8 @@ class ArtifactStore:
         self.artifacts_root = self.owned_root / "artifacts" / artifact_kind
         self._thumbnail_validation_cache: OrderedDict[tuple, None] = OrderedDict()
         self._thumbnail_validation_lock = threading.Lock()
+        self._content_validation_cache: OrderedDict[tuple, None] = OrderedDict()
+        self._content_validation_lock = threading.Lock()
         self._ensure_directory(self.work_root)
         self._ensure_directory(self.artifacts_root)
 
@@ -390,7 +393,8 @@ class ArtifactStore:
             minimum_values: list[float | None] = [None] * len(expected_columns)
             maximum_values: list[float | None] = [None] * len(expected_columns)
             sample_count = 0
-            with closing(_iter_series_samples(series_path, expected_schema_version, kind=self.artifact_kind)) as samples:
+            digest = hashlib.sha256()
+            with closing(_iter_series_samples(series_path, expected_schema_version, kind=self.artifact_kind, digest=digest)) as samples:
                 for sample in samples:
                     sample_count += 1
                     if sample_count > expected_sample_count:
@@ -476,6 +480,7 @@ class ArtifactStore:
             column_count=len(expected_columns),
             coverage_start_ns=first_time,
             coverage_end_ns=last_time,
+            sha256=digest.hexdigest(),
         )
 
     def publish_series(
@@ -608,6 +613,31 @@ class ArtifactStore:
                 f"{self.artifact_kind}_output_missing", "The generated JSON output is missing."
             )
         series_details = series_path.stat(follow_symlinks=False)
+        output = manifest.get("output", {})
+        if isinstance(output, dict) and "sha256" in output:
+            # Flush owned derived output before recording CIFS's final timestamp.
+            # A content hash from validation proves that refreshing file facts
+            # cannot accept different bytes. Legacy manifests remain strict.
+            descriptor = os.open(series_path, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            descriptor = os.open(series_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                series_details = os.fstat(descriptor)
+                previous = _manifest_output_identity(manifest)
+                if (previous is None or previous[:2] != (series_details.st_dev, series_details.st_ino)
+                        or _manifest_output_size(manifest) != series_details.st_size):
+                    raise ArtifactStoreError("artifact_manifest_invalid", "The generated artifact manifest is invalid.")
+                self._validate_content(descriptor, series_details, output["sha256"])
+                series_details = os.fstat(descriptor)
+                output["file_identity"] = {
+                    "device_id": series_details.st_dev, "inode": series_details.st_ino,
+                    "mtime_ns": series_details.st_mtime_ns,
+                }
+            finally:
+                os.close(descriptor)
         _validate_publish_manifest(
             manifest, self.artifact_kind, cache_identity, series_details
         )
@@ -900,19 +930,54 @@ class ArtifactStore:
                 if (
                     not stat.S_ISREG(details.st_mode)
                     or details.st_size != expected_size
-                    or _manifest_output_identity(manifest)
-                    != (details.st_dev, details.st_ino, details.st_mtime_ns)
+                    or _manifest_output_identity(manifest) is None
+                    or ("sha256" not in manifest.get("output", {})
+                        and _manifest_output_identity(manifest)
+                        != (details.st_dev, details.st_ino, details.st_mtime_ns))
                 ):
                     raise ArtifactStoreError(
                         "artifact_file_changed",
                         "The ready JSON output file is invalid.",
                     )
+                # PNG delivery performs its own bounded decode/hash validation.
+                if self.artifact_kind != "thumbnail" and "sha256" in manifest.get("output", {}):
+                    self._validate_content(descriptor, details, manifest["output"]["sha256"])
                 return OpenedMedia(descriptor, details)
             except BaseException:
                 os.close(descriptor)
                 raise
         finally:
             os.close(directory_descriptor)
+
+    def _validate_content(self, descriptor: int, details: os.stat_result, expected_digest: object) -> None:
+        if (not isinstance(expected_digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None
+                or not 0 < details.st_size <= MAX_SERIES_ARTIFACT_BYTES):
+            raise ArtifactStoreError("artifact_file_changed", "The derived output content identity is invalid.")
+        signature = (expected_digest, details.st_dev, details.st_ino, details.st_size,
+                     details.st_mtime_ns, details.st_ctime_ns)
+        with self._content_validation_lock:
+            if signature in self._content_validation_cache:
+                self._content_validation_cache.move_to_end(signature)
+                return
+        digest = hashlib.sha256()
+        offset = 0
+        while offset < details.st_size:
+            chunk = os.pread(descriptor, min(1024 * 1024, details.st_size - offset), offset)
+            if not chunk:
+                break
+            digest.update(chunk)
+            offset += len(chunk)
+        after = os.fstat(descriptor)
+        if (offset != details.st_size or digest.hexdigest() != expected_digest
+                or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                != signature[1:]):
+            raise ArtifactStoreError("artifact_file_changed", "The derived output content changed after validation.")
+        with self._content_validation_lock:
+            self._content_validation_cache[signature] = None
+            self._content_validation_cache.move_to_end(signature)
+            while len(self._content_validation_cache) > 256:
+                self._content_validation_cache.popitem(last=False)
 
     def _reuse_published(
         self,
@@ -1296,10 +1361,10 @@ def _probe_timeout_seconds(file_size: int) -> float:
     return min(3600.0, 30.0 + file_size / (512 * 1024))
 
 
-def _iter_series_samples(path: Path, schema_version: int, *, kind: str = "imu_series"):
+def _iter_series_samples(path: Path, schema_version: int, *, kind: str = "imu_series", digest=None):
     """Validate the fixed series envelope while decoding one row at a time."""
     try:
-        yield from _iter_series_samples_unchecked(path, schema_version)
+        yield from _iter_series_samples_unchecked(path, schema_version, digest=digest)
     except (OSError, UnicodeError, ValueError, RecursionError,
             json.JSONDecodeError) as error:
         raise ArtifactStoreError(
@@ -1308,7 +1373,7 @@ def _iter_series_samples(path: Path, schema_version: int, *, kind: str = "imu_se
         ) from error
 
 
-def _iter_series_samples_unchecked(path: Path, schema_version: int):
+def _iter_series_samples_unchecked(path: Path, schema_version: int, *, digest=None):
     decoder = json.JSONDecoder(parse_constant=_reject_json_constant)
     prefix = re.compile(
         r'^\s*\{\s*"schema_version"\s*:\s*'
@@ -1323,6 +1388,8 @@ def _iter_series_samples_unchecked(path: Path, schema_version: int):
             nonlocal buffer, eof
             chunk = source.read(64 * 1024)
             if chunk:
+                if digest is not None:
+                    digest.update(chunk)
                 buffer += chunk.decode("ascii")
             else:
                 eof = True

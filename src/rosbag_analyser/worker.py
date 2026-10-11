@@ -227,7 +227,7 @@ class SerialWorker:
             workspace = self._finish_cancellation(job, workspace, store)
         except (FrontPreviewProcessingError, ArtifactStoreError) as error:
             self.repository.fail_job(job.id, error.code, error.safe_message)
-            logger.warning("Thumbnail job %s failed with code %s.", job.id, error.code)
+            logger.warning("Thumbnail job %s failed with code %s.", job.id, error.code, exc_info=True)
         except Exception:
             self.repository.fail_job(job.id, "thumbnail_processing_failed", "Thumbnail generation failed unexpectedly. Retry preparation.")
             logger.exception("Thumbnail job %s failed unexpectedly.", job.id)
@@ -279,6 +279,7 @@ class SerialWorker:
                 "result": result,
                 "output": {"file_name": "description.json", "mime_type": "application/json",
                            "size_bytes": details.st_size,
+                           "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                            "file_identity": {"device_id": details.st_dev, "inode": details.st_ino,
                                              "mtime_ns": details.st_mtime_ns}},
             }
@@ -797,6 +798,7 @@ class SerialWorker:
                     "file_name": "series.json",
                     "mime_type": "application/json",
                     "size_bytes": validation.size_bytes,
+                    "sha256": validation.sha256,
                     "file_identity": {
                         "device_id": validation.device_id,
                         "inode": validation.inode,

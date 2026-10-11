@@ -16,6 +16,8 @@
    recordings. These checks do not prepare full videos, descriptions or telemetry. Thumbnail placeholders
    show No Thumbnail, Queued, Processing or Thumbnail failed. Failed or cancelled
    thumbnails can be retried in Processing or through Prepare Selected.
+   A recording with no supported colour camera shows No Thumbnail and does not offer
+   an identical retry; changed camera inputs need Full rescan first.
 2. Select recordings and choose **Prepare Selected**, then confirm. This prepares
    available thumbnails, camera previews, AI descriptions, IMU and wheel encoder data, reusing compatible output.
    **Go to Processing** is selected by default; clear it to stay in Recordings.

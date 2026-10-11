@@ -75,6 +75,39 @@ TARGET_IDENTITIES = {
 }
 
 
+@pytest.mark.postgres
+def test_camera_unavailability_is_not_actionable_or_retried_until_inputs_change(postgres_url):
+    catalog = CatalogRepository(postgres_url)
+    catalog.apply_snapshot(_snapshot())
+    recording_id = catalog.list_recordings()[0].id
+    _make_targets_available(postgres_url, recording_id)
+    repository = ProcessingRepository(postgres_url)
+    first = repository.prepare_recording(recording_id, PLANNER_IDENTITIES, output_kinds=('thumbnail',))
+    job = repository.claim_next_job()
+    assert job.id == first.outputs[0].job.id
+    repository.fail_job(job.id, 'front_database_read_failed', 'Synthetic read failure.')
+    assert repository.processing_overview(queue_limit=None).failed_count == 1
+    retry = repository.retry_failed_job(job.id, PLANNER_IDENTITIES)
+    inspected = repository.claim_next_job()
+    assert inspected.id == retry.output.job.id
+    repository.fail_job(inspected.id, 'thumbnail_camera_unavailable', 'No supported colour camera.')
+    assert repository.processing_overview(queue_limit=None).failed_count == 0
+    assert repository.list_processing_jobs('failed', limit=100) == ()
+    # Even retrying the older generic error must respect the newer inspection.
+    assert repository.retry_failed_job(job.id, PLANNER_IDENTITIES).output.outcome == 'unavailable'
+    assert repository.retry_failed_job(inspected.id, PLANNER_IDENTITIES).output.outcome == 'unavailable'
+    prepared = repository.prepare_recording(recording_id, PLANNER_IDENTITIES, output_kinds=('thumbnail',))
+    assert prepared.outputs[0].outcome == 'unavailable'
+    assert prepared.outputs[0].diagnostic_code == 'thumbnail_camera_unavailable'
+    assert repository.claim_next_job() is None
+    with open_connection(postgres_url) as connection:
+        connection.execute("UPDATE preparation_targets SET cache_identity = %s WHERE recording_id = %s AND kind = 'thumbnail'",
+                           ('0' * 64, recording_id))
+    changed = repository.retry_failed_job(inspected.id, PLANNER_IDENTITIES)
+    assert changed.output.outcome == 'retry_queued'
+    assert repository.claim_next_job().cache_identity == '0' * 64
+
+
 def _is_disposable_test_database_name(database_name: str) -> bool:
     return database_name == TEST_DATABASE_NAME or database_name.startswith(
         f"{TEST_DATABASE_NAME}_"

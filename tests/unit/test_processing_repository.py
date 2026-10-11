@@ -125,6 +125,10 @@ def test_visible_processing_state_uses_one_repeatable_read_snapshot(
         ((4, 5, 6), "earlier", [4, 5, 6, 1, 2, 3, 7]),
         ((1, 2, 3), "later", [4, 5, 6, 1, 2, 3, 7]),
         ((4,), "earlier", [4, 5, 6, 1, 2, 3, 7]),
+        ((7,), "top", [7, 1, 2, 3, 4, 5, 6]),
+        ((7, 4), "top", [4, 5, 6, 7, 1, 2, 3]),
+        ((1,), "top", [1, 2, 3, 4, 5, 6, 7]),
+        ((1, 4, 7), "top", [1, 2, 3, 4, 5, 6, 7]),
     ],
 )
 def test_queue_move_crosses_a_whole_recording(monkeypatch, selected, direction, expected):

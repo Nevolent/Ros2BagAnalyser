@@ -60,7 +60,12 @@ test('all processing views sort without changing queue priority or enabling hist
     '1.12 GB',
     '1.64 GB',
   ]);
-  await expect(page.locator('.bag-table tbody button, .bag-table tbody input')).toHaveCount(0);
+  await expect(
+    page.locator(
+      '.bag-table tbody button:not(.recording-status-diagnostic), .bag-table tbody input',
+    ),
+  ).toHaveCount(0);
+  await expect(page.locator('.bag-table tbody .recording-status-diagnostic')).toHaveCount(8);
   await page.getByRole('button', { name: 'Queue', exact: true }).click();
   await expect(names).toHaveText(original);
 });

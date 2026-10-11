@@ -621,7 +621,7 @@ async def test_processing_control_routes_are_strict_and_truthful() -> None:
         )
         reorder = await client.post(
             "/api/v1/processing/jobs/reorder",
-            json={"job_ids": [31, 32], "direction": "earlier"},
+            json={"job_ids": [31, 32], "direction": "top"},
         )
         bulk_retry = await client.post(
             "/api/v1/processing/jobs/retry", json={"job_ids": [44, 404]}

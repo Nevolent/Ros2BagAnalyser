@@ -447,7 +447,9 @@ def _target_diagnostic(current: CurrentOutputRecord) -> SafeDiagnostic:
 def _aggregate_state(outputs: Mapping[str, str]) -> str:
     front = outputs.get(FRONT_PREVIEW_KIND)
     states = tuple(state for kind, state in outputs.items() if kind != THUMBNAIL_KIND)
-    if front in {"unavailable", "failed"} or "failed" in states:
+    if "failed" in states:
+        return "failed"
+    if front == "unavailable":
         return "partially_prepared" if "ready" in states else "failed"
     if "processing" in states:
         return "processing"

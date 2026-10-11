@@ -2,9 +2,11 @@ import { test, expect } from '@playwright/test';
 import { apiFixture, diagnostic } from './api-fixture';
 
 for (const kind of ['ai_description', 'front_preview'] as const) {
-  test(`failed ${kind} preserves partial preparation and its diagnostic`, async ({ page }) => {
+  test(`failed ${kind} marks the recording Failed and preserves ready siblings and diagnostics`, async ({
+    page,
+  }) => {
     const api = await apiFixture(page);
-    api.recording.analysis_state = 'partially_prepared';
+    api.recording.analysis_state = 'failed';
     api.recording.outputs = api.recording.outputs.filter((output) => output.kind !== kind);
     api.recording.outputs.push({ kind, state: 'failed', diagnostic });
     api.recording.outputs.push({
@@ -14,9 +16,12 @@ for (const kind of ['ai_description', 'front_preview'] as const) {
     });
     api.catalog.recordings = [api.recording];
     await page.goto('/');
-    const status = page.getByRole('button', { name: 'Partially prepared', exact: true });
+    const status = page.getByRole('button', { name: 'Failed', exact: true });
     await expect(status).toBeVisible();
-    await expect(page.locator('.bag-table').getByText('Failed', { exact: true })).toHaveCount(0);
+    await expect(status).toHaveClass(/status-error/);
+    await expect(
+      page.locator('.bag-table').getByText('Partially prepared', { exact: true }),
+    ).toHaveCount(0);
     await status.focus();
     const tooltip = page.getByRole('tooltip');
     await expect(tooltip.locator('[data-output-state=ready]')).not.toHaveCount(0);
@@ -28,7 +33,7 @@ for (const kind of ['ai_description', 'front_preview'] as const) {
     await status.press('Escape');
     await expect(tooltip).toHaveCount(0);
     await page.getByRole('button', { name: 'Filter by analysis' }).click();
-    await page.getByRole('menuitemradio', { name: 'Partially prepared', exact: true }).click();
+    await page.getByRole('menuitemradio', { name: 'Failed', exact: true }).click();
     await expect(page.locator('.bag-table tbody tr:visible')).toHaveCount(1);
   });
 }

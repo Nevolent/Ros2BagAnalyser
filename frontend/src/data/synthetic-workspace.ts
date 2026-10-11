@@ -363,6 +363,16 @@ export function createSyntheticWorkspace(now = Date.now): WorkspaceService {
       return true;
     },
     moveJobs(ids, direction) {
+      if (direction === 'top') {
+        publish({
+          queue: [
+            ...snapshot.queue.filter((job) => ids.has(job.id)),
+            ...snapshot.queue.filter((job) => !ids.has(job.id)),
+          ],
+        });
+        tick();
+        return;
+      }
       const queue = [...snapshot.queue];
       const delta = direction === 'earlier' ? -1 : 1;
       const indices = queue.map((_, index) => index);

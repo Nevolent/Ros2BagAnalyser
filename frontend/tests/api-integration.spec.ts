@@ -37,7 +37,10 @@ test('red catalog statuses show their own safe diagnostics on the left and suppo
   await page.getByRole('heading', { name: 'Recordings', level: 1 }).hover();
   await expect(tooltip).toHaveCount(0);
   await failed.focus();
-  await expect(tooltip).toHaveText(`Front-camera preview: ${diagnostic.message}`);
+  await expect(tooltip.locator('p.status-error')).toHaveText(
+    `Front-camera preview: ${diagnostic.message}`,
+  );
+  await expect(tooltip.locator('[data-output-state=pending]')).toHaveCount(4);
   await expect(failed).toHaveAttribute('aria-describedby', await tooltip.getAttribute('id'));
   await expect(tooltip.locator('script')).toHaveCount(0);
   await page.keyboard.press('Escape');
@@ -162,7 +165,7 @@ test('processing uses stored time, unavailable estimates, durable controls and g
     page.getByRole('button', { name: /Pause processing|Resume processing/ }),
   ).toHaveCount(0);
   await page.getByRole('checkbox', { name: 'Select recording-42', exact: true }).check();
-  await expect(page.getByRole('button', { name: 'Move up' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Move to top' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel 1 selected' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel job', exact: true }).click();
   await expect(page.getByText('No queued jobs.', { exact: true })).toBeVisible();
@@ -176,7 +179,7 @@ test('processing uses stored time, unavailable estimates, durable controls and g
 
 test('queue move posts grouped job IDs and displays the server order', async ({ page }) => {
   const api = await apiFixture(page);
-  api.queue.push({
+  api.queue.unshift({
     ...job(20),
     recording_id: 46,
     recording_name: 'recording-46',
@@ -184,20 +187,20 @@ test('queue move posts grouped job IDs and displays the server order', async ({ 
   api.override = async (route, path) => {
     if (path !== '/api/v1/processing/jobs/reorder') return false;
     api.posts.push({ path, body: route.request().postDataJSON() });
-    api.queue = [api.queue[2], ...api.queue.slice(0, 2)];
+    api.queue = [...api.queue.slice(1), api.queue[0]];
     await route.fulfill({ json: { items: [{ outcome: 'reordered' }] } });
     return true;
   };
   await page.goto('/#/processing');
   await page.getByRole('checkbox', { name: 'Select recording-42', exact: true }).check();
-  await page.getByRole('button', { name: 'Move down' }).click();
+  await page.getByRole('button', { name: 'Move to top' }).click();
   await expect(page.locator('.bag-table tbody .bag-name')).toHaveText([
-    'recording-46',
     'recording-42',
+    'recording-46',
   ]);
   expect(api.posts[0]).toEqual({
     path: '/api/v1/processing/jobs/reorder',
-    body: { job_ids: [10, 11], direction: 'later' },
+    body: { job_ids: [10, 11], direction: 'top' },
   });
 });
 

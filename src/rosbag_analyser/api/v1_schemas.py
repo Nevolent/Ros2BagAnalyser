@@ -251,7 +251,7 @@ class JobIdsRequest(BaseModel):
 
 
 class ReorderJobsRequest(JobIdsRequest):
-    direction: Literal["earlier", "later"]
+    direction: Literal["earlier", "later", "top"]
 
 
 class PrepareOutputResponse(BaseModel):

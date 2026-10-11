@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { apiFixture } from './api-fixture';
+import { apiFixture, job } from './api-fixture';
 
 test('five frames share one request, start at the middle, cycle on hover and honor reduced motion', async ({
   page,
@@ -95,6 +95,33 @@ test('Space after a mouse checkbox selection controls playback without changing 
   await checkbox.focus();
   await checkbox.press('Space');
   await expect(checkbox).not.toBeChecked();
+});
+
+test('queued and completed outputs list their names and per-output runtime totals', async ({
+  page,
+}) => {
+  const api = await apiFixture(page);
+  api.history.push({
+    ...job(14, 'imu_series'),
+    recording_id: 47,
+    state: 'succeeded',
+    finished_at: '2026-09-24T10:01:00Z',
+    runtime_ms: 5000,
+    output_size_bytes: '1024',
+  });
+  await page.goto('/#/processing');
+  await page.locator('.processing-centered-cell .recording-status-diagnostic').hover();
+  await expect(page.getByRole('tooltip')).toContainText('Front-camera preview: queued');
+  await expect(page.getByRole('tooltip')).toContainText('IMU data bundle: queued');
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  const row = page.locator('.bag-table tbody tr');
+  await row.locator('.processing-history-outputs').hover();
+  await expect(page.getByRole('tooltip')).toContainText('Front-camera preview');
+  await expect(page.getByRole('tooltip')).toContainText('IMU data bundle');
+  await row.locator('td').nth(1).locator('.recording-status-diagnostic').hover();
+  await expect(page.getByRole('tooltip')).toContainText('Front-camera preview: 1:05');
+  await expect(page.getByRole('tooltip')).toContainText('IMU data bundle: 0:05');
+  await expect(page.getByRole('tooltip')).toContainText('Total: 1:10');
 });
 
 test('IMU outliers stay visible and timestamp pauses clear stale values', async ({ page }) => {

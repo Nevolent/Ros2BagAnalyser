@@ -37,7 +37,7 @@ function Status({
   issues?: string[];
   outputs?: Recording['analysisOutputs'];
 }) {
-  const preparation = status === 'Partially prepared' || status === 'Ready';
+  const preparation = status === 'Partially prepared' || status === 'Ready' || status === 'Failed';
   if (
     ['Failed', 'Damaged', 'Review', 'Partially prepared', 'Ready'].includes(status) &&
     (status !== 'Ready' || outputs?.some((output) => output.state === 'ready'))
@@ -45,7 +45,7 @@ function Status({
     return (
       <StatusDiagnostic
         status={status}
-        tone={preparation ? 'success' : 'error'}
+        tone={preparation && status !== 'Failed' ? 'success' : 'error'}
         outputs={preparation ? outputs : undefined}
         issues={
           status === 'Ready' || (preparation && !issues.length)

@@ -504,7 +504,7 @@ def test_unavailable_front_preserves_partial_preparation_and_diagnostic() -> Non
 
 
 @pytest.mark.parametrize("failed_kind", [kind for kind in PROCESSING_KINDS if kind != "thumbnail"])
-def test_failed_output_preserves_ready_siblings_as_partial(failed_kind) -> None:
+def test_failed_output_marks_recording_failed_and_preserves_ready_siblings(failed_kind) -> None:
     group = {
         kind: CurrentOutputRecord(
             _target(kind),
@@ -514,7 +514,7 @@ def test_failed_output_preserves_ready_siblings_as_partial(failed_kind) -> None:
         for kind in PROCESSING_KINDS
     }
     analysis = _service()._analysis_for_group(7, group, GENERATION)
-    assert analysis.analysis_state == "partially_prepared"
+    assert analysis.analysis_state == "failed"
     failure = next(output for output in analysis.outputs if output.kind == failed_kind)
     assert failure.state == "failed"
     assert failure.diagnostic.code == "failed"

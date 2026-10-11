@@ -73,7 +73,8 @@ test('optional ready outputs cannot mark missing or empty front input ready', as
   const row = page
     .locator('tbody tr')
     .filter({ has: page.getByRole('link', { name: 'Analyze recording-42', exact: true }) });
-  await expect(row).toContainText('Failed');
+  await expect(row).toContainText('Partially prepared');
+  await expect(row.getByRole('button', { name: 'Ready', exact: true })).toHaveCount(0);
   await row.getByRole('link').click();
   await expect(page.locator('.recording-errors')).toContainText('The camera stream has no frames.');
 });

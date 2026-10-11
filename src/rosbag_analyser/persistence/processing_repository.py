@@ -1483,7 +1483,7 @@ class ProcessingRepository:
     def reorder_jobs(
         self, job_ids: tuple[int, ...], direction: str
     ) -> QueueReorderResult:
-        if direction not in {"earlier", "later"}:
+        if direction not in {"earlier", "later", "top"}:
             raise ValueError("The queue direction is invalid.")
         with open_connection(self.database_url) as connection:
             _lock_job_queue(connection)
@@ -1504,8 +1504,11 @@ class ProcessingRepository:
             for row in rows:
                 groups.setdefault(int(row["recording_id"]), []).append(row)
             recording_ids = list(groups)
+            if direction == "top":
+                recording_ids = ([item for item in recording_ids if item in selected]
+                                 + [item for item in recording_ids if item not in selected])
             indexes = (range(1, len(recording_ids)) if direction == "earlier"
-                       else range(len(recording_ids) - 2, -1, -1))
+                       else range(len(recording_ids) - 2, -1, -1) if direction == "later" else ())
             for index in indexes:
                 neighbor = index - 1 if direction == "earlier" else index + 1
                 if recording_ids[index] in selected and recording_ids[neighbor] not in selected:

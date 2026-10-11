@@ -13,6 +13,7 @@ import { Icon } from '../../components/Icon';
 import { SortableHeader } from '../../components/SortableHeader';
 import { useTableSort, sizeInBytes } from '../../lib/useTableSort';
 import { canMoveJobs } from '../../lib/queue';
+import { StatusDiagnostic } from '../recordings/StatusDiagnostic';
 
 type View = 'queue' | 'failures' | 'history';
 type Action = 'cancel' | 'retry';
@@ -163,7 +164,7 @@ export function ProcessingPage() {
           .join('\0') !== beforeOrder;
       setNotice(
         changed
-          ? `${selection.size} ${selection.size === 1 ? 'job' : 'jobs'} moved ${direction}.`
+          ? `${selection.size} ${selection.size === 1 ? 'job' : 'jobs'} moved to the top.`
           : 'Queue order unchanged.',
       );
     }
@@ -221,7 +222,7 @@ export function ProcessingPage() {
               hidden={!selection.size}
             >
               {view === 'queue' &&
-                (['earlier', 'later'] as const).map((direction) => (
+                (['top'] as const).map((direction) => (
                   <button
                     key={direction}
                     type="button"
@@ -229,8 +230,8 @@ export function ProcessingPage() {
                     disabled={busy || !canMoveJobs(queue, selection, direction)}
                     onClick={() => void move(direction)}
                   >
-                    <span>{direction === 'earlier' ? 'Move up' : 'Move down'}</span>
-                    <Icon name={direction} strokeWidth={1.75} />
+                    <span>Move to top</span>
+                    <Icon name="earlier" strokeWidth={1.75} />
                   </button>
                 ))}
               <button
@@ -356,7 +357,18 @@ export function ProcessingPage() {
                               : formatReadyIn(job.readyIn ?? readyIn.get(job.id)!)}
                           </span>
                         </td>
-                        <td className="bag-number processing-centered-cell">{job.outputs}</td>
+                        <td className="bag-number processing-centered-cell">
+                          <StatusDiagnostic
+                            status={String(job.outputs)}
+                            tone="muted"
+                            raw
+                            issues={
+                              job.outputDetails?.map(
+                                (output) => `${output.name}: ${output.state}`,
+                              ) ?? []
+                            }
+                          />
+                        </td>
                         <td>
                           <div className="processing-row-actions">
                             {actionButton(job, 'cancel', 'Cancel', job.canCancel === false)}
@@ -398,11 +410,28 @@ export function ProcessingPage() {
                           <JobTime timestamp={job.completedAt!} />
                         </td>
                         <td className="bag-number">
-                          {job.runtimeKnown === false ? '—' : formatDuration(job.duration)}
+                          <StatusDiagnostic
+                            status={job.runtimeKnown === false ? '—' : formatDuration(job.duration)}
+                            tone="muted"
+                            raw
+                            issues={[
+                              ...(job.outputDetails?.map(
+                                (output) =>
+                                  `${output.name}: ${output.runtime === null ? 'Unavailable' : formatDuration(output.runtime)}`,
+                              ) ?? []),
+                              `Total: ${job.runtimeKnown === false ? 'Unavailable' : formatDuration(job.duration)}`,
+                            ]}
+                          />
                         </td>
                         <td className="bag-number">{job.size}</td>
                         <td className="bag-number processing-centered-cell">
-                          <span className="processing-history-outputs">{job.outputs}</span>
+                          <StatusDiagnostic
+                            className="processing-history-outputs"
+                            status={String(job.outputs)}
+                            tone="muted"
+                            raw
+                            issues={job.outputDetails?.map((output) => output.name) ?? []}
+                          />
                         </td>
                       </>
                     )}

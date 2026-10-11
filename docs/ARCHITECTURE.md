@@ -97,13 +97,14 @@ and `thumbnail`. Each output
 independently reuses ready/active work, queues missing work or reports unavailability. Active
 identities cannot be duplicated. Retry resolves current inputs.
 
-Analysis readiness excludes thumbnails. Failed analysis outputs or unavailable front input
-make a recording Partially prepared when any analysis output is validated and ready,
-and Failed otherwise. Other state precedence is
+Analysis readiness excludes thumbnails. Any failed analysis output, including AI,
+makes the recording Failed while preserving ready siblings. Unavailable front input
+makes it Partially prepared when another analysis output is ready, and Failed
+otherwise. Other state precedence is
 processing, queued, ready, partially prepared, not planned. Ready requires a
 validated front preview and AI description, with all available analysis outputs ready and
 no active or failed analysis output. Any ready analysis output with other preparation still needed
-is Partially prepared, including after another output fails or a rescan changes a
+is Partially prepared, when no output failed, including when a rescan changes a
 camera target or adds an encoder target. Output failures retain their diagnostics
 and Processing retry controls. Unavailable top-down, IMU and encoder inputs are optional;
 Analysis can review available output independently.
@@ -315,6 +316,10 @@ Processing follows all overview/list cursors with cycle detection, deduplication
 and abort/version guards. A failed page preserves the last complete snapshot.
 Successful siblings stay with failed recordings; retries submit only failed job
 IDs. History groups latest successful outputs for recordings without failures.
+Output counts
+offer hover/focus lists; history runtimes list each output and the total. Move to top
+stably promotes selected recording groups under the queue lock, preserving output
+order and unselected group order. Legacy API earlier/later controls remain supported.
 
 `/api/v1` provides catalog, explicit rescan, details, preparation and job controls.
 `POST /api/v1/catalog/discover` adds new recordings without making catalog reads

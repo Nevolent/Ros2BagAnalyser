@@ -54,6 +54,16 @@ export function createDemoWorkspace(now = Date.now): WorkspaceService {
       });
     },
     moveJobs(ids, direction) {
+      if (direction === 'top') {
+        publish({
+          ...snapshot,
+          queue: [
+            ...snapshot.queue.filter((job) => ids.has(job.id)),
+            ...snapshot.queue.filter((job) => !ids.has(job.id)),
+          ],
+        });
+        return;
+      }
       const queue = [...snapshot.queue];
       const delta = direction === 'earlier' ? -1 : 1;
       const indices = queue.map((_, index) => index);

@@ -52,11 +52,22 @@ export function recording(row: CatalogRecording): Recording {
     throw new Error('Invalid thumbnail URL.');
   const description = row.outputs.find((output) => output.kind === 'ai_description');
   const analysisOutputs = row.outputs.filter((output) => output.kind !== 'thumbnail');
+  const frontUnavailable = analysisOutputs.some(
+    (output) => output.kind === 'front_preview' && output.state === 'unavailable',
+  );
+  const analysisState = analysisOutputs.some((output) => output.state === 'failed')
+    ? 'failed'
+    : frontUnavailable && row.analysis_state === 'ready'
+      ? analysisOutputs.some((output) => output.state === 'ready')
+        ? 'partially_prepared'
+        : 'failed'
+      : row.analysis_state;
   return {
     aiDescription: description?.state === 'ready' ? row.ai_description : null,
     thumbnail: {
       state: thumbnail?.state ?? 'not_requested',
       url: thumbnail?.state === 'ready' ? (row.thumbnail_url ?? undefined) : undefined,
+      frameCount: row.thumbnail_frame_count === 5 ? 5 : 1,
       issue: thumbnail?.diagnostic ? diagnosticMessage(thumbnail.diagnostic) : undefined,
     },
     id: String(row.id),
@@ -67,7 +78,6 @@ export function recording(row: CatalogRecording): Recording {
     duration: duration(row.duration_ns),
     size: bytes(row.total_source_size_bytes),
     healthIssues: [
-      frameCount: row.thumbnail_frame_count === 5 ? 5 : 1,
       ...(row.diagnostic ? [diagnosticMessage(row.diagnostic)] : []),
       ...(row.presentation_health === 'readable' && row.duration_ns === '0'
         ? ['Metadata reports zero duration. Message timestamps have not been verified.']
@@ -108,8 +118,8 @@ export function recording(row: CatalogRecording): Recording {
       'processing',
       'queued',
       'failed',
-    ].includes(row.analysis_state)
-      ? (labels[row.analysis_state] as Recording['analysis'])
+    ].includes(analysisState)
+      ? (labels[analysisState] as Recording['analysis'])
       : 'Not planned',
   };
 }
@@ -152,6 +162,11 @@ export function jobs(rows: ApiJob[], group: boolean): Job[] {
     if (existing) {
       existing.jobIds!.push(row.id);
       existing.outputs += 1;
+      existing.outputDetails!.push({
+        name: outputNames[row.kind],
+        state: row.state,
+        runtime: row.runtime_ms === null ? null : row.runtime_ms / 1000,
+      });
       existing.duration += (row.runtime_ms ?? 0) / 1000;
       existing.runtimeKnown = existing.runtimeKnown && row.runtime_ms !== null;
       existing.queuedAt = Math.min(existing.queuedAt, Date.parse(row.queued_at));
@@ -182,6 +197,13 @@ export function jobs(rows: ApiJob[], group: boolean): Job[] {
         duration: (row.runtime_ms ?? 0) / 1000,
         runtimeKnown: row.runtime_ms !== null,
         outputs: 1,
+        outputDetails: [
+          {
+            name: outputNames[row.kind],
+            state: row.state,
+            runtime: row.runtime_ms === null ? null : row.runtime_ms / 1000,
+          },
+        ],
         size: bytes(row.output_size_bytes),
         failures: failure,
         readyIn,

@@ -38,16 +38,13 @@ test('estimated progress ticks and active cancellation dismisses the card immedi
 test('queue supports moves and confirmed bulk cancellation', async ({ page }) => {
   await page.goto('/?demo=1#/processing');
   const rows = page.locator('.bag-table tbody .bag-name');
-  const moveUp = page.getByRole('button', { name: 'Move up' });
-  const moveDown = page.getByRole('button', { name: 'Move down' });
+  const moveTop = page.getByRole('button', { name: 'Move to top' });
   await page.getByRole('checkbox', { name: `Select ${names[0]}`, exact: true }).check();
-  await expect(moveUp).toBeDisabled();
-  await expect(moveDown).toBeEnabled();
-  await expect(moveUp).toHaveCSS('opacity', '0.3');
+  await expect(moveTop).toBeDisabled();
+  await expect(moveTop).toHaveCSS('opacity', '0.3');
   await page.getByRole('checkbox', { name: `Select ${names[0]}`, exact: true }).uncheck();
   await page.getByRole('checkbox', { name: `Select ${names[3]}`, exact: true }).check();
-  await expect(moveUp).toBeEnabled();
-  await expect(moveDown).toBeDisabled();
+  await expect(moveTop).toBeEnabled();
   await page.getByRole('checkbox', { name: `Select ${names[3]}`, exact: true }).uncheck();
   await page.getByRole('checkbox', { name: `Select ${names[1]}`, exact: true }).check();
   await page.getByRole('checkbox', { name: `Select ${names[2]}`, exact: true }).check();
@@ -55,14 +52,10 @@ test('queue supports moves and confirmed bulk cancellation', async ({ page }) =>
     'indeterminate',
     true,
   );
-  await expect(moveUp).toBeEnabled();
-  await expect(moveDown).toBeEnabled();
-  await moveDown.click();
-  await expect(rows).toHaveText([names[0], names[3], names[1], names[2]]);
-  await expect(moveUp).toBeEnabled();
-  await expect(moveDown).toBeDisabled();
-  await moveUp.click();
-  await expect(rows).toHaveText(names);
+  await expect(moveTop).toBeEnabled();
+  await moveTop.click();
+  await expect(rows).toHaveText([names[1], names[2], names[0], names[3]]);
+  await expect(moveTop).toBeDisabled();
   await page.getByRole('button', { name: 'Cancel 2 selected', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Keep in queue' })).toHaveCSS(
     'text-decoration-line',
@@ -75,8 +68,7 @@ test('queue supports moves and confirmed bulk cancellation', async ({ page }) =>
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel 2 jobs' }).click();
   await expect(rows).toHaveText([names[0], names[3]]);
   await page.getByRole('checkbox', { name: 'Select all queued jobs' }).check();
-  await expect(moveUp).toBeDisabled();
-  await expect(moveDown).toBeDisabled();
+  await expect(moveTop).toBeDisabled();
 });
 
 test('failures retry only failed outputs and history stays read-only without tab resizing', async ({
@@ -113,7 +105,12 @@ test('failures retry only failed outputs and history stays read-only without tab
     'Size',
     'Outputs',
   ]);
-  await expect(page.locator('.bag-table tbody input,.bag-table tbody button')).toHaveCount(0);
+  await expect(
+    page.locator(
+      '.bag-table tbody input,.bag-table tbody button:not(.recording-status-diagnostic)',
+    ),
+  ).toHaveCount(0);
+  await expect(page.locator('.bag-table tbody .recording-status-diagnostic')).toHaveCount(8);
   await expect(page.locator('.bag-table tbody tr')).toHaveCount(4);
   await expect(page.getByRole('searchbox')).toHaveCount(0);
 });
@@ -147,12 +144,12 @@ test('searches share exact geometry and table headers match the recordings panel
   expect(metrics[0]).toEqual(metrics[1]);
   const colors = await page.evaluate(() => ({
     panel: getComputedStyle(document.querySelector('.data-table-panel')!).backgroundColor,
-  await page.getByRole('link', { name: 'Processing', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Full rescan', exact: true })).toHaveCount(0);
-  await page.getByRole('link', { name: 'Recordings', exact: true }).click();
     header: getComputedStyle(document.querySelector('.bag-table thead th')!).backgroundColor,
   }));
   expect(colors.panel).toBe(colors.header);
+  await page.getByRole('link', { name: 'Processing', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Full rescan', exact: true })).toHaveCount(0);
+  await page.getByRole('link', { name: 'Recordings', exact: true }).click();
   const settings = await page
     .getByRole('button', { name: 'Full rescan', exact: true })
     .boundingBox();

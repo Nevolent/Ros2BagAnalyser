@@ -26,6 +26,7 @@ export interface OutputFailure {
   code: string;
 }
 export interface Job {
+  outputDetails?: { name: string; state: string; runtime: number | null }[];
   jobIds?: number[];
   recordingId?: string;
   readyIn?: number | null;
@@ -99,7 +100,7 @@ export interface AnalysisBundle {
   mediaVersion?: string;
   message?: string;
 }
-export type MoveDirection = 'earlier' | 'later';
+export type MoveDirection = 'earlier' | 'later' | 'top';
 export interface RecordingAsset {
   identity?: string;
   name: string;

@@ -92,10 +92,7 @@ export function RecordingDetails({ recording }: { recording: AnalysisRecording }
                     <li key={`${topic.name}-${index}`}>
                       <code title={topic.name}>{topic.name}</code>
                       <span title={topic.message_type}>{topic.message_type}</span>
-                      <span>
-                        {BigInt(topic.message_count).toLocaleString()} messages ·{' '}
-                        {topic.serialization_format}
-                      </span>
+                      <span>{BigInt(topic.message_count).toLocaleString()} messages</span>
                     </li>
                   ))}
                 </ul>

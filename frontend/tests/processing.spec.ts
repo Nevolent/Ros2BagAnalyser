@@ -110,7 +110,7 @@ test('failures retry only failed outputs and history stays read-only without tab
       '.bag-table tbody input,.bag-table tbody button:not(.recording-status-diagnostic)',
     ),
   ).toHaveCount(0);
-  await expect(page.locator('.bag-table tbody .recording-status-diagnostic')).toHaveCount(8);
+  await expect(page.locator('.bag-table tbody .recording-status-diagnostic')).toHaveCount(12);
   await expect(page.locator('.bag-table tbody tr')).toHaveCount(4);
   await expect(page.getByRole('searchbox')).toHaveCount(0);
 });

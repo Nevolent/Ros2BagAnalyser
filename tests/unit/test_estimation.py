@@ -26,7 +26,7 @@ def test_uses_upper_runtime_rate_with_headroom_and_rounds_up() -> None:
         ),
     )
 
-    assert result.method == "recent_rate_v2"
+    assert result.method == "recent_rate_v3"
     assert result.sample_count == 3
     assert result.estimated_total_ms == 805
 
@@ -71,3 +71,10 @@ def test_ten_new_successes_retire_old_samples_without_resetting_history() -> Non
 def test_recent_window_resists_two_extreme_slow_samples() -> None:
     samples = (EstimateSample(10_000, 100),) * 2 + (EstimateSample(100, 100),) * 8
     assert estimate_total_ms(100, samples).estimated_total_ms == 115
+
+
+def test_tiny_recordings_do_not_predict_large_recording_runtime():
+    assert estimate_total_ms(100_000, (EstimateSample(100, 10),) * 10).estimated_total_ms is None
+    samples = (EstimateSample(100, 10),) * 8 + (EstimateSample(2000, 100_000),) * 2
+    result = estimate_total_ms(100_000, samples)
+    assert result.estimated_total_ms == 2300 and result.sample_count == 2

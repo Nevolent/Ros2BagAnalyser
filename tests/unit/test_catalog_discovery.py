@@ -80,6 +80,7 @@ def test_discovery_is_additions_only_and_idempotent(tmp_path):
     assert service.discover_new() == 1
     assert service.discover_new() == 0
     assert [item.display_name for item in repository.applied[0].recordings] == ["new"]
+    assert len(repository.applied) == 1, "Idle discovery must not acquire the catalog/queue write locks."
 
 
 def test_discovery_preserves_saved_state_when_source_disappears(tmp_path):
@@ -102,3 +103,90 @@ def test_discovery_does_not_overlap_a_full_rescan(tmp_path):
         assert service.repository.applied == []
     finally:
         service._rescan_lock.release()
+
+
+def test_new_complete_copy_waits_for_a_quiet_inventory_and_changes_reset_timer(tmp_path, monkeypatch):
+    archive = tmp_path / 'archive'
+    archive.mkdir()
+    recording = create_recording(archive, 'new')
+    scanner = CatalogScanner(archive, settle_seconds=30)
+    now = [0.0]
+    monkeypatch.setattr('rosbag_analyser.catalog.scanner.time.monotonic', lambda: now[0])
+    assert scanner.scan(known_recordings=frozenset()).recordings == ()
+    now[0] = 29
+    assert scanner.scan(known_recordings=frozenset()).recordings == ()
+    (recording / 'still-copying.part').write_bytes(b'a')
+    now[0] = 30
+    assert scanner.scan(known_recordings=frozenset()).recordings == ()
+    now[0] = 59
+    assert scanner.scan(known_recordings=frozenset()).recordings == ()
+    now[0] = 60
+    assert len(scanner.scan(known_recordings=frozenset()).recordings) == 1
+
+
+def test_new_source_changing_during_inspection_is_not_admitted(tmp_path, monkeypatch):
+    archive = tmp_path / 'archive'
+    archive.mkdir()
+    recording = create_recording(archive, 'new')
+    scanner = CatalogScanner(archive, settle_seconds=30)
+    now = [0.0]
+    monkeypatch.setattr('rosbag_analyser.catalog.scanner.time.monotonic', lambda: now[0])
+    scanner.scan(known_recordings=frozenset())
+    original = scanner._scan_recording
+    def changed(*args):
+        result = original(*args)
+        (recording / 'late-arrival.part').write_bytes(b'copy')
+        return result
+    monkeypatch.setattr(scanner, '_scan_recording', changed)
+    now[0] = 30
+    assert scanner.scan(known_recordings=frozenset()).recordings == ()
+    monkeypatch.setattr(scanner, '_scan_recording', original)
+    now[0] = 59
+    assert scanner.scan(known_recordings=frozenset()).recordings == ()
+    now[0] = 60
+    assert len(scanner.scan(known_recordings=frozenset()).recordings) == 1
+
+
+def test_live_sqlite_wal_prevents_admission_even_after_quiet_period(tmp_path, monkeypatch):
+    archive = tmp_path / 'archive'
+    archive.mkdir()
+    recording = create_recording(archive, 'new')
+    (recording / 'new_0.db3-wal').write_bytes(b'live')
+    scanner = CatalogScanner(archive, settle_seconds=30)
+    now = [0.0]
+    monkeypatch.setattr('rosbag_analyser.catalog.scanner.time.monotonic', lambda: now[0])
+    scanner.scan(known_recordings=frozenset())
+    now[0] = 60
+    assert scanner.scan(known_recordings=frozenset()).recordings == ()
+    (recording / 'new_0.db3-wal').unlink()
+    assert scanner.scan(known_recordings=frozenset()).recordings == ()
+    now[0] = 90
+    assert len(scanner.scan(known_recordings=frozenset()).recordings) == 1
+
+
+def test_full_scan_retains_known_recordings_while_deferring_new_copy(tmp_path):
+    archive = tmp_path / 'archive'
+    archive.mkdir()
+    create_recording(archive, 'known')
+    create_recording(archive, 'new')
+    snapshot = CatalogScanner(archive, settle_seconds=30).scan(existing_paths=frozenset({'known'}))
+    assert [item.display_name for item in snapshot.recordings] == ['known']
+
+
+def test_slow_known_bag_does_not_delay_observing_new_copy(tmp_path, monkeypatch):
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    create_recording(archive, "a-known")
+    create_recording(archive, "b-new")
+    scanner = CatalogScanner(archive, settle_seconds=30)
+    now = [0.0]
+    monkeypatch.setattr("rosbag_analyser.catalog.scanner.time.monotonic", lambda: now[0])
+    inspect = scanner._scan_recording
+    def slow_inspection(*args):
+        now[0] += 30
+        return inspect(*args)
+    monkeypatch.setattr(scanner, "_scan_recording", slow_inspection)
+    known = frozenset({"a-known"})
+    assert [r.display_name for r in scanner.scan(existing_paths=known).recordings] == ["a-known"]
+    monkeypatch.setattr(scanner, "_scan_recording", inspect)
+    assert [r.display_name for r in scanner.scan(known_recordings=known).recordings] == ["b-new"]

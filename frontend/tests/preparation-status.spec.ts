@@ -89,7 +89,12 @@ for (const analysis of ['ready', 'partially_prepared'] as const) {
       await expect(tooltip).toHaveCount(0);
       if (thumbnailState === 'failed') {
         await page.locator('.recording-thumbnail').hover();
-        await expect(tooltip).toHaveText('Separate thumbnail failure.');
+        await expect(page.locator('.recording-thumbnail')).toHaveText('No Thumbnail');
+        await expect(tooltip).toHaveCount(0);
+        await page.locator('.recording-thumbnail').click();
+        await expect(page.getByRole('region', { name: 'Recording errors' })).toContainText(
+          'Separate thumbnail failure.',
+        );
       }
     });
   }

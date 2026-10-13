@@ -298,9 +298,11 @@ code can read a newer schema.
 ## Source checks and incidents
 
 Rescan explicitly through the operator interface/API. It refreshes saved catalog
-and identities, retries thumbnails and completes available outputs for previously
-prepared recordings, reusing validated compatible artifacts and active jobs.
-Use Prepare Selected for a recording's first full preparation or a selective retry;
+and identities, and completes available outputs for all recordings, reusing validated
+compatible artifacts and active jobs. New copied bags enter the complete pipeline
+automatically after the server's quiet-period checks. Apply migrations through 0014
+and run one Full rescan when upgrading to shared-thumbnail/AI policies.
+Use Prepare Selected for manual preparation or a selective retry;
 use queue controls rather than database edits. Code updates and deployment alone do
 not retry saved failures.
 

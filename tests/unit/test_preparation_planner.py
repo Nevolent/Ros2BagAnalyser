@@ -91,11 +91,25 @@ def test_lidar_only_recording_has_unavailable_camera_targets_without_camera_jobs
     facts = recording.preparation_facts
     measurement = TopicFact("/robot/ouster/range_image", "sensor_msgs/msg/Image", "cdr", 20)
     recording = replace(recording, preparation_facts=replace(facts,
-        metadata=replace(facts.metadata, topics=(measurement,))))
+        metadata=replace(facts.metadata, topics=(measurement,)), video_identity=None))
     targets = {t.kind: t for t in _planner().plan_recording(11, recording)}
     for kind in ("front_preview", "ai_description", "thumbnail"):
         assert targets[kind].target_state == "unavailable"
         assert targets[kind].cache_identity is None
+
+
+def test_rear_camera_or_video_without_timestamps_can_supply_shared_visual_inputs(tmp_path):
+    recording = _scanned_recording(tmp_path)
+    facts = recording.preparation_facts
+    rear = TopicFact('/rear/camera/image', 'sensor_msgs/msg/Image', 'cdr', 10)
+    for topics, video in [((rear,), None), ((), facts.video_identity)]:
+        changed = replace(recording, preparation_facts=replace(facts,
+            metadata=replace(facts.metadata, topics=topics), video_identity=video,
+            timestamps_identity=None))
+        targets = {t.kind: t for t in _planner().plan_recording(11, changed)}
+        assert targets['front_preview'].target_state == 'unavailable'
+        assert targets['thumbnail'].target_state == targets['ai_description'].target_state == 'available'
+        assert targets['ai_description'].work_units == 1
 
 
 def test_unique_imu_is_discovered_without_a_matching_configured_name(

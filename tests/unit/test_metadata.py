@@ -17,6 +17,25 @@ from rosbag_analyser.catalog.metadata import (
 )
 
 
+@pytest.fixture(params=("native", "python"), autouse=True)
+def loader_backend(request, monkeypatch):
+    if request.param == "python":
+        monkeypatch.setattr(yaml, "CSafeLoader", None, raising=False)
+
+
+def test_yaml_alias_limit_and_safe_constructors_are_preserved(tmp_path):
+    from rosbag_analyser.catalog.metadata import MAX_YAML_ALIASES
+    path = tmp_path / "metadata.yaml"
+    path.write_text("value: &item 0\nitems: [" + ",".join(["*item"] * (MAX_YAML_ALIASES + 1)) + "]\n")
+    with pytest.raises(MetadataError) as error:
+        parse_metadata_file(path)
+    assert error.value.diagnostic.code == "metadata_yaml_invalid"
+    path.write_text("!!python/object/apply:builtins.str [123]\n")
+    with pytest.raises(MetadataError) as error:
+        parse_metadata_file(path)
+    assert error.value.diagnostic.code == "metadata_yaml_invalid"
+
+
 def test_parses_known_humble_metadata_shape(tmp_path: Path) -> None:
     path = tmp_path / "metadata.yaml"
     path.write_text(

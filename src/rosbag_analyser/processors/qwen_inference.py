@@ -19,6 +19,7 @@ from rosbag_analyser.model_runtime import (
     validate_runtime,
 )
 from rosbag_analyser.processors.video_frames import sample_video_frames
+from rosbag_analyser.thumbnail import thumbnail_frames
 
 MAX_RESPONSE_BYTES = 64 * 1024
 CUES = ("gravel_like_terrain", "dark_curtains", "artificial_lighting",
@@ -61,10 +62,10 @@ def request_json(path: Path, method: str, route: str, body=None, *, timeout=None
 
 
 def completion_request(images: list[bytes], timestamps: list[float]) -> dict:
-    if len(images) != FRAME_COUNT or len(timestamps) != FRAME_COUNT:
+    if not 1 <= len(images) <= FRAME_COUNT or len(timestamps) != len(images):
         raise ValueError("The fixed description frame policy was not satisfied.")
     content = [{"type": "text", "text": (
-        f"These {FRAME_COUNT} sampled frames are in chronological order from one video. "
+        f"These {len(images)} sampled frames are in chronological order from one recording. "
         "The timestamp before each image is seconds from its beginning."
     )}]
     for index, (image, timestamp) in enumerate(zip(images, timestamps), 1):
@@ -149,6 +150,7 @@ def main():
     signal.signal(signal.SIGTERM, _terminate)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--video-fd", type=int, required=True)
+    parser.add_argument("--thumbnail-manifest", type=Path)
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--ffmpeg", required=True)
@@ -157,10 +159,13 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.threads <= 32:
         parser.error("--threads must be between 1 and 32")
-    images, timestamps = sample_video_frames(
-        Path(f"/proc/self/fd/{args.video_fd}"), video_fd=args.video_fd,
-        count=FRAME_COUNT, max_side=MAX_FRAME_SIDE, ffmpeg=args.ffmpeg, ffprobe=args.ffprobe,
-    )
+    if args.thumbnail_manifest is not None:
+        images, timestamps = thumbnail_frames(args.video_fd, json.loads(args.thumbnail_manifest.read_text(encoding="utf-8")))
+    else:
+        images, timestamps = sample_video_frames(
+            Path(f"/proc/self/fd/{args.video_fd}"), video_fd=args.video_fd,
+            count=FRAME_COUNT, max_side=MAX_FRAME_SIDE, ffmpeg=args.ffmpeg, ffprobe=args.ffprobe,
+        )
     result = infer(args.runtime_root, images, timestamps, threads=args.threads)
     args.output.write_text(json.dumps(result, ensure_ascii=False) + "\n", encoding="utf-8")
 

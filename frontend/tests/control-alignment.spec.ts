@@ -3,6 +3,41 @@ import { PNG } from 'pngjs';
 import { apiFixture } from './api-fixture';
 
 for (const zoom of [1, 1.25, 2]) {
+  test(`pressing Prepare Selected shrinks it without vertical overflow at ${zoom * 100}% scale`, async ({
+    page,
+  }) => {
+    await apiFixture(page);
+    await page.goto('/');
+    await page.evaluate((zoom) => {
+      document.documentElement.style.zoom = String(zoom);
+    }, zoom);
+    await page.getByRole('checkbox', { name: 'Select recording-42', exact: true }).check();
+    const toolbar = page.locator('.recordings-toolbar');
+    const button = page.getByRole('button', { name: 'Prepare Selected', exact: true });
+    const height = await toolbar.evaluate((element) => element.clientHeight);
+    const buttonWidth = (await button.boundingBox())!.width;
+    await button.hover();
+    await page.mouse.down();
+    expect(await button.evaluate((element) => element.matches(':active'))).toBe(true);
+    await expect
+      .poll(async () => (await button.boundingBox())!.width / buttonWidth)
+      .toBeCloseTo(0.94, 2);
+    const pressed = await toolbar.evaluate((element) => ({
+      height: element.clientHeight,
+      contentHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+    }));
+    expect(pressed).toEqual({ height, contentHeight: height, scrollTop: 0 });
+    await toolbar.screenshot({ path: test.info().outputPath('toolbar-pressed.png') });
+    await page.mouse.up();
+    const dialog = page.getByRole('dialog', { name: 'Prepare recordings', exact: true });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(button).toBeFocused();
+  });
+}
+
+for (const zoom of [1, 1.25, 2]) {
   test(`toolbar and graph controls share their vertical centres at ${zoom * 100}% scale`, async ({
     page,
   }) => {

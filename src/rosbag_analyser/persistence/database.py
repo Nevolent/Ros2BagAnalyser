@@ -434,7 +434,7 @@ EXPECTED_CATALOG_CONSTRAINTS = {
         "work_units > 0 AND char_length(estimate_key) = 64 AND "
         "(estimated_total_ms IS NULL AND estimate_method IS NULL AND "
         "estimate_sample_count IS NULL OR estimated_total_ms > 0 AND "
-        "(estimate_method = 'median_rate_v1' OR estimate_method = 'recent_rate_v2') "
+        "(estimate_method = ANY (ARRAY['median_rate_v1', 'recent_rate_v2', 'recent_rate_v3'])) "
         "AND estimate_sample_count >= 2 OR "
         "estimated_total_ms IS NULL AND estimate_method = 'insufficient_history' "
         "AND estimate_sample_count >= 0 AND estimate_sample_count <= 1))",
@@ -611,6 +611,9 @@ def apply_catalog_migration(database_url: str) -> None:
         item.read_text(encoding="utf-8")
         for item in sorted(migration_root.iterdir(), key=lambda entry: entry.name)
         if item.name.endswith(".sql")
+        # 0014 replaces this constraint completely. Replaying 0008 would reject
+        # saved recent_rate_v3 jobs before 0014 can run; historical SQL stays intact.
+        and item.name != "0008_recent_estimates.sql"
     )
     with open_connection(database_url) as connection:
         connection.execute(

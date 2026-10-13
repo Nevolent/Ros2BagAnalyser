@@ -29,6 +29,7 @@ from rosbag_analyser.timeline import media_pts_digest_chunk
 logger = logging.getLogger(__name__)
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_SERIES_ARTIFACT_BYTES = 256 * 1024 * 1024
+MAX_VALIDATION_CACHE_ENTRIES = 10_000
 SUPPORTED_ARTIFACT_KINDS = frozenset(
     {"front_preview", "topdown_preview", "imu_series", "encoder_series", "ai_description", "thumbnail"}
 )
@@ -539,7 +540,7 @@ class ArtifactStore:
                 with self._thumbnail_validation_lock:
                     self._thumbnail_validation_cache[signature] = None
                     self._thumbnail_validation_cache.move_to_end(signature)
-                    while len(self._thumbnail_validation_cache) > 10000:
+                    while len(self._thumbnail_validation_cache) > MAX_VALIDATION_CACHE_ENTRIES:
                         self._thumbnail_validation_cache.popitem(last=False)
             return opened
         except (OSError, ValueError, av.error.FFmpegError) as error:
@@ -975,7 +976,10 @@ class ArtifactStore:
         with self._content_validation_lock:
             self._content_validation_cache[signature] = None
             self._content_validation_cache.move_to_end(signature)
-            while len(self._content_validation_cache) > 256:
+            # One key per unchanged artifact, not its bytes. Keep a full bounded
+            # catalog resident so sequential rescans do not evict each other and
+            # reread every large telemetry file on shared storage.
+            while len(self._content_validation_cache) > MAX_VALIDATION_CACHE_ENTRIES:
                 self._content_validation_cache.popitem(last=False)
 
     def _reuse_published(

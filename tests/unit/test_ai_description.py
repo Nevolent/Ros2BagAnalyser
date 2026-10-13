@@ -8,6 +8,9 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+import numpy as np
+import hashlib
+from rosbag_analyser.thumbnail import THUMBNAIL_POLICY, thumbnail_cache_identity, png_bytes, thumbnail_frames
 
 from rosbag_analyser.ai_description import (
     DESCRIPTION_POLICY, DESCRIPTION_PLANNER_IDENTITY, description_cache_identity,
@@ -38,18 +41,27 @@ def manifest(path, kind, identity, **extra):
 def prepared(tmp_path):
     derived = tmp_path / "derived"
     derived.mkdir()
-    front_store = ArtifactStore(derived, Path("ffmpeg"), Path("ffprobe"))
+    front_store = ArtifactStore(derived, Path("ffmpeg"), Path("ffprobe"), "thumbnail")
     description_store = ArtifactStore(derived, Path("ffmpeg"), Path("ffprobe"), "ai_description")
     workspace = front_store.create_workspace(1)
-    path = workspace / "preview.mp4"
-    path.write_bytes(b"synthetic prepared video")
-    front_manifest = manifest(path, "front_preview", "a" * 64)
-    published = front_store.publish(workspace, 1, "a" * 64, front_manifest)
-    front = ArtifactRecord(1, 7, "front_preview", "a" * 64, published.output_relative_path,
-                           "video/mp4", published.size_bytes, 0, 100, front_manifest, NOW)
-    job = JobRecord(2, 7, "ai_description", description_cache_identity(front.cache_identity),
+    path = workspace / "thumbnail.png"
+    pixels = np.zeros((2, 12, 3), dtype=np.uint8)
+    for index in range(6):
+        pixels[:, index * 2:(index + 1) * 2] = index * 30
+    path.write_bytes(png_bytes(pixels))
+    identity = thumbnail_cache_identity("a" * 64)
+    front_manifest = manifest(path, "thumbnail", identity,
+        processor_version=THUMBNAIL_POLICY, front_source_identity="a" * 64,
+        source={"record_timestamps_ns": [str(i) for i in range(6)], "frame_times_seconds": list(range(6))})
+    front_manifest['schema_version'] = 2
+    front_manifest['output'].update(mime_type="image/png", width=12, height=2, frame_width=2, frame_count=6,
+                                    sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    published = front_store.publish_thumbnail(workspace, 1, identity, front_manifest)
+    front = ArtifactRecord(1, 7, "thumbnail", identity, published.output_relative_path,
+                           "image/png", published.size_bytes, 0, 100, front_manifest, NOW)
+    job = JobRecord(2, 7, "ai_description", description_cache_identity("a" * 64),
                     "running", NOW, NOW, None, None, None)
-    target = PreparationTargetRecord(7, "front_preview", 1, "b" * 64,
+    target = PreparationTargetRecord(7, "thumbnail", 1, "b" * 64,
                                      "available", front.cache_identity, None, None, 10)
 
     class Repository:
@@ -62,7 +74,7 @@ def prepared(tmp_path):
             return (CurrentOutputRecord(target, artifact=self.current),)
 
         def get_current_artifact_for_delivery(self, recording_id, kind, artifact_id, planner):
-            assert (recording_id, kind, artifact_id) == (7, "front_preview", 1)
+            assert (recording_id, kind, artifact_id) == (7, "thumbnail", 1)
             assert len(planner) == 64
             return self.current
 
@@ -77,9 +89,11 @@ def prepared(tmp_path):
         result = RESULT
         replace_front = False
 
-        def process(self, descriptor, output_path, *, control):
+        def process(self, descriptor, output_path, *, control, thumbnail_manifest):
             self.calls += 1
-            assert os.pread(descriptor, 100, 0) == b"synthetic prepared video"
+            assert os.pread(descriptor, 8, 0) == b"\x89PNG\r\n\x1a\n"
+            images, times = thumbnail_frames(descriptor, thumbnail_manifest)
+            assert len(images) == 6 and times == list(range(6))
             output_path.write_text(json.dumps(self.result))
             if self.replace_front:
                 repository.current = None
@@ -89,20 +103,21 @@ def prepared(tmp_path):
     inference = Inference()
     worker = SerialWorker(repository, None, SimpleNamespace(profile=V0_PREVIEW_PROFILE),
                           front_store, "", "encoder", description_processor=inference,
-                          description_artifact_store=description_store)
+                          description_artifact_store=description_store, thumbnail_artifact_store=front_store)
     return SimpleNamespace(derived=derived, front=front, front_store=front_store,
                            store=description_store, job=job, worker=worker,
                            repository=repository, inference=inference)
 
 
-def test_description_job_reads_only_prepared_preview_and_publishes_identity_bound_json(prepared):
+def test_description_job_reads_shared_thumbnails_and_publishes_identity_bound_json(prepared):
     original = (prepared.derived / prepared.front.output_relative_path).stat()
     prepared.worker._run_job(prepared.job)
     assert not prepared.repository.failures
     assert prepared.inference.calls == 1
     _, artifact = prepared.repository.completed[0]
     assert artifact.manifest["result"] == RESULT
-    assert artifact.manifest["front_preview_identity"] == prepared.front.cache_identity
+    assert artifact.manifest["visual_source_identity"] == "a" * 64
+    assert artifact.manifest["thumbnail_identity"] == prepared.front.cache_identity
     assert (artifact.coverage_start_ns, artifact.coverage_end_ns) == (0, 100)
     prepared.store.validate_description_artifact(artifact.output_relative_path, artifact.size_bytes,
                                                  artifact.cache_identity, artifact.manifest)
@@ -110,20 +125,20 @@ def test_description_job_reads_only_prepared_preview_and_publishes_identity_boun
     assert not list(prepared.store.work_root.iterdir())
 
 
-def test_changed_front_preview_prevents_description_publication(prepared):
+def test_changed_thumbnails_prevent_description_publication(prepared):
     prepared.inference.replace_front = True
     prepared.worker._run_job(prepared.job)
     assert not prepared.repository.completed
-    assert prepared.repository.failures[0][1] == "ai_front_preview_unavailable"
+    assert prepared.repository.failures[0][1] == "ai_thumbnail_unavailable"
     assert not list(prepared.store.artifacts_root.rglob("description.json"))
     assert not list(prepared.store.work_root.iterdir())
 
 
-def test_missing_front_preview_does_not_invoke_model(prepared):
+def test_missing_thumbnails_do_not_invoke_model(prepared):
     prepared.repository.current = None
     prepared.worker._run_job(prepared.job)
     assert prepared.inference.calls == 0
-    assert prepared.repository.failures[0][1] == "ai_front_preview_unavailable"
+    assert prepared.repository.failures[0][1] == "ai_thumbnail_unavailable"
 
 
 def test_invalid_replacement_preserves_valid_description_and_front_video(prepared):
@@ -135,7 +150,7 @@ def test_invalid_replacement_preserves_valid_description_and_front_video(prepare
     prepared.worker._run_job(prepared.job)
     assert prepared.repository.failures[-1][1] == "ai_description_invalid"
     assert (path.read_bytes(), path.stat()) == original
-    prepared.front_store.validate_media(prepared.front.output_relative_path, prepared.front.size_bytes,
+    prepared.front_store.validate_thumbnail_artifact(prepared.front.output_relative_path, prepared.front.size_bytes,
                                          prepared.front.cache_identity, prepared.front.manifest)
 
 
@@ -160,10 +175,11 @@ def test_missing_description_is_partial_and_ready_requires_both_outputs(prepared
     assert _aggregate_state({"front_preview": "ready", "ai_description": "failed"}) == "failed"
 
 
-def test_migration_backfill_uses_the_runtime_identity_policy():
+def test_historical_migration_remains_pinned_and_shared_frame_policy_has_a_new_identity():
     sql = (Path(__file__).parents[2] / "src/rosbag_analyser/persistence/migrations/0012_q8_ai_description.sql").read_text()
-    assert DESCRIPTION_POLICY in sql
-    assert DESCRIPTION_PLANNER_IDENTITY in sql
+    assert "ai-description-v2" in sql and DESCRIPTION_POLICY not in sql
+    assert "3171b7da6256dc536d89a1cebfdb3d544677f5e68dd259260b8e709eb4bd3278" in sql
+    assert "ai-description-v3" in DESCRIPTION_POLICY and THUMBNAIL_POLICY in DESCRIPTION_POLICY
     assert "INSERT INTO jobs" not in sql
     assert description_cache_identity("a" * 64) != description_cache_identity("b" * 64)
     legacy = (Path(__file__).parents[2] / "src/rosbag_analyser/persistence/migrations/0010_ai_description.sql").read_text()

@@ -7,6 +7,7 @@ from datetime import datetime
 import hashlib
 import json
 from pathlib import PurePosixPath
+import time
 from typing import Any, Protocol
 
 from psycopg import IsolationLevel
@@ -183,6 +184,7 @@ class CatalogRepository:
         *,
         schedule_outputs: Callable[[Any], None] | None = None,
     ) -> ApplySummary:
+        started = time.monotonic_ns()
         recording_paths = [item.archive_relative_path for item in snapshot.recordings]
         if len(recording_paths) != len(set(recording_paths)):
             raise ValueError("A scan snapshot contains duplicate recording identities.")
@@ -324,6 +326,15 @@ class CatalogRepository:
                 self._queue_thumbnails(connection, generation, retry=True)
             else:
                 schedule_outputs(connection)
+            # Validation and scheduling can dominate a rescan. Report the full
+            # operation, and stamp completion after that work rather than using
+            # the transaction's start time as its completion time.
+            connection.execute(
+                """UPDATE catalog_state
+                   SET duration_ms = %s, successful_completed_at = clock_timestamp()
+                   WHERE singleton = TRUE""",
+                (snapshot.duration_ms + (time.monotonic_ns() - started) // 1_000_000,),
+            )
         return ApplySummary(
             recording_count=len(snapshot.recordings),
             component_count=component_count,
@@ -337,7 +348,7 @@ class CatalogRepository:
             ).fetchall()
         return frozenset(row["archive_relative_path"] for row in rows)
 
-    def apply_discovery(self, snapshot: ScanSnapshot) -> ApplySummary:
+    def apply_discovery(self, snapshot: ScanSnapshot, *, schedule_outputs: Callable[[Any, tuple[int, ...]], None] | None = None) -> ApplySummary:
         """Add new paths without advancing or reconciling the full-scan state."""
         paths = [item.archive_relative_path for item in snapshot.recordings]
         if len(paths) != len(set(paths)):
@@ -408,7 +419,10 @@ class CatalogRepository:
                         },
                     },
                 )
-                self._queue_thumbnails(connection, generation, added_ids)
+                if schedule_outputs is None:
+                    self._queue_thumbnails(connection, generation, added_ids)
+                else:
+                    schedule_outputs(connection, tuple(added_ids))
         return ApplySummary(
             len(additions), sum(len(item.components) for item in additions), generation
         )
@@ -426,8 +440,6 @@ class CatalogRepository:
         identity = self._upsert_recording(
             connection, recording, generation, move_fingerprint
         )
-        for component in recording.components:
-            self._upsert_component(connection, identity.id, component)
         targets = self._plan_recording(
             identity.id,
             recording,
@@ -436,8 +448,13 @@ class CatalogRepository:
         )
         if tuple(target.kind for target in targets) != PREPARATION_KINDS:
             raise ValueError("Preparation planning did not return the fixed output targets.")
-        for target in targets:
-            self._upsert_target(connection, identity.id, generation, target)
+        # These writes have no interdependent results. Send them together rather
+        # than waiting for a round trip per component and output target.
+        with connection.pipeline():
+            for component in recording.components:
+                self._upsert_component(connection, identity.id, component)
+            for target in targets:
+                self._upsert_target(connection, identity.id, generation, target)
         return identity
 
     @staticmethod
@@ -867,56 +884,34 @@ class CatalogRepository:
     @staticmethod
     def _upsert_component(
         connection: Any, recording_id: int, component: SourceComponentResult
-    ) -> int:
-        existing = connection.execute(
+    ) -> None:
+        connection.execute(
             """
-            SELECT id, relative_path, size_bytes, mtime_ns, condition,
-                   diagnostic_code, diagnostic_message
-            FROM source_components
-            WHERE recording_id = %s AND role = %s
-            FOR UPDATE
-            """,
-            (recording_id, component.role.value),
-        ).fetchone()
-        values = _component_values(recording_id, component)
-        if existing is None:
-            row = connection.execute(
-                """
-                INSERT INTO source_components (
-                    recording_id, role, relative_path, size_bytes, mtime_ns,
-                    condition, diagnostic_code, diagnostic_message
-                ) VALUES (
-                    %(recording_id)s, %(role)s, %(relative_path)s,
-                    %(size_bytes)s, %(mtime_ns)s, %(condition)s,
-                    %(diagnostic_code)s, %(diagnostic_message)s
-                )
-                RETURNING id
-                """,
-                values,
-            ).fetchone()
-            return int(row["id"])
-
-        compared = {
-            key: value
-            for key, value in values.items()
-            if key not in {"recording_id", "role"}
-        }
-        if any(existing[key] != value for key, value in compared.items()):
-            connection.execute(
-                """
-                UPDATE source_components
-                SET relative_path = %(relative_path)s,
-                    size_bytes = %(size_bytes)s,
-                    mtime_ns = %(mtime_ns)s,
-                    condition = %(condition)s,
-                    diagnostic_code = %(diagnostic_code)s,
-                    diagnostic_message = %(diagnostic_message)s,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = %(id)s
-                """,
-                {**values, "id": existing["id"]},
+            INSERT INTO source_components (
+                recording_id, role, relative_path, size_bytes, mtime_ns,
+                condition, diagnostic_code, diagnostic_message
+            ) VALUES (
+                %(recording_id)s, %(role)s, %(relative_path)s,
+                %(size_bytes)s, %(mtime_ns)s, %(condition)s,
+                %(diagnostic_code)s, %(diagnostic_message)s
             )
-        return int(existing["id"])
+            ON CONFLICT (recording_id, role) DO UPDATE
+            SET relative_path = EXCLUDED.relative_path,
+                size_bytes = EXCLUDED.size_bytes,
+                mtime_ns = EXCLUDED.mtime_ns,
+                condition = EXCLUDED.condition,
+                diagnostic_code = EXCLUDED.diagnostic_code,
+                diagnostic_message = EXCLUDED.diagnostic_message,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE (source_components.relative_path, source_components.size_bytes,
+                   source_components.mtime_ns, source_components.condition,
+                   source_components.diagnostic_code, source_components.diagnostic_message)
+                  IS DISTINCT FROM
+                  (EXCLUDED.relative_path, EXCLUDED.size_bytes, EXCLUDED.mtime_ns,
+                   EXCLUDED.condition, EXCLUDED.diagnostic_code, EXCLUDED.diagnostic_message)
+            """,
+            _component_values(recording_id, component),
+        )
 
 
 def _load_move_candidates(

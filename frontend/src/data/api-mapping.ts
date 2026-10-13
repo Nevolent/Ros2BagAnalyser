@@ -67,7 +67,12 @@ export function recording(row: CatalogRecording): Recording {
     thumbnail: {
       state: thumbnail?.state ?? 'not_requested',
       url: thumbnail?.state === 'ready' ? (row.thumbnail_url ?? undefined) : undefined,
-      frameCount: row.thumbnail_frame_count === 5 ? 5 : 1,
+      frameCount:
+        Number.isInteger(row.thumbnail_frame_count) &&
+        row.thumbnail_frame_count! >= 1 &&
+        row.thumbnail_frame_count! <= 6
+          ? row.thumbnail_frame_count!
+          : 1,
       issue: thumbnail?.diagnostic ? diagnosticMessage(thumbnail.diagnostic) : undefined,
     },
     id: String(row.id),
@@ -166,6 +171,7 @@ export function jobs(rows: ApiJob[], group: boolean): Job[] {
         name: outputNames[row.kind],
         state: row.state,
         runtime: row.runtime_ms === null ? null : row.runtime_ms / 1000,
+        size: bytes(row.output_size_bytes),
       });
       existing.duration += (row.runtime_ms ?? 0) / 1000;
       existing.runtimeKnown = existing.runtimeKnown && row.runtime_ms !== null;
@@ -202,6 +208,7 @@ export function jobs(rows: ApiJob[], group: boolean): Job[] {
             name: outputNames[row.kind],
             state: row.state,
             runtime: row.runtime_ms === null ? null : row.runtime_ms / 1000,
+            size: bytes(row.output_size_bytes),
           },
         ],
         size: bytes(row.output_size_bytes),

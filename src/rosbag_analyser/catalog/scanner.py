@@ -18,6 +18,7 @@ from .paths import (
     resolve_declared_source,
     safe_filesystem_text,
     source_file_identity,
+    inventory_direct_entries,
 )
 from .sqlite_health import SQLiteProbeResult, probe_sqlite_database
 from .types import (
@@ -46,15 +47,33 @@ class CatalogScanner:
         archive_root: Path,
         *,
         limits: CatalogScanLimits | None = None,
+        settle_seconds: float = 0,
     ) -> None:
         self.archive_root = archive_root
         self.limits = limits or CatalogScanLimits()
+        self.settle_seconds = settle_seconds
+        self._copy_observations: dict[str, tuple[tuple, float]] = {}
+
+    def _settled(self, path: str, entries: tuple[DirectEntry, ...]) -> bool:
+        signature = tuple((entry.name, entry.identity, entry.is_symlink) for entry in entries)
+        now = time.monotonic()
+        previous = self._copy_observations.get(path)
+        if previous is None or previous[0] != signature:
+            self._copy_observations[path] = (signature, now)
+            return self.settle_seconds <= 0
+        # A nonempty SQLite journal/WAL indicates a live recording. Never open
+        # such a database as immutable or treat it as a finished copied bag.
+        if any(entry.name.endswith(('-wal', '-journal')) and entry.size_bytes for entry in entries):
+            self._copy_observations[path] = (signature, now)
+            return False
+        return now - previous[1] >= self.settle_seconds
 
     def scan(
         self,
         *,
         known_recordings: frozenset[str] | None = None,
         timing_cache: dict[str, dict] | None = None,
+        existing_paths: frozenset[str] = frozenset(),
     ) -> ScanSnapshot:
         started = time.monotonic_ns()
         recordings: list[RecordingScanResult] = []
@@ -73,11 +92,24 @@ class CatalogScanner:
             self.limits,
             known_recordings=known_recordings or frozenset(),
         )
+        # Observe every new inventory before inspecting any database. Otherwise
+        # slow earlier bags postpone the quiet-period start for later folders.
+        saved_paths = existing_paths if known_recordings is None else known_recordings
+        unsettled = set()
+        if self.settle_seconds > 0:
+            for candidate in candidates:
+                path = archive_relative_path(self.archive_root, candidate.path)
+                if path not in saved_paths and (
+                    candidate.entries is None or not self._settled(path, candidate.entries)
+                ):
+                    unsettled.add(path)
         for candidate in candidates:
             recording_root = candidate.path
-            if known_recordings is not None and archive_relative_path(
-                self.archive_root, recording_root
-            ) in known_recordings:
+            relative_path = archive_relative_path(self.archive_root, recording_root)
+            if known_recordings is not None and relative_path in known_recordings:
+                continue
+            is_new = relative_path not in saved_paths
+            if relative_path in unsettled:
                 continue
             if candidate.entries is None:
                 recordings.append(
@@ -92,11 +124,17 @@ class CatalogScanner:
                 )
                 continue
             try:
-                recordings.append(
-                    self._scan_recording(
-                        recording_root, candidate.entries, timing_cache, timing_by_identity
-                    )
+                result = self._scan_recording(
+                    recording_root, candidate.entries, timing_cache, timing_by_identity
                 )
+                # Recheck the whole inventory after inspection, including AVI
+                # companions and newly arriving files. Copies can resume midscan.
+                if self.settle_seconds > 0 and is_new:
+                    after = inventory_direct_entries(recording_root, max_entries=self.limits.max_recording_entries)
+                    if after != candidate.entries:
+                        self._settled(relative_path, after)
+                        continue
+                recordings.append(result)
             except (OSError, UnsafeSourcePath) as error:
                 diagnostic = _safe_path_diagnostic(error)
                 recordings.append(
@@ -123,6 +161,9 @@ class CatalogScanner:
                 item for item in recordings if item.ros_health is RosHealth.READABLE
             ]
         elapsed_ms = (time.monotonic_ns() - started) // 1_000_000
+        present = {archive_relative_path(self.archive_root, candidate.path) for candidate in candidates}
+        self._copy_observations = {path: item for path, item in self._copy_observations.items()
+                                   if path in present and path not in saved_paths}
         return ScanSnapshot(
             recordings=tuple(recordings),
             duration_ms=elapsed_ms,

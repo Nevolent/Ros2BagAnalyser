@@ -88,6 +88,7 @@ class PreparationService:
         recording_ids: tuple[int, ...],
         *,
         generation: int | None = None,
+        validate_artifacts: bool = True,
     ) -> tuple[RecordingAnalysis, ...]:
         if not recording_ids:
             return ()
@@ -107,6 +108,7 @@ class PreparationService:
                 recording_id,
                 grouped.get(recording_id, {}),
                 selected_generation,
+                validate_artifacts=validate_artifacts,
             )
             for recording_id in recording_ids
         )
@@ -120,7 +122,7 @@ class PreparationService:
                 for recording_id, prepared in candidates
                 if prepared == previously_prepared
             )
-            kinds = PROCESSING_KINDS if previously_prepared else (THUMBNAIL_KIND,)
+            kinds = PROCESSING_KINDS
             for offset in range(0, len(recording_ids), 100):
                 result = self.prepare_selected(
                     recording_ids[offset:offset + 100],
@@ -138,12 +140,27 @@ class PreparationService:
                         "and queue were preserved; retry the full rescan.",
                     )
 
+    def prepare_discovery(self, connection: Any, recording_ids: tuple[int, ...]) -> None:
+        """Admit all outputs atomically with the new, settled catalog rows."""
+        diagnostic = None if self.admission_check is None else self.admission_check()
+        if diagnostic is not None:
+            raise RootScanError(diagnostic.code, diagnostic.message)
+        for offset in range(0, len(recording_ids), 100):
+            result = self.prepare_selected(recording_ids[offset:offset + 100], PROCESSING_KINDS,
+                                           connection=connection, strict_admission=True)
+            if any(output.outcome == "request_failed" or (
+                output.diagnostic is not None and output.diagnostic.code == "preparation_admission_failed"
+            ) for recording in result.recordings for output in recording.outputs):
+                raise RootScanError("catalog_preparation_schedule_failed",
+                                   "New recordings could not be scheduled. Automatic discovery will retry.")
+
     def prepare_selected(
         self,
         recording_ids: tuple[int, ...],
         output_kinds: tuple[str, ...] = PROCESSING_KINDS,
         *,
         connection: Any | None = None,
+        strict_admission: bool = False,
     ) -> PrepareSelectedResult:
         selected_kinds = tuple(kind for kind in PROCESSING_KINDS if kind in output_kinds)
         if (
@@ -187,11 +204,18 @@ class PreparationService:
 
         results: list[PrepareRecordingResult] = []
         has_active_work = False
+        admission_checked = False
         for recording_id in recording_ids:
             try:
-                admission_diagnostic = (
-                    None if self.admission_check is None else self.admission_check()
-                )
+                # One observation per bounded batch; the worker checks storage
+                # again before claiming work. Scheduling does not reserve space.
+                if not admission_checked:
+                    admission_diagnostic = (
+                        None if self.admission_check is None else self.admission_check()
+                    )
+                    admission_checked = True
+                if strict_admission and admission_diagnostic is not None:
+                    raise RootScanError(admission_diagnostic.code, admission_diagnostic.message)
                 schedule = self.processing_repository.prepare_recording(
                     recording_id,
                     self.planner.planner_identities,
@@ -201,6 +225,8 @@ class PreparationService:
                     **transaction_options,
                 )
             except Exception:
+                if strict_admission:
+                    raise
                 logger.exception(
                     "Preparation scheduling failed for recording %s.", recording_id
                 )
@@ -246,6 +272,7 @@ class PreparationService:
         recording_id: int,
         grouped: Mapping[str, CurrentOutputRecord],
         generation: int,
+        *, validate_artifacts: bool = True,
     ) -> RecordingAnalysis:
         outputs: list[OutputFact] = []
         for kind in PROCESSING_KINDS:
@@ -288,7 +315,7 @@ class PreparationService:
                 )
                 continue
             if current.artifact is not None:
-                diagnostic = self._validate_artifact(current.artifact)
+                diagnostic = self._validate_artifact(current.artifact) if validate_artifacts else None
                 if diagnostic is None:
                     outputs.append(
                         OutputFact(kind, "ready", artifact=current.artifact)
@@ -449,12 +476,12 @@ def _aggregate_state(outputs: Mapping[str, str]) -> str:
     states = tuple(state for kind, state in outputs.items() if kind != THUMBNAIL_KIND)
     if "failed" in states:
         return "failed"
-    if front == "unavailable":
-        return "partially_prepared" if "ready" in states else "failed"
     if "processing" in states:
         return "processing"
     if "queued" in states:
         return "queued"
+    if front == "unavailable":
+        return "partially_prepared" if "ready" in states else "failed"
     if (
         front == "ready"
         and outputs.get(AI_DESCRIPTION_KIND) == "ready"

@@ -68,6 +68,7 @@ class V1CatalogService:
         analyses = self.preparation.states_for_recordings(
             tuple(recording.id for recording in recordings),
             generation=scan.successful_generation,
+            validate_artifacts=False,
         )
         by_id = {analysis.recording_id: analysis for analysis in analyses}
         items = tuple(

@@ -8,8 +8,8 @@ a serial worker writes validated thumbnails, previews, AI descriptions and telem
 
 ## Use the application
 
-1. Find a recording in **Recordings**.
-2. Choose **Prepare Selected** and follow the work in **Processing**.
+1. Copy a recording into the source folder; settled, readable bags enter processing automatically.
+2. Follow the work in **Processing**. **Prepare Selected** remains available for manual preparation and retries.
 3. Open **Analysis** to review cameras, IMU and six wheel RPM traces.
 
 See [Usage](docs/USAGE.md) for controls, status meanings and supported formats.

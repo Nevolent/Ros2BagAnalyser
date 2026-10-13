@@ -96,6 +96,36 @@ def _service() -> PreparationService:
     )
 
 
+def test_catalog_projection_does_not_open_derived_files_and_detail_still_validates(monkeypatch):
+    service = _service()
+    current = {kind: CurrentOutputRecord(_target(kind), artifact=_artifact(kind)) for kind in PROCESSING_KINDS}
+    calls = []
+    monkeypatch.setattr(service, '_validate_artifact', lambda artifact: calls.append(artifact.kind))
+    analysis = service._analysis_for_group(7, current, GENERATION, validate_artifacts=False)
+    assert analysis.analysis_state == 'ready' and calls == []
+    service._analysis_for_group(7, current, GENERATION)
+    assert tuple(calls) == PROCESSING_KINDS
+
+
+def test_discovery_schedules_one_ordered_pipeline_and_admission_failure_propagates(monkeypatch):
+    from types import SimpleNamespace
+    from rosbag_analyser.catalog.types import RootScanError
+    service = _service()
+    calls = []
+    def prepare(ids, kinds, **options):
+        calls.append((ids, kinds, options))
+        return SimpleNamespace(recordings=())
+    monkeypatch.setattr(service, 'prepare_selected', prepare)
+    connection = object()
+    service.prepare_discovery(connection, (7, 8))
+    assert calls == [((7, 8), PROCESSING_KINDS, {'connection': connection, 'strict_admission': True})]
+    assert PROCESSING_KINDS[:3] == ('front_preview', 'thumbnail', 'ai_description')
+    service.admission_check = lambda: SafeDiagnostic('derived_space_low', 'Insufficient output capacity.')
+    with pytest.raises(RootScanError):
+        service.prepare_discovery(connection, (9,))
+    assert len(calls) == 1
+
+
 def test_per_output_precedence_starts_with_unavailable() -> None:
     current = {
         kind: CurrentOutputRecord(
@@ -345,6 +375,28 @@ def test_low_space_admission_returns_unavailable_without_scheduling_work() -> No
     )
 
 
+def test_admission_is_shared_within_batch_but_rechecked_on_next_request():
+    from types import SimpleNamespace
+    low_space = SafeDiagnostic("derived_space_low", "Output storage is full.")
+    checks = iter((None, low_space))
+    admitted = []
+    def schedule(recording_id, identities, **options):
+        diagnostic = options["admission_diagnostic"]
+        admitted.append((recording_id, diagnostic))
+        output = ScheduledOutput(
+            "front_preview", "queued" if diagnostic is None else "unavailable",
+            "queued" if diagnostic is None else "unavailable", _target("front_preview"),
+        )
+        return PreparationSchedule(recording_id, True, (output,))
+    service = PreparationService(
+        SimpleNamespace(), SimpleNamespace(get_current_outputs=lambda ids: (), prepare_recording=schedule),
+        FakePlanner(), {}, admission_check=lambda: next(checks),
+    )
+    assert service.prepare_selected((7, 8), ("front_preview",)).has_active_work
+    assert not service.prepare_selected((9,), ("front_preview",)).has_active_work
+    assert admitted == [(7, None), (8, None), (9, low_space)]
+
+
 def test_selective_preparation_forwards_only_chosen_kinds() -> None:
     class CatalogRepository:
         def get_catalog_state(self):
@@ -395,8 +447,8 @@ def test_selective_preparation_forwards_only_chosen_kinds() -> None:
 
     assert repository.selected == ("imu_series",)
     assert [item.kind for item in result.recordings[0].outputs] == ["imu_series"]
-    # Selective work is still queued, but cannot make a recording without front input ready.
-    assert result.recordings[0].analysis_state == "failed"
+    # Missing front input does not hide active work, and cannot make it ready.
+    assert result.recordings[0].analysis_state == "queued"
 
 
 def test_one_scheduling_failure_keeps_sibling_output_results() -> None:

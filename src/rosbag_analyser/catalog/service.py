@@ -44,11 +44,13 @@ class CatalogService:
         *,
         source_admission_check: Callable[[], SafeDiagnostic | None] | None = None,
         rescan_scheduler: Callable[[Any], None] | None = None,
+        discovery_scheduler: Callable[[Any, tuple[int, ...]], None] | None = None,
     ) -> None:
         self.scanner = scanner
         self.repository = repository
         self.source_admission_check = source_admission_check
         self.rescan_scheduler = rescan_scheduler
+        self.discovery_scheduler = discovery_scheduler
         self._rescan_lock = threading.Lock()
 
     def discover_new(self) -> int:
@@ -62,9 +64,12 @@ class CatalogService:
                 known = self.repository.known_recording_paths()
                 snapshot = self.scanner.scan(known_recordings=known)
                 self._require_source_admission()
+                if not snapshot.recordings:
+                    return 0
                 if connection is not None:
                     connection.execute("SELECT 1")  # Confirm ownership before publication.
-                return self.repository.apply_discovery(snapshot).recording_count
+                options = {} if self.discovery_scheduler is None else {"schedule_outputs": self.discovery_scheduler}
+                return self.repository.apply_discovery(snapshot, **options).recording_count
         except RootScanError as error:
             if error.diagnostic.code == "catalog_scan_in_progress":
                 return 0
@@ -81,7 +86,9 @@ class CatalogService:
         try:
             with self.repository.source_scan(full=True) as connection:
                 self._require_source_admission()
-                snapshot = self.scanner.scan(timing_cache=self.repository.load_timing_cache())
+                options = ({"existing_paths": self.repository.known_recording_paths()}
+                           if getattr(self.scanner, "settle_seconds", 0) > 0 else {})
+                snapshot = self.scanner.scan(timing_cache=self.repository.load_timing_cache(), **options)
                 self._require_source_admission()
                 if connection is not None:
                     connection.execute("SELECT 1")
@@ -108,7 +115,7 @@ class CatalogService:
             missing_count=health_values.count("missing"),
             unsupported_count=health_values.count("unsupported"),
             uninspectable_count=health_values.count("uninspectable"),
-            duration_ms=snapshot.duration_ms,
+            duration_ms=state.duration_ms,
             diagnostics=diagnostics,
             generation=summary.generation,
             completed_at=state.successful_completed_at,

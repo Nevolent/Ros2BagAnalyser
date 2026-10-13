@@ -14,10 +14,10 @@ from rosbag_analyser.catalog.metadata import TopicFact
 from rosbag_analyser.catalog.paths import source_file_identity
 from rosbag_analyser.front_preview import FrontSourceDescriptor
 from rosbag_analyser.job_control import JobCanceled
-from rosbag_analyser.persistence.processing_repository import JobRecord
+from rosbag_analyser.persistence.processing_repository import JobRecord, ProcessingSourceRecord, ProcessingComponent
 from rosbag_analyser.processors.front_preview import DecodedImage, FrontPreviewProcessingError
 from rosbag_analyser.processors.thumbnail import ThumbnailProcessor
-from rosbag_analyser.thumbnail import THUMBNAIL_POLICY, thumbnail_cache_identity
+from rosbag_analyser.thumbnail import THUMBNAIL_POLICY, thumbnail_cache_identity, thumbnail_source_identity
 from rosbag_analyser.worker import SerialWorker
 
 
@@ -46,19 +46,20 @@ def source(tmp_path):
                            processor=ThumbnailProcessor(decode))
 
 
-def test_five_frames_share_scans_and_duplicate_payloads_preserving_source_and_aspect(source, tmp_path):
+def test_six_frames_share_scans_and_duplicate_payloads_preserving_source_and_aspect(source, tmp_path):
     before = inventory(source.root)
     output = tmp_path / 'thumbnail.png'
     result = source.processor.process(source.descriptor, output)
     assert source.decoded == [1, 4, 5]
     assert result == {'topic': '/camera/front', 'record_timestamp_ns': '60',
-                      'record_timestamps_ns': ['60', '60', '60', '90', '90'],
-                      'coverage_ns': 60, 'width': 2400, 'height': 270,
-                      'frame_width': 480, 'frame_count': 5}
+                      'record_timestamps_ns': ['60', '60', '60', '60', '90', '90'],
+                      'frame_times_seconds': [6e-8, 6e-8, 6e-8, 6e-8, 9e-8, 9e-8],
+                      'coverage_ns': 60, 'width': 2688, 'height': 252,
+                      'frame_width': 448, 'frame_count': 6}
     with av.open(str(output)) as container:
         frames = list(container.decode(video=0))
     assert len(frames) == 1
-    assert (frames[0].width, frames[0].height) == (2400, 270)
+    assert (frames[0].width, frames[0].height) == (2688, 252)
     assert inventory(source.root) == before
 
 
@@ -162,11 +163,19 @@ def worker(source, tmp_path):
         def fail_job(self, job_id, code, message):
             self.failures.append(code)
     repository = Repository()
-    resolver = SimpleNamespace(resolve=lambda recording_id: SimpleNamespace(descriptor=source.descriptor))
+    record = ProcessingSourceRecord(1, 'bag', 0, 100, 'readable',
+        ProcessingComponent('metadata.yaml', 1, 1, 'readable'),
+        ProcessingComponent('bag.db3', 1, 1, 'readable'))
+    repository.get_source = lambda recording_id: record
+    repository.get_current_outputs = lambda ids: ()
+    resolver = SimpleNamespace(resolve=lambda recording_id, **kwargs: SimpleNamespace(descriptor=source.descriptor, diagnostic=None),
+        _resolve_component=lambda component: (source.descriptor.metadata_path, source.descriptor.metadata_identity)
+        if component is record.metadata else (source.descriptor.database_path, source.descriptor.database_identity))
     instance = SerialWorker(repository, resolver, None, store, '', '',
                             thumbnail_processor=source.processor, thumbnail_artifact_store=store)
     now = datetime.now(timezone.utc)
-    job = JobRecord(8, 1, 'thumbnail', thumbnail_cache_identity(source.descriptor.cache_identity),
+    source_identity = thumbnail_source_identity(record, source.descriptor.metadata_identity, source.descriptor.database_identity)
+    job = JobRecord(8, 1, 'thumbnail', thumbnail_cache_identity(source_identity),
                     'running', now, now, None, None, None)
     return SimpleNamespace(instance=instance, repository=repository, job=job, store=store, derived=derived)
 
@@ -178,7 +187,7 @@ def test_worker_publishes_validated_identity_bound_thumbnail_without_preview(wor
     artifact = worker.repository.completed[0]
     assert artifact.manifest['processor_version'] == THUMBNAIL_POLICY
     assert artifact.mime_type == 'image/png'
-    assert artifact.coverage_start_ns == artifact.coverage_end_ns == 60
+    assert (artifact.coverage_start_ns, artifact.coverage_end_ns) == (60, 90)
     opened = worker.store.open_thumbnail(artifact.output_relative_path, artifact.size_bytes,
                                          artifact.cache_identity, artifact.manifest)
     os.close(opened.descriptor)
@@ -218,7 +227,8 @@ def test_invalid_replacement_and_changed_source_preserve_valid_output(worker, so
     with pytest.raises(ArtifactStoreError):
         worker.store.publish_thumbnail(workspace, 9, artifact.cache_identity, artifact.manifest, replace_conflicting=True)
     assert (path.read_bytes(), path.stat()) == before
-    source.descriptor = replace(source.descriptor, cache_identity='b' * 64)
+    source.descriptor = replace(source.descriptor, database_identity=replace(source.descriptor.database_identity,
+                                mtime_ns=source.descriptor.database_identity.mtime_ns + 1))
     worker.instance._run_job(worker.job)
     assert worker.repository.failures == ['thumbnail_inputs_changed']
     assert len(worker.repository.completed) == 1
@@ -266,7 +276,7 @@ def test_catalog_reuses_validation_only_for_unchanged_file_and_manifest(worker, 
     assert len(validated) == 2
 
 
-def test_regular_stream_samples_five_sixths_with_only_two_header_scans(source, tmp_path, monkeypatch):
+def test_regular_stream_samples_six_sevenths_with_only_two_header_scans(source, tmp_path, monkeypatch):
     import rosbag_analyser.processors.thumbnail as module
     with sqlite3.connect(source.descriptor.database_path) as connection:
         connection.execute('DELETE FROM messages')
@@ -282,6 +292,86 @@ def test_regular_stream_samples_five_sixths_with_only_two_header_scans(source, t
     before = inventory(source.root)
     result = source.processor.process(descriptor, tmp_path / 'thumbnail.png')
     assert len(scans) == 2
-    assert result['record_timestamps_ns'] == ['102', '204', '300', '402', '504']
-    assert len(source.decoded) == 6  # Eligibility plus five chosen payloads.
+    assert result['record_timestamps_ns'] == ['90', '174', '258', '342', '432', '516']
+    assert len(source.decoded) == 7  # Eligibility plus six chosen payloads.
     assert inventory(source.root) == before
+
+
+def test_one_valid_frame_survives_damaged_samples_and_is_valid_for_ai(worker, source):
+    from rosbag_analyser.thumbnail import thumbnail_frames
+    original = source.processor.image_decoder
+    def only_one(data):
+        if data != bytes([1]):
+            raise FrontPreviewProcessingError('front_frame_invalid', 'Damaged fixture frame.')
+        return original(data)
+    source.processor.image_decoder = only_one
+    worker.instance._run_job(worker.job)
+    assert not worker.repository.failures
+    artifact = worker.repository.completed[0]
+    assert artifact.manifest['output']['frame_count'] == 1
+    opened = worker.store.open_thumbnail(artifact.output_relative_path, artifact.size_bytes, artifact.cache_identity, artifact.manifest)
+    try:
+        images, times = thumbnail_frames(opened.descriptor, artifact.manifest)
+        assert len(images) == len(times) == 1
+    finally:
+        os.close(opened.descriptor)
+
+
+def test_prepared_mp4_supplies_six_frames_without_reading_bag_payloads(worker, source, tmp_path):
+    from rosbag_analyser.persistence.processing_repository import ArtifactRecord
+    import numpy as np
+    import hashlib
+    from rosbag_analyser.thumbnail import thumbnail_frames
+    front_store = ArtifactStore(worker.derived, Path('/usr/bin/ffmpeg'), Path('/usr/bin/ffprobe'))
+    workspace = front_store.create_workspace(90)
+    path = workspace / 'preview.mp4'
+    with av.open(str(path), 'w') as container:
+        stream = container.add_stream('libx264', rate=10)
+        stream.width, stream.height, stream.pix_fmt = 96, 54, 'yuv420p'
+        for index in range(20):
+            frame = av.VideoFrame.from_ndarray(np.full((54, 96, 3), index * 10, dtype=np.uint8), format='rgb24')
+            frame.pts = index
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode(None):
+            container.mux(packet)
+    details = path.stat()
+    manifest = {'artifact_kind': 'front_preview', 'cache_identity': source.descriptor.cache_identity,
+        'output': {'file_name': 'preview.mp4', 'size_bytes': details.st_size,
+        'file_identity': {'device_id': details.st_dev, 'inode': details.st_ino, 'mtime_ns': details.st_mtime_ns}}}
+    published = front_store.publish(workspace, 90, source.descriptor.cache_identity, manifest)
+    artifact = ArtifactRecord(90, 1, 'front_preview', source.descriptor.cache_identity,
+        published.output_relative_path, 'video/mp4', published.size_bytes, 2_000_000_000, 4_000_000_000,
+        manifest, datetime.now(timezone.utc))
+    worker.instance.artifact_store = front_store
+    worker.repository.get_current_outputs = lambda ids: (SimpleNamespace(target=SimpleNamespace(kind='front_preview'), artifact=artifact),)
+    source.processor.image_decoder = lambda data: pytest.fail('Prepared MP4 must avoid source payload reads')
+    worker.instance._run_job(worker.job)
+    assert not worker.repository.failures and source.decoded == []
+    thumbnail = worker.repository.completed[0]
+    assert thumbnail.manifest['output']['frame_count'] == 6
+    opened = worker.store.open_thumbnail(thumbnail.output_relative_path, thumbnail.size_bytes, thumbnail.cache_identity, thumbnail.manifest)
+    try:
+        images, times = thumbnail_frames(opened.descriptor, thumbnail.manifest)
+        assert len(images) == 6 and times == sorted(times) and min(times) >= 2
+    finally:
+        os.close(opened.descriptor)
+
+
+def test_companion_video_without_raw_camera_supplies_fallback_thumbnail(worker, tmp_path):
+    import numpy as np
+    path = tmp_path / 'camera.avi'
+    with av.open(str(path), 'w') as container:
+        stream = container.add_stream('mpeg4', rate=10)
+        stream.width, stream.height, stream.pix_fmt = 96, 54, 'yuv420p'
+        frame = av.VideoFrame.from_ndarray(np.full((54, 96, 3), 80, dtype=np.uint8), format='rgb24')
+        frame.pts = 0
+        for packet in stream.encode(frame) + stream.encode(None):
+            container.mux(packet)
+    before = path.read_bytes(), source_file_identity(path.stat())
+    output = tmp_path / 'thumbnail.png'
+    result = worker.instance._thumbnail_result(worker.job,
+        ('a' * 64, None, (path, before[1]), SimpleNamespace(start_time_ns=0)), output, None)
+    assert result['topic'] == 'companion-video' and 1 <= result['frame_count'] <= 6
+    assert output.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
+    assert (path.read_bytes(), source_file_identity(path.stat())) == before

@@ -9,9 +9,9 @@ import time
 from collections.abc import Callable
 
 from rosbag_analyser.ai_description import DESCRIPTION_POLICY, description_cache_identity
-from rosbag_analyser.thumbnail import THUMBNAIL_POLICY, thumbnail_cache_identity
+from rosbag_analyser.thumbnail import THUMBNAIL_POLICY, thumbnail_cache_identity, thumbnail_source_identity
+from rosbag_analyser.catalog.paths import source_file_identity
 from rosbag_analyser.processors.thumbnail import ThumbnailProcessor
-from rosbag_analyser.preparation_planner import _front_planner_identity
 from rosbag_analyser.processors.ai_description import DescriptionProcessor, DescriptionProcessingError
 from rosbag_analyser.artifact_store import (
     ArtifactStore,
@@ -183,6 +183,66 @@ class SerialWorker:
             "The requested artifact kind is unsupported.",
         )
 
+    def _thumbnail_inputs(self, recording_id):
+        record = self.repository.get_source(recording_id)
+        if record is None or record.ros_health != "readable" or record.metadata is None or record.database is None:
+            raise FrontPreviewProcessingError("thumbnail_inputs_changed", "Thumbnail sources are unavailable. Rescan before processing.")
+        metadata_path, metadata_identity = self.resolver._resolve_component(record.metadata)
+        database_path, database_identity = self.resolver._resolve_component(record.database)
+        resolution = self.resolver.resolve(recording_id, thumbnail=True)
+        if resolution.diagnostic is not None and resolution.diagnostic.code != "front_topic_unavailable":
+            raise FrontPreviewProcessingError("thumbnail_inputs_changed", resolution.diagnostic.message)
+        video = None
+        if record.topdown_video is not None and record.topdown_video.condition == "present":
+            video = self.resolver._resolve_component(record.topdown_video)
+        identity = thumbnail_source_identity(record, metadata_identity, database_identity,
+                                             None if video is None else video[1])
+        return identity, resolution.descriptor, video, record
+
+    def _thumbnail_from_video(self, descriptor, path, *, source_identity=None, **options):
+        result = self.thumbnail_processor.process_video(descriptor, path, **options)
+        if source_identity is not None and source_file_identity(os.fstat(descriptor)) != source_identity:
+            raise FrontPreviewProcessingError("thumbnail_inputs_changed", "The companion video changed during thumbnail generation.")
+        return result
+
+    def _thumbnail_result(self, job, inputs, path, control):
+        identity, descriptor, video, record = inputs
+        outputs = self.repository.get_current_outputs((job.recording_id,))
+        front = next((item.artifact for item in outputs
+                      if item.target.kind == FRONT_PREVIEW_KIND and item.artifact is not None
+                      and descriptor is not None and item.artifact.cache_identity == descriptor.cache_identity), None)
+        if front is not None:
+            try:
+                opened = self.artifact_store.open_media(front.output_relative_path, front.size_bytes,
+                                                       front.cache_identity, front.manifest)
+                try:
+                    return self._thumbnail_from_video(opened.descriptor, path,
+                        bag_start_ns=record.start_time_ns, coverage_start_ns=front.coverage_start_ns,
+                        topic=front.manifest.get("source", {}).get("topic", "front-preview"), control=control)
+                finally:
+                    os.close(opened.descriptor)
+            except (ArtifactStoreError, RuntimeError, ValueError) as error:
+                if isinstance(error, JobCanceled):
+                    raise
+                logger.warning("Prepared video sampling unavailable for job %s; trying source frames.", job.id)
+        if descriptor is not None:
+            try:
+                return self.thumbnail_processor.process(descriptor, path, control=control)
+            except FrontPreviewProcessingError:
+                if video is None:
+                    raise
+        if video is not None:
+            video_path, video_identity = video
+            opened = os.open(video_path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+            try:
+                if source_file_identity(os.fstat(opened)) != video_identity:
+                    raise FrontPreviewProcessingError("thumbnail_inputs_changed", "The companion video changed before sampling.")
+                return self._thumbnail_from_video(opened, path, source_identity=video_identity,
+                    bag_start_ns=record.start_time_ns, topic="companion-video", control=control)
+            finally:
+                os.close(opened)
+        raise FrontPreviewProcessingError("thumbnail_camera_unavailable", "No usable camera frame could be extracted.")
+
     def _run_thumbnail_job(self, job: JobRecord) -> None:
         workspace = None
         store = self.thumbnail_artifact_store
@@ -192,20 +252,21 @@ class SerialWorker:
                 control.checkpoint("setup", force=True)
             if store is None or self.thumbnail_processor is None:
                 raise FrontPreviewProcessingError("thumbnail_processor_unavailable", "Thumbnail processing is unavailable.")
-            resolution = self.resolver.resolve(job.recording_id)
-            descriptor = resolution.descriptor
-            if descriptor is None or thumbnail_cache_identity(descriptor.cache_identity) != job.cache_identity:
+            inputs = self._thumbnail_inputs(job.recording_id)
+            identity = inputs[0]
+            if thumbnail_cache_identity(identity) != job.cache_identity:
                 raise FrontPreviewProcessingError("thumbnail_inputs_changed", "Thumbnail inputs changed or are unavailable. Rescan and prepare again.")
             workspace = store.create_workspace(job.id)
             path = workspace / "thumbnail.png"
-            result = self.thumbnail_processor.process(descriptor, path, control=control)
+            result = self._thumbnail_result(job, inputs, path, control)
             details = path.stat(follow_symlinks=False)
             manifest = {
                 "schema_version": 2, "artifact_kind": THUMBNAIL_KIND,
                 "cache_identity": job.cache_identity, "processor_version": THUMBNAIL_POLICY,
-                "front_source_identity": descriptor.cache_identity,
+                "front_source_identity": identity,
                 "source": {"topic": result["topic"], "record_timestamp_ns": result["record_timestamp_ns"],
-                           "record_timestamps_ns": result["record_timestamps_ns"]},
+                           "record_timestamps_ns": result["record_timestamps_ns"],
+                           "frame_times_seconds": result["frame_times_seconds"]},
                 "output": {"file_name": "thumbnail.png", "mime_type": "image/png",
                            "size_bytes": details.st_size, "width": result["width"], "height": result["height"],
                            "frame_width": result["frame_width"], "frame_count": result["frame_count"],
@@ -213,8 +274,8 @@ class SerialWorker:
                            "file_identity": {"device_id": details.st_dev, "inode": details.st_ino,
                                              "mtime_ns": details.st_mtime_ns}},
             }
-            current = self.resolver.resolve(job.recording_id).descriptor
-            if current is None or current != descriptor:
+            current = self._thumbnail_inputs(job.recording_id)
+            if current != inputs:
                 raise FrontPreviewProcessingError("thumbnail_inputs_changed", "Thumbnail inputs changed during generation. Rescan and prepare again.")
             if control is not None:
                 control.publishing_gate()
@@ -222,8 +283,8 @@ class SerialWorker:
             self.repository.complete_job(job.id, ArtifactWrite(
                 recording_id=job.recording_id, kind=job.kind, cache_identity=job.cache_identity,
                 output_relative_path=published.output_relative_path, mime_type="image/png",
-                size_bytes=published.size_bytes, coverage_start_ns=result["coverage_ns"],
-                coverage_end_ns=result["coverage_ns"], manifest=manifest,
+                size_bytes=published.size_bytes, coverage_start_ns=int(result["record_timestamps_ns"][0]) - inputs[3].start_time_ns,
+                coverage_end_ns=int(result["record_timestamps_ns"][-1]) - inputs[3].start_time_ns, manifest=manifest,
             ))
             logger.info("Thumbnail job %s succeeded.", job.id)
         except JobCanceled:
@@ -241,21 +302,20 @@ class SerialWorker:
                 except ArtifactStoreError:
                     logger.exception("Owned workspace cleanup failed for thumbnail job %s.", job.id)
 
-    def _description_front(self, job):
+    def _description_thumbnail(self, job):
         outputs = self.repository.get_current_outputs((job.recording_id,))
         front = next((item.artifact for item in outputs
-                      if item.target.kind == FRONT_PREVIEW_KIND
+                      if item.target.kind == THUMBNAIL_KIND
                       and item.target.target_state == "available"
                       and item.artifact is not None), None)
-        if front is None or description_cache_identity(front.cache_identity) != job.cache_identity:
-            raise DescriptionProcessingError("ai_front_preview_unavailable", "A matching prepared front preview is required for the AI description.")
+        if front is None or description_cache_identity(front.manifest.get("front_source_identity", "")) != job.cache_identity:
+            raise DescriptionProcessingError("ai_thumbnail_unavailable", "Matching prepared thumbnails are required for the AI description.")
         current = self.repository.get_current_artifact_for_delivery(
-            job.recording_id, FRONT_PREVIEW_KIND, front.id,
-            _front_planner_identity(front_topic=self.topic_name, profile=self.processor.profile,
-                                    encoder_identity=self.media_encoder_identity),
+            job.recording_id, THUMBNAIL_KIND, front.id,
+            hashlib.sha256(THUMBNAIL_POLICY.encode()).hexdigest(),
         )
         if current is None:
-            raise DescriptionProcessingError("ai_front_preview_changed", "The front preview changed. Prepare this recording again.")
+            raise DescriptionProcessingError("ai_thumbnail_changed", "The thumbnails changed. Prepare this recording again.")
         return current
 
     def _run_description_job(self, job: JobRecord) -> None:
@@ -268,17 +328,18 @@ class SerialWorker:
                 control.checkpoint("setup", force=True)
             if store is None or self.description_processor is None:
                 raise DescriptionProcessingError("ai_model_unavailable", "AI description processing is unavailable.")
-            front = self._description_front(job)
-            opened = self.artifact_store.open_media(front.output_relative_path, front.size_bytes,
+            front = self._description_thumbnail(job)
+            opened = self.thumbnail_artifact_store.open_thumbnail(front.output_relative_path, front.size_bytes,
                                                    front.cache_identity, front.manifest)
             workspace = store.create_workspace(job.id)
             path = workspace / "description.json"
-            result = self.description_processor.process(opened.descriptor, path, control=control)
+            result = self.description_processor.process(opened.descriptor, path, control=control, thumbnail_manifest=front.manifest)
             details = path.stat(follow_symlinks=False)
             manifest = {
-                "schema_version": 1, "artifact_kind": AI_DESCRIPTION_KIND,
+                "schema_version": 2, "artifact_kind": AI_DESCRIPTION_KIND,
                 "cache_identity": job.cache_identity, "processor_version": DESCRIPTION_POLICY,
-                "front_preview_identity": front.cache_identity,
+                "visual_source_identity": front.manifest["front_source_identity"],
+                "thumbnail_identity": front.cache_identity,
                 "result": result,
                 "output": {"file_name": "description.json", "mime_type": "application/json",
                            "size_bytes": details.st_size,
@@ -286,10 +347,10 @@ class SerialWorker:
                            "file_identity": {"device_id": details.st_dev, "inode": details.st_ino,
                                              "mtime_ns": details.st_mtime_ns}},
             }
-            current = self._description_front(job)
+            current = self._description_thumbnail(job)
             if current.id != front.id or current.manifest != front.manifest:
-                raise DescriptionProcessingError("ai_front_preview_changed", "The front preview changed during description generation. Retry preparation.")
-            self.artifact_store.validate_media(current.output_relative_path, current.size_bytes,
+                raise DescriptionProcessingError("ai_thumbnail_changed", "The thumbnails changed during description generation. Retry preparation.")
+            self.thumbnail_artifact_store.validate_thumbnail_artifact(current.output_relative_path, current.size_bytes,
                                                current.cache_identity, current.manifest)
             if control is not None:
                 control.publishing_gate()
@@ -976,7 +1037,7 @@ def create_worker(
                                                    threads=config.description_threads),
         description_artifact_store=ArtifactStore(config.derived_root, config.ffmpeg_path,
                                                 config.ffprobe_path, AI_DESCRIPTION_KIND),
-        thumbnail_processor=ThumbnailProcessor(),
+        thumbnail_processor=ThumbnailProcessor(ffmpeg=config.ffmpeg_path, ffprobe=config.ffprobe_path),
         thumbnail_artifact_store=ArtifactStore(config.derived_root, config.ffmpeg_path,
                                               config.ffprobe_path, THUMBNAIL_KIND),
         admission_check=admission_check,

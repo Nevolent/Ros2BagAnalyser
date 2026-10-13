@@ -33,7 +33,11 @@ class RecordingRepository:
         return SimpleNamespace(generation=1)
 
     def get_catalog_state(self) -> SimpleNamespace:
-        return SimpleNamespace(successful_completed_at=None)
+        return SimpleNamespace(successful_completed_at=None, duration_ms=20)
+
+
+def test_rescan_reports_saved_duration_including_scheduling():
+    assert CatalogService(RecordingScanner(), RecordingRepository()).rescan().duration_ms == 20
 
 
 def test_rescan_rejects_source_that_is_unavailable_before_scan() -> None:

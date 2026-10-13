@@ -81,6 +81,18 @@ def _all_components(value: float) -> tuple[float, ...]:
     return (value, value, value, value, value, value)
 
 
+def test_sample_serialization_preserves_exact_float_bytes_and_null_gaps(tmp_path):
+    database = tmp_path / "recording.db3"
+    _create_imu_database(database, [99])
+    output = tmp_path / "series.json"
+    ImuSeriesProcessor(lambda _: (-0.0, 1e300, 5e-324, math.nan, math.inf, -math.inf)).process(
+        _descriptor(database, 100, 1), output,
+    )
+    assert output.read_bytes() == (
+        b'{"schema_version":2,"samples":[["-1",-0.0,1e+300,5e-324,null,null,null]]}'
+    )
+
+
 class _CancelAtFirstCheckpoint:
     phases: list[str]
 

@@ -50,6 +50,8 @@ test('sidebar tabs lead the panel; all topics are scrollable, safe and truncated
   await expect(page.locator('.folder-heading')).toContainText('Topics');
   const list = page.getByRole('region', { name: 'Recording topics' });
   await expect(list.getByRole('listitem')).toHaveCount(180);
+  await expect(list).not.toContainText('cdr');
+  await expect(list.getByRole('listitem').last()).toHaveCSS('border-bottom-width', '0px');
   const viewport = page.locator('.recording-topics-list');
   expect(await viewport.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
   await expect(list).toContainText('/camera/<script>topic</script>');

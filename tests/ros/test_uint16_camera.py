@@ -65,10 +65,11 @@ def test_serialized_grayscale_camera_creates_preview_and_thumbnail_with_record_t
     assert [round(float(f.to_ndarray(format="gray").mean())) for f in frames] == pytest.approx([32, 96, 128], abs=3)
     thumbnail = tmp_path / "thumbnail.png"
     facts = ThumbnailProcessor().process(descriptor, thumbnail)
-    assert facts["topic"] == topic.name and facts["frame_count"] == 5
-    assert facts["record_timestamps_ns"] == ["1050000000", "1250000000", "1250000000", "1250000000", "1250000000"]
+    assert facts["topic"] == topic.name and facts["frame_count"] == 6
+    assert facts["record_timestamps_ns"] == ["1050000000"] + ["1250000000"] * 5
+    assert facts["frame_times_seconds"] == [.05] + [.25] * 5
     with av.open(str(thumbnail)) as container:
         frame = next(container.decode(video=0)).to_ndarray(format="rgb24")
-    assert frame.shape == (4, 40, 3)
-    assert frame[0, 0].tolist() == [96, 96, 96]
+    assert frame.shape == (4, 48, 3)
+    assert [frame[0, index * 8].tolist() for index in range(6)] == [[96] * 3] + [[128] * 3] * 5
     assert inventory(source) == before

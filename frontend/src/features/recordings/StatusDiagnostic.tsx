@@ -12,6 +12,7 @@ export function StatusDiagnostic({
   tone = 'error',
   outputs,
   className = '',
+  tooltipClassName = '',
   raw = false,
   navigable = false,
   side = 'left',
@@ -21,6 +22,7 @@ export function StatusDiagnostic({
   tone?: 'error' | 'success' | 'muted';
   outputs?: Recording['analysisOutputs'];
   className?: string;
+  tooltipClassName?: string;
   raw?: boolean;
   navigable?: boolean;
   side?: 'left' | 'right';
@@ -146,7 +148,7 @@ export function StatusDiagnostic({
             ref={popup}
             id={id}
             role="tooltip"
-            className={`recording-diagnostic-tooltip status-${tone}`}
+            className={`recording-diagnostic-tooltip status-${tone} ${tooltipClassName}`}
             onPointerEnter={show}
             onPointerLeave={leave}
           >

@@ -28,6 +28,45 @@ def _store(derived: Path) -> ArtifactStore:
     )
 
 
+def test_repeated_archive_validation_reuses_digests_but_detects_changed_bytes(tmp_path, monkeypatch):
+    from rosbag_analyser import artifact_store
+    store = _store(tmp_path)
+    paths = [tmp_path / f"sample-{index}.json" for index in range(300)]
+    payload = b'{"samples":[]}'
+    digest = hashlib.sha256(payload).hexdigest()
+    for path in paths:
+        path.write_bytes(payload)
+    reads = []
+    pread = os.pread
+    def observed_read(*args):
+        reads.append(args[1])
+        return pread(*args)
+    monkeypatch.setattr(artifact_store.os, "pread", observed_read)
+    def validate(path):
+        with path.open("rb") as stream:
+            store._validate_content(stream.fileno(), os.fstat(stream.fileno()), digest)
+    for path in paths:
+        validate(path)
+    assert len(reads) == 300
+    for path in paths:
+        validate(path)
+    assert len(reads) == 300, "Rescans must not cyclically evict every saved checksum."
+    previous = paths[0].stat()
+    paths[0].write_bytes(b'{"samples":{}}')
+    os.utime(paths[0], ns=(previous.st_atime_ns, previous.st_mtime_ns))
+    with pytest.raises(ArtifactStoreError):
+        validate(paths[0])
+    # Verify eviction separately with a small bound, without creating 10k files.
+    monkeypatch.setattr(artifact_store, "MAX_VALIDATION_CACHE_ENTRIES", 2)
+    store._content_validation_cache.clear()
+    for path in paths[1:4]:
+        validate(path)
+    assert len(store._content_validation_cache) == 2
+    count = len(reads)
+    validate(paths[1])
+    assert len(reads) == count + 1
+
+
 def _manifest(path: Path, identity: str) -> dict[str, object]:
     details = path.stat(follow_symlinks=False)
     return {

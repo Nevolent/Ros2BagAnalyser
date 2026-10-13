@@ -47,6 +47,14 @@ def usable_topics(topics, message_type: str) -> tuple[TopicFact, ...]:
     return tuple(sorted(candidates, key=lambda topic: (-topic.message_count, topic.name)))
 
 
+def thumbnail_topics(topics) -> tuple[TopicFact, ...]:
+    """Prefer front views, but allow other cameras for a fallback thumbnail."""
+    return tuple(sorted((topic for topic in topics
+                         if (topic.message_type == "sensor_msgs/msg/Image" or is_uint16_camera_topic(topic))
+                         and topic.serialization_format == "cdr" and topic.message_count > 0
+                         and not is_ouster_measurement_topic(topic)), key=_camera_order))
+
+
 def select_topic(topics, preferred: str, message_type: str) -> TopicFact | None:
     candidates = usable_topics(topics, message_type)
     if message_type == "sensor_msgs/msg/Image":

@@ -5,7 +5,7 @@ from fractions import Fraction
 
 
 MAX_ESTIMATE_SAMPLES = 10
-ESTIMATE_METHOD = "recent_rate_v2"
+ESTIMATE_METHOD = "recent_rate_v3"
 MAX_ESTIMATED_TOTAL_MS = 2**63 - 1
 
 
@@ -37,6 +37,15 @@ def estimate_total_ms(
     )
     if len(valid) < 2:
         return FrozenEstimate(None, "insufficient_history", len(valid))
+    # Avoid extrapolating a rate from tiny bags to a much larger recording (or
+    # vice versa). Fixed setup costs otherwise dominate those predictions.
+    comparable = tuple(
+        sample for sample in valid
+        if work_units <= sample.work_units * 4 and sample.work_units <= work_units * 4
+    )
+    if len(comparable) < 2:
+        return FrozenEstimate(None, "insufficient_history", len(comparable))
+    valid = comparable
 
     # An elapsed/estimate progress bar needs headroom: a median will be exceeded
     # by roughly half of comparable runs. Use the nearest-rank 80th percentile

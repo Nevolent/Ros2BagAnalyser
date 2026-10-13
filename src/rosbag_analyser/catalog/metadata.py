@@ -7,7 +7,7 @@ import stat
 from typing import Any
 
 import yaml
-from yaml.events import AliasEvent
+from yaml.events import AliasEvent, CollectionEndEvent, CollectionStartEvent, NodeEvent
 
 from .limits import POSTGRES_BIGINT_MAX, POSTGRES_INTEGER_MAX, is_postgres_text
 from .paths import SourceFileIdentity, source_file_identity
@@ -48,6 +48,31 @@ class LimitedSafeLoader(yaml.SafeLoader):
             return super().compose_node(parent, index)
         finally:
             self._depth -= 1
+
+
+def _load_bounded_yaml(raw: bytes) -> Any:
+    loader = getattr(yaml, "CSafeLoader", None)
+    if loader is None:
+        return yaml.load(raw, Loader=LimitedSafeLoader)
+    # The C composer does not call compose_node. Check its event stream before
+    # construction, retaining the same limits as the pure-Python fallback.
+    try:
+        depth = nodes = aliases = 0
+        for event in yaml.parse(raw, Loader=loader):
+            if isinstance(event, NodeEvent):
+                nodes += 1
+                aliases += isinstance(event, AliasEvent)
+                if nodes > MAX_YAML_NODES or depth + 1 > MAX_YAML_DEPTH or aliases > MAX_YAML_ALIASES:
+                    raise yaml.YAMLError("YAML complexity limit exceeded")
+            if isinstance(event, CollectionStartEvent):
+                depth += 1
+            elif isinstance(event, CollectionEndEvent):
+                depth -= 1
+        return yaml.load(raw, Loader=loader)
+    except yaml.YAMLError:
+        # libyaml rejects some escapes earlier than the Python parser. Retain
+        # the existing value diagnostics (and all limits) for those documents.
+        return yaml.load(raw, Loader=LimitedSafeLoader)
 
 
 @dataclass(frozen=True)
@@ -103,7 +128,7 @@ def parse_metadata_file(
 ) -> ParsedMetadata:
     raw = _read_bounded_regular_file(path, expected_identity=expected_identity)
     try:
-        document = yaml.load(raw, Loader=LimitedSafeLoader)
+        document = _load_bounded_yaml(raw)
     except (yaml.YAMLError, RecursionError) as error:
         raise MetadataError(
             "metadata_yaml_invalid", "The recording metadata is not valid YAML."

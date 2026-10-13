@@ -18,7 +18,8 @@ Browser -> private proxy -> FastAPI -> PostgreSQL
 ```
 
 The API validates requests and delivers data. Services coordinate workflows;
-processors decode and transcode. Startup does not scan, prepare or migrate.
+processors decode and transcode. Startup starts an addition-discovery monitor,
+with its first check after 15 seconds; it does not migrate or provision models.
 API shutdown gives active HTTP responses ten seconds to finish before cancelling
 them and closing request resources, so stalled media reads cannot prevent restart.
 
@@ -38,17 +39,28 @@ them and closing request resources, so stalled media reads cannot prevent restar
 The scanner has depth, entry, directory and recording limits and never follows
 symlinks. A damaged recording is isolated. An incomplete scan cannot replace the
 last successful catalog or mark unseen recordings missing. A successful full rescan
-queues missing, failed or cancelled thumbnails and completes available outputs for
-recordings with prior non-thumbnail jobs or artifacts. Scheduling and catalog updates
+completes missing, failed or cancelled available outputs for all recordings. Scheduling and catalog updates
 commit atomically; a scheduling error rolls both back. Valid compatible artifacts and
-active jobs are reused, and unavailable inputs are skipped. New or thumbnail-only
-recordings receive only thumbnail work. Preparation admission still applies.
+active jobs are reused, and unavailable inputs are skipped. Preparation admission still applies.
+Component/target writes and output-state reads use PostgreSQL pipelines; ready and
+active outputs avoid per-output savepoints. Storage admission is checked once per
+bounded preparation batch and again by the worker before claiming work. Saved rescan
+duration includes catalog validation and scheduling; completion is recorded afterward.
 
-Each browser page load silently requests addition-only discovery in the catalog scan
-pool; concurrent requests share one operation. Discovery skips known recording
+The API checks addition-only discovery every 15 seconds, even without a browser.
+Page-load discovery shares the same in-flight operation in the catalog scan pool.
+Checks pause during maintenance or full rescan; failures retry on a later check.
+Discovery skips known recording
 roots before enumerating their contents, and inspects only new paths. Unreadable or
-incomplete new bags remain unsaved for a later page load or full rescan. New records,
-targets and unattempted thumbnails commit together under the catalog/queue locks.
+incomplete new bags remain unsaved for a later check or full rescan. New folders
+must have an unchanged direct-file inventory for 30 seconds, no nonempty SQLite
+WAL/journal, and the same inventory after inspection. Observed changes reset the
+quiet period. A copy paused longer than this period cannot be distinguished from
+a finished copy; worker identity checks still protect publication. Restart clears
+the observations. All new inventories are observed before inspecting individual bags,
+so a slow earlier bag cannot postpone another folder's quiet period. An empty
+discovery skips the catalog/queue write transaction. New records, targets and all available output jobs commit together
+under the catalog/queue locks; admission or scheduling failure rolls the addition back.
 Existing rows, targets, jobs and artifacts stay unchanged; the full-scan generation,
 completion time and duration do not advance. Discovery can initialize targets at
 generation zero. Known-path presence is retained without inspecting contents;
@@ -57,13 +69,21 @@ Only a full rescan reconciles changes, moves and missing sources.
 
 Six tables hold domain state: `recordings`, `source_components`, `artifacts`,
 `jobs`, `catalog_state` and `preparation_targets`. Applied SQL migrations,
-currently through `0013_thumbnail.sql`, remain part of the upgrade path.
+currently through `0014_comparable_estimates.sql`, remain part of the upgrade path.
+Historical migration files stay unchanged. The runner skips the estimate constraint
+in 0008, fully replaced by 0014, so replay preserves saved `recent_rate_v3` jobs.
 
 Catalog and processing reads use saved projections, without source access per row.
+Catalog lists also avoid opening every derived file: readiness reflects the last
+validated saved artifact. Details, preparation, worker publication and delivery
+retain artifact validation.
 Each successful scan saves six preparation targets per recording. Planner or
 configuration changes require an explicit rescan; the worker revalidates inputs.
 
 The scan saves topic names, types and counts in `recordings.scan_details`.
+Metadata uses PyYAML's native safe parser when available, with an event pass enforcing
+the existing byte, depth, node and alias limits before construction; the bounded
+Python parser remains the fallback.
 Timestamp inspection uses a verified immutable SQLite descriptor without loading
 payloads, bounded to two million messages per pass, a shared five-second query
 budget and 256 Image/IMU topics.
@@ -100,7 +120,7 @@ identities cannot be duplicated. Retry resolves current inputs.
 Analysis readiness excludes thumbnails. Any failed analysis output, including AI,
 makes the recording Failed while preserving ready siblings. Unavailable front input
 makes it Partially prepared when another analysis output is ready, and Failed
-otherwise. Other state precedence is
+otherwise, after checking active work. Other state precedence is
 processing, queued, ready, partially prepared, not planned. Ready requires a
 validated front preview and AI description, with all available analysis outputs ready and
 no active or failed analysis output. Any ready analysis output with other preparation still needed
@@ -109,35 +129,42 @@ camera target or adds an encoder target. Output failures retain their diagnostic
 and Processing retry controls. Unavailable top-down, IMU and encoder inputs are optional;
 Analysis can review available output independently.
 
-Thumbnails are independent jobs reading the main eligible front camera directly
-from immutable source SQLite, without preparing videos or AI descriptions. Two sequential
-message-header scans select five frames at approximate sixths of the record-time span,
+The default pipeline is front preview, thumbnail strip, AI, top-down, IMU and encoders.
+Reordering cannot run thumbnails before active front work, or AI before active
+front/thumbnail jobs. Thumbnails first sample the validated front MP4 at six
+evenly spaced positions. Without usable front video, other supported raw cameras
+or a companion AVI provide fallback images, including a single usable frame.
+The AVI fallback needs no CSV. Decoder subprocesses honor pause and cancellation.
+Raw fallback uses two sequential immutable SQLite message-header scans selecting
+six frames at approximate sevenths of the record-time span,
 keeping the last message at duplicate timestamps. The middle frame is the default.
-All five selections share the second scan; repeated selections decode once.
+All six selections share the second scan; repeated selections decode once.
 At most 256 candidate streams are inspected;
 Ouster measurement images are excluded before camera validation. Payloads are bounded
-and only candidate first frames and the five chosen frames are decoded. Scans retain only stream
-endpoints and five selections, checkpoint every 1,024 rows, and have a 30-second
+and only up to four initial candidates per stream and the chosen frames are decoded.
+Damaged samples are skipped while retaining even one usable image. Scans retain only stream
+endpoints and six selections, checkpoint every 1,024 rows, and have a 30-second
 budget between checkpoints; expiration reports `thumbnail_query_timeout`. No source index is changed.
-A completed inspection with no supported colour camera is unavailable for that input identity;
+A completed inspection with no usable camera or video frame is unavailable for that input identity;
 it retains the attempt diagnostic without appearing as an actionable failure or queuing another
 identical attempt. Changed inputs require an explicit rescan. Each tile retains aspect ratio
-within 480 pixels per side; five tiles share a horizontal PNG strip capped at 5 MiB.
+within 448 pixels per side; one to six tiles share a schema-2 horizontal PNG strip capped at 6 MiB.
 The strip is validated with tile dimensions, timestamps, decoded content and a
 SHA-256 digest before publication and delivery.
-Unchanged catalog image validation is cached against full file facts and manifest identity
-in a bounded 10,000-entry cache; anchored path/manifest checks still run on each poll and delivery.
+Unchanged detail/delivery image validation is cached against full file facts and manifest identity
+in a bounded 10,000-entry cache; anchored path/manifest checks still run when validating artifacts.
 Unchanged delivery reuses the validation cache. Identity-bound URLs use private
 24-hour browser caching, so browsing and hover require one download per strip.
-Identity derives from saved front-source identity and the fixed thumbnail policy;
-no prepared preview is required. Thumbnail
-estimates use one work unit per strip. Migration 0013 derives targets from saved front
-facts without source access or creating jobs; full rescan retries missing or failed thumbnails,
+Identity binds recording/cache anchors, metadata, SQLite and optional AVI facts to
+the fixed policy, independently of the front encoder. Thumbnail estimates use one
+work unit. Historical migration 0013 retains its original front-based policy;
+Full rescan saves current visual identities and retries missing or failed thumbnails,
 and Prepare Selected fills missing output or retries failed/cancelled attempts.
 
-AI descriptions are separate jobs after the front preview. They read its default
-stream through a validated, held file descriptor and sample six chronological PNG
-frames at a maximum side of 448 pixels. Qwen3-VL-2B-Instruct Q8_0 and the matching
+AI descriptions read the saved strip through a validated, held descriptor, splitting
+its exact pixels into one to six chronological PNG tiles rather than sampling video
+again. Schema-2 JSON binds visual-source and thumbnail identities.
+Qwen3-VL-2B-Instruct Q8_0 and the matching
 F16 vision projector run offline through pinned llama.cpp CPU binaries, using the
 application's Python environment. A job-owned server accepts one constrained JSON
 completion over a private Unix socket; it exposes no TCP listener. The prompt and
@@ -145,11 +172,10 @@ formatter retain the three required bunker cues: gravel-like terrain, dark
 curtains and artificial lighting. Four CPU inference threads are the default.
 
 Validated JSON is published atomically and exposed in recording details and the saved catalog.
-Inference errors leave existing artifacts intact. Migration 0012 derives current
-description targets from saved front targets without scanning sources or creating
-jobs; the new identity prevents reuse of old model/sampling output. Prepare
-Selected reuses compatible artifacts; a reordered description waits for active
-front work. Cancellation terminates inference, the server and decoders; pause
+Inference errors leave existing artifacts intact. Historical migration 0012 retains
+its original front-based policy; Full rescan selects the current shared-image policy,
+preventing reuse of old model/sampling output. Prepare Selected reuses compatible
+artifacts. Cancellation terminates inference, the server and decoders; pause
 holds their process group at a checkpoint before publication. Generation has a
 300-second active-time limit, excluding pauses. Model provisioning is explicit,
 verified and separate from application startup and recording processing.
@@ -163,10 +189,14 @@ The UI exposes cancellation; pause/resume remains available through the API.
 
 Elapsed and active time come from persisted timestamps. Estimates use the ten
 newest compatible artifact-backed successes, with at least two samples, excluding
-paused time. `recent_rate_v2` uses the 80th-percentile runtime per input byte plus
-15% headroom. Queue estimates refresh together when a recording's first output
-starts, then freeze across output handoffs. An older useful estimate survives
-when refreshed history has too few samples.
+paused time. `recent_rate_v3` requires samples within a factor of four of current
+input units, then uses the 80th-percentile rate plus 15% headroom. AI and thumbnails
+each use one fixed unit; other outputs retain input-byte units. Incomparable history
+produces an unavailable estimate. Migration 0014 preserves historical predictions.
+Queue estimates refresh together when a recording's first output
+starts, then freeze across output handoffs. A prior v3 prediction survives when
+sample artifacts disappear; older extrapolation methods are replaced or marked
+unavailable before the first output starts. Running predictions remain frozen.
 
 The overview groups the current recording run by persisted job timestamps,
 including completed siblings and queued outputs, excluding older reused output.
@@ -185,10 +215,10 @@ Queued work and recordings are preserved; recovery is in [Operations](OPERATIONS
 
 | Output | Format and identity |
 | --- | --- |
-| Thumbnail | `thumbnail-v2:default-front:record-sixths:five:side480:png-strip`; schema-2 PNG strip with five source frames |
+| Thumbnail | `thumbnail-v3:preview-or-camera:shared-six:side448:png-strip`; schema-2 PNG strip with one to six shared frames |
 | Front preview | `front-preview-v8`; validated MP4 for the main supported raw CDR camera stream |
 | Top-down preview | `topdown-preview-v2`; AVI frames timed by CSV Unix timestamps; H.264/yuv420p MP4 |
-| AI description | `ai-description-v2`; bounded JSON with the short description and bunker boolean, tied to front identity and fixed model/prompt/sampling policy |
+| AI description | `ai-description-v3`; schema-2 JSON with description and bunker boolean, tied to visual-source/thumbnail identities and fixed model/prompt policy |
 | IMU | `imu-series-v2`; schema-2 JSON with three angular-velocity and three linear-acceleration axes |
 | Encoders | `encoder-series-v1`; schema-2 JSON with six RPM channels in FL, FR, ML, MR, RL, RR order |
 
@@ -232,10 +262,16 @@ New thumbnail, description and telemetry manifests bind validated bytes with SHA
 Publication flushes owned output and refreshes its final file facts only after verifying
 that digest. Delivery may accept CIFS device/inode/timestamp changes only when the held
 file still matches the saved content digest; hash checks are cached against complete live
-file facts in a bounded 256-entry cache. Legacy manifests retain strict file-fact checks;
+file facts in a bounded 10,000-entry cache per artifact store, retaining keys rather
+than file contents so repeated archive scans avoid rereading unchanged telemetry.
+Legacy manifests retain strict file-fact checks;
 rejected legacy artifacts require explicit regeneration, never automatic repair.
 
 Processors use bounded payload reads and one ordered SQLite query per stream.
+The query sorts only message IDs, timestamps and lengths, then reads selected
+payloads by primary key; large images never enter the sort buffer. Cancellation and
+pause checkpoints also run during the initial header scan/sort. Telemetry serializes
+each complete sample once, preserving the existing JSON bytes and null-gap policy.
 Video validation streams packet timestamps through ffprobe with bounded,
 size-dependent timeouts. Worker control checks reuse its advisory-lock session
 in short transactions. Readiness runs in the bounded catalog pool. Low derived
@@ -324,7 +360,10 @@ and abort/version guards. A failed page preserves the last complete snapshot.
 Successful siblings stay with failed recordings; retries submit only failed job
 IDs. History groups latest successful outputs for recordings without failures.
 Output counts
-offer hover/focus lists; history runtimes list each output and the total. Move to top
+offer hover/focus lists of names; history runtimes and sizes list each output's
+duration and bytes. Triggers fill their cells. Desktop row hover/focus advances
+the thumbnail immediately, then every 750 ms; phones and reduced motion stay still.
+Move to top
 stably promotes selected recording groups under the queue lock, preserving output
 order and unselected group order. Legacy API earlier/later controls remain supported.
 

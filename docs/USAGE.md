@@ -9,8 +9,9 @@
    to read it in full. Clicking the image, title, description, tag or space between
    them opens Analysis. **Compact** offers the dense list. The view choice persists
    during navigation; opening or refreshing the page starts in Thumbnail.
-   Hover the image to cycle through five frames spread across the recording;
-   leaving restores the middle frame. Reduced motion keeps the middle frame still.
+   Hover anywhere on a row to immediately show the next image, then cycle every
+   750 ms through up to six frames. Leaving restores the middle frame. Phones
+   and reduced motion keep the image still; keyboard focus also activates desktop previews.
    The search clear icon stays visible at the right end of the field.
    Opening or refreshing the page silently discovers new readable bags. Known
    recordings stay unchanged; for source changes, moved/removed bags or a complete
@@ -19,14 +20,19 @@
    show the same spinning icon and cannot start another scan. Hover or keyboard
    focus shows **Scanning archive**. Unchanged databases reuse saved timestamp
    checks while full rescan refreshes source health and processing targets.
-   Discovery queues thumbnails for new bags. Full rescan also retries failed or
-   cancelled thumbnails and fills missing, failed or outdated outputs for recordings
-   previously submitted for preparation. Valid compatible output and active work are
-   reused; new or thumbnail-only recordings receive only thumbnails. A processing
+   The server checks for new bags every 15 seconds, even without an open browser.
+   A new folder must stay unchanged for 30 seconds and pass readable-bag checks
+   before it enters Processing. The source files stay in their original folder.
+   Front video runs first, followed by up to six thumbnails, AI using those same
+   images, then other available previews and telemetry. Without a usable front
+   video, another supported camera or companion video can provide even one thumbnail.
+   Full rescan fills missing, failed or outdated available outputs for all recordings.
+   Valid compatible output and active work are reused. A processing
    policy change regenerates only its affected outputs and dependent output. Thumbnail placeholders
-   show No Thumbnail, Queued, Processing or Thumbnail failed. Failed or cancelled
+   use muted text for No Thumbnail, Queued or Processing. Thumbnail failures
+   show No Thumbnail; their diagnostics appear in Analysis. Failed or cancelled
    thumbnails can be retried in Processing or through Prepare Selected.
-   A recording with no supported colour camera shows No Thumbnail and does not offer
+   A recording with no usable camera or video frame shows No Thumbnail and does not offer
    an identical retry; changed camera inputs need Full rescan first.
 2. Select recordings and choose **Prepare Selected**, then confirm. This prepares
    available thumbnails, camera previews, AI descriptions, IMU and wheel encoder data, reusing compatible output.
@@ -36,7 +42,9 @@
 3. In **Processing**, follow the queue, cancel or reorder waiting work, and
    retry failures. **Move to top** promotes all selected recordings together, preserving
    their order. Hover or focus Outputs to see the queued or completed outputs;
-   History runtime lists each output's duration and the total. One output runs at a time.
+   History runtime lists each output's duration; Size lists each output's file size.
+   These hover regions fill the cells, including above and below the numbers.
+   One output runs at a time.
 4. Open a recording in **Analysis**. Play, pause or seek on the shared timeline;
    choose **Angular velocity**, **Linear acceleration** or **Encoders** in the graph
    menu. Combine X/Y/Z axes or FL/FR/ML/MR/RL/RR wheels with the adjacent checkboxes,
@@ -92,7 +100,7 @@ Hover or focus a red status for its diagnostic, or **Ready** / **Partially prepa
 for a fixed-order list with prepared outputs in green and available pending outputs in grey.
 Failed recordings retain ready output and show failed-output diagnostics below that list.
 Unavailable inputs are omitted. Thumbnails do not affect Analysis status or appear in
-its hover list or diagnostics. Thumbnail diagnostics appear beside the thumbnail on the right.
+its hover list or diagnostics. Thumbnail diagnostics appear in Analysis under Recording errors.
 Analysis has Details and Topics
 views. Details shows the short AI description after the source components, with a
 **Bunker** tag only when the model identifies all required visual cues. Diagnostics
@@ -103,6 +111,9 @@ graph and in Review health diagnostics; gaps alone do not prove data loss.
 
 The processing percentage compares elapsed time with an estimate, capped at
 99%. **Estimate exceeded** means processing has taken longer than predicted.
+Estimates need at least two recent compatible successes with comparable input
+sizes; otherwise the estimate is unavailable. AI estimates use a fixed image-set
+work unit rather than the whole bag's size.
 Cancellation takes effect at a safe checkpoint. Browser refresh preserves jobs;
 a worker restart interrupts running work, which requires Retry, Prepare Selected or Full rescan. Camera loading
 retries automatically, then offers a **Retry** button if needed.

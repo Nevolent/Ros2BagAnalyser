@@ -132,13 +132,7 @@ async def discover_recordings(request: Request) -> DiscoveryResponse:
         return DiscoveryResponse(added_count=0)
     # Share in-flight work across refreshing browsers. Shielding leaves the
     # bounded scan alive when an individual browser navigates away.
-    future = getattr(request.app.state, "catalog_discovery_future", None)
-    if future is None or future.done():
-        future = asyncio.get_running_loop().run_in_executor(
-            request.app.state.catalog_scan_executor,
-            request.app.state.catalog_service.discover_new,
-        )
-        request.app.state.catalog_discovery_future = future
+    future = discovery_future(request.app)
     try:
         added_count = await asyncio.shield(future)
     except RootScanError as error:
@@ -150,6 +144,17 @@ async def discover_recordings(request: Request) -> DiscoveryResponse:
     except psycopg.Error as error:
         raise _database_error("discover new recordings", error) from error
     return DiscoveryResponse(added_count=added_count)
+
+
+def discovery_future(application):
+    future = getattr(application.state, "catalog_discovery_future", None)
+    if future is None or future.done():
+        future = asyncio.get_running_loop().run_in_executor(
+            application.state.catalog_scan_executor,
+            application.state.catalog_service.discover_new,
+        )
+        application.state.catalog_discovery_future = future
+    return future
 
 
 @router.get("/recordings/{recording_id:int}", response_model=RecordingDetailResponse)

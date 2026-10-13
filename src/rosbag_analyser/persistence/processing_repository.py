@@ -11,6 +11,7 @@ import psycopg
 from rosbag_analyser.thumbnail import unavailable_thumbnail
 from rosbag_analyser.estimation import (
     EstimateSample,
+    ESTIMATE_METHOD,
     MAX_ESTIMATE_SAMPLES,
     estimate_total_ms,
 )
@@ -25,7 +26,7 @@ ENCODER_SERIES_KIND = "encoder_series"
 AI_DESCRIPTION_KIND = "ai_description"
 THUMBNAIL_KIND = "thumbnail"
 PROCESSING_KINDS = (
-    FRONT_PREVIEW_KIND, AI_DESCRIPTION_KIND, TOPDOWN_PREVIEW_KIND, IMU_SERIES_KIND, ENCODER_SERIES_KIND, THUMBNAIL_KIND,
+    FRONT_PREVIEW_KIND, THUMBNAIL_KIND, AI_DESCRIPTION_KIND, TOPDOWN_PREVIEW_KIND, IMU_SERIES_KIND, ENCODER_SERIES_KIND,
 )
 WORKER_LOCK_NAME = "rosbag_analyser_serial_worker"
 QUEUE_LOCK_NAME = "rosbag_analyser_job_queue"
@@ -508,14 +509,15 @@ class ProcessingRepository:
                        cancel_finished_at, queue_order
                 FROM jobs
                 WHERE state = 'queued'
-                  AND (kind <> 'ai_description' OR NOT EXISTS (
+                  AND (kind NOT IN ('ai_description', 'thumbnail') OR NOT EXISTS (
                       SELECT 1 FROM jobs AS prerequisite
                       JOIN preparation_targets AS target
                         ON target.recording_id = prerequisite.recording_id
                        AND target.kind = prerequisite.kind
                        AND target.cache_identity = prerequisite.cache_identity
                       WHERE prerequisite.recording_id = jobs.recording_id
-                        AND prerequisite.kind = 'front_preview'
+                        AND (prerequisite.kind = 'front_preview'
+                             OR jobs.kind = 'ai_description' AND prerequisite.kind = 'thumbnail')
                         AND prerequisite.state IN ('queued', 'running')
                   ))
                   AND NOT EXISTS (
@@ -534,7 +536,7 @@ class ProcessingRepository:
             siblings = connection.execute(
                 """
                 SELECT DISTINCT ON (kind) id, state, started_at, work_units,
-                       estimate_key, estimated_total_ms
+                       estimate_key, estimated_total_ms, estimate_method
                 FROM jobs
                 WHERE recording_id = %s
                   AND (queued_at >= %s OR finished_at >= %s)
@@ -551,11 +553,12 @@ class ProcessingRepository:
                         _optional_int(sibling["work_units"]),
                         _optional_str(sibling["estimate_key"]),
                     )
-                    # Keep a useful older prediction if its source artifacts
-                    # have since been superseded and history is now insufficient.
+                    # Keep a comparable-policy prediction if its sample artifacts
+                    # were superseded. Do not retain an old unbounded extrapolation.
                     if (
                         refreshed["estimated_total_ms"] is None
                         and sibling["estimated_total_ms"] is not None
+                        and sibling["estimate_method"] == ESTIMATE_METHOD
                     ):
                         continue
                     connection.execute(
@@ -644,80 +647,91 @@ class ProcessingRepository:
                 connection.execute(
                     "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
                 )
-            target_rows = connection.execute(
-                """
-                SELECT target.recording_id, target.kind, target.scan_generation,
-                       target.planner_identity, target.target_state,
-                       target.cache_identity, target.diagnostic_code,
-                       target.diagnostic_message, target.work_units
-                FROM preparation_targets AS target
-                WHERE (%s::bigint[] IS NULL OR target.recording_id = ANY (%s))
-                ORDER BY target.recording_id,
-                         CASE target.kind
-                             WHEN 'front_preview' THEN 0
-                    WHEN 'ai_description' THEN 1
-                             WHEN 'topdown_preview' THEN 2
-                             WHEN 'imu_series' THEN 3
-                             WHEN 'encoder_series' THEN 4
-                             WHEN 'thumbnail' THEN 5
-                         END
-                """,
-                (selected_ids, selected_ids),
-            ).fetchall()
-            if not target_rows:
-                return ()
-            artifact_rows = connection.execute(
-                """
-                SELECT artifact.id, artifact.recording_id, artifact.kind,
-                       artifact.cache_identity, artifact.output_relative_path,
-                       artifact.mime_type, artifact.size_bytes,
-                       artifact.coverage_start_ns, artifact.coverage_end_ns,
-                       artifact.manifest, artifact.created_at
-                FROM artifacts AS artifact
-                JOIN preparation_targets AS target
-                  ON target.recording_id = artifact.recording_id
-                 AND target.kind = artifact.kind
-                 AND target.cache_identity = artifact.cache_identity
-                WHERE (%s::bigint[] IS NULL OR artifact.recording_id = ANY (%s))
-                """,
-                (selected_ids, selected_ids),
-            ).fetchall()
-            active_rows = connection.execute(
-                """
-                SELECT job.id, job.recording_id, job.kind, job.cache_identity,
-                       job.state, job.queued_at, job.started_at, job.finished_at,
-                       job.error_code, job.error_message, job.work_units,
-                       job.estimate_key, job.estimated_total_ms,
-                       job.estimate_method, job.estimate_sample_count
-                FROM jobs AS job
-                JOIN preparation_targets AS target
-                  ON target.recording_id = job.recording_id
-                 AND target.kind = job.kind
-                 AND target.cache_identity = job.cache_identity
-                WHERE job.state IN ('queued', 'running')
-                  AND (%s::bigint[] IS NULL OR job.recording_id = ANY (%s))
-                """,
-                (selected_ids, selected_ids),
-            ).fetchall()
-            failed_rows = connection.execute(
-                """
-                SELECT DISTINCT ON (job.recording_id, job.kind)
-                       job.id, job.recording_id, job.kind, job.cache_identity,
-                       job.state, job.queued_at, job.started_at, job.finished_at,
-                       job.error_code, job.error_message, job.work_units,
-                       job.estimate_key, job.estimated_total_ms,
-                       job.estimate_method, job.estimate_sample_count
-                FROM jobs AS job
-                JOIN preparation_targets AS target
-                  ON target.recording_id = job.recording_id
-                 AND target.kind = job.kind
-                 AND target.cache_identity = job.cache_identity
-                WHERE job.state = 'failed'
-                  AND (%s::bigint[] IS NULL OR job.recording_id = ANY (%s))
-                ORDER BY job.recording_id, job.kind, job.finished_at DESC, job.id DESC
-                """,
-                (selected_ids, selected_ids),
-            ).fetchall()
+            with connection.pipeline():
+                target_cursor = connection.execute(
+                    """
+                    SELECT target.recording_id, target.kind, target.scan_generation,
+                           target.planner_identity, target.target_state,
+                           target.cache_identity, target.diagnostic_code,
+                           target.diagnostic_message, target.work_units
+                    FROM preparation_targets AS target
+                    WHERE (%s::bigint[] IS NULL OR target.recording_id = ANY (%s))
+                    ORDER BY target.recording_id,
+                             CASE target.kind
+                                 WHEN 'front_preview' THEN 0
+                        WHEN 'ai_description' THEN 1
+                                 WHEN 'topdown_preview' THEN 2
+                                 WHEN 'imu_series' THEN 3
+                                 WHEN 'encoder_series' THEN 4
+                                 WHEN 'thumbnail' THEN 5
+                             END
+                    """,
+                    (selected_ids, selected_ids),
+                )
+                artifact_cursor = connection.execute(
+                    """
+                    SELECT artifact.id, artifact.recording_id, artifact.kind,
+                           artifact.cache_identity, artifact.output_relative_path,
+                           artifact.mime_type, artifact.size_bytes,
+                           artifact.coverage_start_ns, artifact.coverage_end_ns,
+                           artifact.manifest, artifact.created_at
+                    FROM artifacts AS artifact
+                    JOIN preparation_targets AS target
+                      ON target.recording_id = artifact.recording_id
+                     AND target.kind = artifact.kind
+                     AND target.cache_identity = artifact.cache_identity
+                    WHERE (%s::bigint[] IS NULL OR artifact.recording_id = ANY (%s))
+                    """,
+                    (selected_ids, selected_ids),
+                )
+                active_cursor = connection.execute(
+                    """
+                    SELECT job.id, job.recording_id, job.kind, job.cache_identity,
+                           job.state, job.queued_at, job.started_at, job.finished_at,
+                           job.error_code, job.error_message, job.work_units,
+                           job.estimate_key, job.estimated_total_ms,
+                           job.estimate_method, job.estimate_sample_count, job.control_state,
+                           job.execution_phase, job.control_revision, job.last_pause_requested_at,
+                           job.last_pause_acknowledged_at, job.last_resumed_at,
+                           job.accumulated_paused_ms, job.cancel_requested_at,
+                           job.cancel_finished_at, job.queue_order
+                    FROM jobs AS job
+                    JOIN preparation_targets AS target
+                      ON target.recording_id = job.recording_id
+                     AND target.kind = job.kind
+                     AND target.cache_identity = job.cache_identity
+                    WHERE job.state IN ('queued', 'running')
+                      AND (%s::bigint[] IS NULL OR job.recording_id = ANY (%s))
+                    """,
+                    (selected_ids, selected_ids),
+                )
+                failed_cursor = connection.execute(
+                    """
+                    SELECT DISTINCT ON (job.recording_id, job.kind)
+                           job.id, job.recording_id, job.kind, job.cache_identity,
+                           job.state, job.queued_at, job.started_at, job.finished_at,
+                           job.error_code, job.error_message, job.work_units,
+                           job.estimate_key, job.estimated_total_ms,
+                           job.estimate_method, job.estimate_sample_count, job.control_state,
+                           job.execution_phase, job.control_revision, job.last_pause_requested_at,
+                           job.last_pause_acknowledged_at, job.last_resumed_at,
+                           job.accumulated_paused_ms, job.cancel_requested_at,
+                           job.cancel_finished_at, job.queue_order
+                    FROM jobs AS job
+                    JOIN preparation_targets AS target
+                      ON target.recording_id = job.recording_id
+                     AND target.kind = job.kind
+                     AND target.cache_identity = job.cache_identity
+                    WHERE job.state = 'failed'
+                      AND (%s::bigint[] IS NULL OR job.recording_id = ANY (%s))
+                    ORDER BY job.recording_id, job.kind, job.finished_at DESC, job.id DESC
+                    """,
+                    (selected_ids, selected_ids),
+                )
+            target_rows = target_cursor.fetchall()
+            artifact_rows = artifact_cursor.fetchall()
+            active_rows = active_cursor.fetchall()
+            failed_rows = failed_cursor.fetchall()
         artifacts = {
             (int(row["recording_id"]), str(row["kind"])): _artifact_from_row(row)
             for row in artifact_rows
@@ -824,11 +838,19 @@ class ProcessingRepository:
                 and target.planner_identity == planner_identities.get(kind)
                 and target.cache_identity is not None
             }
-            for kind in sorted(available_targets):
-                target = available_targets[kind]
-                assert target.cache_identity is not None
-                _lock_cache_identity(connection, kind, target.cache_identity)
+            with connection.pipeline():
+                for kind in sorted(available_targets):
+                    target = available_targets[kind]
+                    assert target.cache_identity is not None
+                    _lock_cache_identity(connection, kind, target.cache_identity)
 
+            # Queue and identity locks stabilize reuse while worker publication
+            # waits. Read all siblings together, rather than three lookups and a
+            # savepoint for each already prepared output during every rescan.
+            current_outputs = {
+                item.target.kind: item
+                for item in self.get_current_outputs((recording_id,), connection=connection)
+            } if available_targets else {}
             outputs: list[ScheduledOutput] = []
             for kind in selected_kinds:
                 target = targets.get(kind)
@@ -843,79 +865,62 @@ class ProcessingRepository:
                     )
                     continue
                 assert target.cache_identity is not None
+                current = current_outputs[kind]
+                artifact = current.artifact
+                if artifact is not None and invalid_ids.get(kind) != artifact.id:
+                    outputs.append(ScheduledOutput(kind, "ready_reused", "ready", target, artifact=artifact))
+                    continue
+                active = current.active_job
+                if artifact is None and active is not None:
+                    outputs.append(ScheduledOutput(
+                        kind, "active_reused", "queued" if active.state == "queued" else "processing",
+                        target, job=active,
+                    ))
+                    continue
                 try:
                     # A savepoint keeps one output's database error from
                     # invalidating ready/queued work already resolved for its
                     # siblings in this recording.
                     with connection.transaction():
-                        artifact_row = _select_artifact(
-                            connection,
-                            recording_id,
-                            kind,
-                            target.cache_identity,
-                            for_update=True,
-                        )
-                        if artifact_row is not None:
-                            artifact = _artifact_from_row(artifact_row)
-                            if invalid_ids.get(kind) != artifact.id:
+                        if artifact is not None:
+                            connection.execute("DELETE FROM artifacts WHERE id = %s", (artifact.id,))
+                        if active is not None:
+                            job = active
+                            scheduled = ScheduledOutput(
+                                kind,
+                                "active_reused",
+                                "queued" if job.state == "queued" else "processing",
+                                target,
+                                job=job,
+                            )
+                        else:
+                            failed_before = current.latest_failed_job
+                            if failed_before is not None and unavailable_thumbnail(kind, failed_before.error_code):
+                                scheduled = ScheduledOutput(
+                                    kind, "unavailable", "unavailable", target,
+                                    diagnostic_code=failed_before.error_code,
+                                    diagnostic_message=failed_before.error_message,
+                                )
+                            elif admission_diagnostic is not None:
                                 scheduled = ScheduledOutput(
                                     kind,
-                                    "ready_reused",
-                                    "ready",
+                                    "unavailable",
+                                    "unavailable",
                                     target,
-                                    artifact=artifact,
+                                    diagnostic_code=admission_diagnostic.code,
+                                    diagnostic_message=admission_diagnostic.message,
                                 )
                             else:
-                                connection.execute(
-                                    "DELETE FROM artifacts WHERE id = %s", (artifact.id,)
-                                )
-                                scheduled = None
-                        else:
-                            scheduled = None
-
-                        if scheduled is None:
-                            active_row = _select_active_job(
-                                connection, recording_id, kind, target.cache_identity
-                            )
-                            if active_row is not None:
-                                job = _job_from_row(active_row)
+                                job = _insert_v1_job(connection, target)
                                 scheduled = ScheduledOutput(
                                     kind,
-                                    "active_reused",
-                                    "queued" if job.state == "queued" else "processing",
+                                    "retry_queued"
+                                    if failed_before is not None
+                                    else "queued",
+                                    "queued",
                                     target,
                                     job=job,
                                 )
-                            else:
-                                failed_before = _select_latest_failed_job(
-                                    connection, recording_id, kind, target.cache_identity
-                                )
-                                if failed_before is not None and unavailable_thumbnail(kind, failed_before["error_code"]):
-                                    scheduled = ScheduledOutput(
-                                        kind, "unavailable", "unavailable", target,
-                                        diagnostic_code=str(failed_before["error_code"]),
-                                        diagnostic_message=str(failed_before["error_message"]),
-                                    )
-                                elif admission_diagnostic is not None:
-                                    scheduled = ScheduledOutput(
-                                        kind,
-                                        "unavailable",
-                                        "unavailable",
-                                        target,
-                                        diagnostic_code=admission_diagnostic.code,
-                                        diagnostic_message=admission_diagnostic.message,
-                                    )
-                                else:
-                                    job = _insert_v1_job(connection, target)
-                                    scheduled = ScheduledOutput(
-                                        kind,
-                                        "retry_queued"
-                                        if failed_before is not None
-                                        else "queued",
-                                        "queued",
-                                        target,
-                                        job=job,
-                                    )
                 except (psycopg.Error, RuntimeError):
                     scheduled = ScheduledOutput(
                         kind,

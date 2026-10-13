@@ -40,7 +40,7 @@ class DescriptionProcessor:
         self.ffprobe = ffprobe
         self.timeout_seconds = timeout_seconds
 
-    def process(self, video_descriptor: int, output_path: Path, *, control=None):
+    def process(self, video_descriptor: int, output_path: Path, *, control=None, thumbnail_manifest=None):
         if self.runtime_root is None:
             raise DescriptionProcessingError(
                 "ai_model_unavailable", "Provision the Q8 CPU model runtime to prepare AI descriptions.")
@@ -55,6 +55,10 @@ class DescriptionProcessor:
                    "--video-fd", str(video_descriptor), "--runtime-root", str(self.runtime_root),
                    "--threads", str(self.threads),
                    "--output", str(output_path), "--ffmpeg", str(self.ffmpeg), "--ffprobe", str(self.ffprobe)]
+        input_manifest = output_path.parent / "input-thumbnail.json"
+        if thumbnail_manifest is not None:
+            input_manifest.write_text(json.dumps(thumbnail_manifest), encoding="utf-8")
+            command.extend(["--thumbnail-manifest", str(input_manifest)])
         process = None
         started = time.monotonic()
         try:
@@ -90,6 +94,7 @@ class DescriptionProcessor:
         except (OSError, ValueError) as error:
             raise DescriptionProcessingError("ai_description_invalid", "The generated AI description is invalid.") from error
         finally:
+            input_manifest.unlink(missing_ok=True)
             if process is not None:
                 _signal_group(process, signal.SIGCONT)
                 _signal_group(process, signal.SIGTERM)

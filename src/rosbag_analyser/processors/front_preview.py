@@ -31,6 +31,7 @@ from rosbag_analyser.front_preview import (
 from rosbag_analyser.topic_selection import is_named_camera_topic, is_uint16_camera_topic
 from rosbag_analyser.job_control import JobControlToken
 from rosbag_analyser.timeline import media_pts_digest_chunk, nanoseconds_to_media_pts
+from .sqlite_messages import ordered_topic_messages
 
 
 MAX_IMAGE_WIDTH = 4_096
@@ -206,7 +207,7 @@ class FrontPreviewProcessor:
         timing = _load_timing_plan(descriptor, decoder)
         if control is not None:
             control.checkpoint("processing", force=True)
-        messages = _iter_topic_messages(descriptor)
+        messages = _iter_topic_messages(descriptor, control=control)
         pending_timestamp: int | None = None
         pending_image: DecodedImage | None = None
         pending_header: HeaderStamp | None = None
@@ -682,31 +683,25 @@ def _header_stamp(image: DecodedImage) -> HeaderStamp:
 
 def _iter_topic_messages(
     descriptor: FrontSourceDescriptor,
+    *, control: JobControlToken | None = None,
 ) -> Iterator[tuple[int, bytes]]:
     with _open_source_database(descriptor) as connection:
         topic_id = _topic_id(connection, descriptor)
-        cursor = connection.execute(
-            """
-            SELECT timestamp, length(data),
-                   CASE WHEN length(data) BETWEEN 1 AND ? THEN data ELSE NULL END
-            FROM messages
-            WHERE topic_id = ?
-            ORDER BY timestamp, id
-            """,
-            (MAX_SERIALIZED_IMAGE_BYTES, topic_id),
-        )
-        for timestamp, serialized_size, data in cursor:
-            if (
-                not isinstance(serialized_size, int)
-                or serialized_size <= 0
-                or serialized_size > MAX_SERIALIZED_IMAGE_BYTES
-                or data is None
-            ):
-                raise FrontPreviewProcessingError(
-                    "front_serialized_payload_invalid",
-                    "A front-camera serialized image exceeds the supported size.",
-                )
-            yield int(timestamp), data if isinstance(data, bytes) else bytes(data)
+        with ordered_topic_messages(
+            connection, topic_id, MAX_SERIALIZED_IMAGE_BYTES, control=control,
+        ) as cursor:
+            for timestamp, serialized_size, data in cursor:
+                if (
+                    not isinstance(serialized_size, int)
+                    or serialized_size <= 0
+                    or serialized_size > MAX_SERIALIZED_IMAGE_BYTES
+                    or data is None
+                ):
+                    raise FrontPreviewProcessingError(
+                        "front_serialized_payload_invalid",
+                        "A front-camera serialized image exceeds the supported size.",
+                    )
+                yield int(timestamp), data if isinstance(data, bytes) else bytes(data)
 
 
 @contextmanager

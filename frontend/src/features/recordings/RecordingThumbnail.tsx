@@ -4,11 +4,9 @@ import { StatusDiagnostic } from './StatusDiagnostic';
 
 export function RecordingThumbnail({
   recording,
-  navigable = false,
   priority = false,
 }: {
   recording: Recording;
-  navigable?: boolean;
   priority?: boolean;
 }) {
   const thumbnail = recording.thumbnail;
@@ -21,15 +19,26 @@ export function RecordingThumbnail({
   const url = thumbnail?.url;
   const preview = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const link = preview.current?.closest('a');
-    if (!link) return;
+    const row = preview.current?.closest('tr') ?? preview.current;
+    if (!row) return;
+    const enter = (event: Event) => {
+      if (
+        (event as PointerEvent).pointerType !== 'touch' &&
+        window.matchMedia('(min-width: 701px) and (hover: hover) and (pointer: fine)').matches
+      )
+        setHovered(true);
+    };
     const focus = () => setHovered(true);
     const blur = () => setHovered(false);
-    link.addEventListener('focus', focus);
-    link.addEventListener('blur', blur);
+    row.addEventListener('pointerenter', enter);
+    row.addEventListener('pointerleave', blur);
+    row.addEventListener('focusin', focus);
+    row.addEventListener('focusout', blur);
     return () => {
-      link.removeEventListener('focus', focus);
-      link.removeEventListener('blur', blur);
+      row.removeEventListener('pointerenter', enter);
+      row.removeEventListener('pointerleave', blur);
+      row.removeEventListener('focusin', focus);
+      row.removeEventListener('focusout', blur);
     };
   }, []);
   useEffect(() => {
@@ -40,8 +49,13 @@ export function RecordingThumbnail({
     const update = () => {
       clearInterval(timer);
       setFrame(Math.floor(count / 2));
-      if (!motion.matches)
-        timer = setInterval(() => setFrame((current) => (current + 1) % count), 650);
+      if (
+        !motion.matches &&
+        window.matchMedia('(min-width: 701px) and (hover: hover) and (pointer: fine)').matches
+      ) {
+        setFrame((Math.floor(count / 2) + 1) % count);
+        timer = setInterval(() => setFrame((current) => (current + 1) % count), 750);
+      }
     };
     motion.addEventListener('change', update);
     update();
@@ -52,11 +66,11 @@ export function RecordingThumbnail({
   }, [hovered, count, url, loadedUrl]);
   const label =
     url && failedUrl === url
-      ? 'Thumbnail failed'
+      ? 'No Thumbnail'
       : ({
           queued: 'Queued',
           processing: 'Processing',
-          failed: 'Thumbnail failed',
+          failed: 'No Thumbnail',
           unavailable: 'No Thumbnail',
         }[thumbnail?.state ?? ''] ?? 'No Thumbnail');
   return (
@@ -65,10 +79,6 @@ export function RecordingThumbnail({
       className="recording-thumbnail"
       aria-label={`Thumbnail for ${recording.name}`}
       data-thumbnail-frame={frame}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => setHovered(false)}
-      onFocus={() => setHovered(true)}
-      onBlur={() => setHovered(false)}
     >
       {url && failedUrl !== url ? (
         <>
@@ -101,19 +111,6 @@ export function RecordingThumbnail({
           </div>
           {loadedUrl !== url && <span className="thumbnail-loading">Loading…</span>}
         </>
-      ) : thumbnail?.state === 'failed' ||
-        (thumbnail?.state === 'unavailable' && thumbnail.issue) ||
-        (failedUrl === url && !!url) ? (
-        <StatusDiagnostic
-          navigable={navigable}
-          side="right"
-          status={label}
-          className="thumbnail-diagnostic"
-          issues={[
-            thumbnail?.issue ??
-              'The thumbnail could not be loaded. Prepare Selected can retry missing or failed output.',
-          ]}
-        />
       ) : (
         <span>{label}</span>
       )}

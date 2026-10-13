@@ -135,8 +135,10 @@ def test_completion_keeps_six_images_ordered_and_constrains_output():
     assert len([part for part in content if part["type"] == "image_url"]) == 6
     assert payload["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
     assert payload["max_tokens"] == runtime.MAX_NEW_TOKENS
+    partial = inference.completion_request([b"image"], [0])
+    assert len([part for part in partial['messages'][1]['content'] if part['type'] == 'image_url']) == 1
     with pytest.raises(ValueError, match="frame policy"):
-        inference.completion_request([b"image"], [0])
+        inference.completion_request([], [])
 
 
 @pytest.mark.parametrize("finish", ["stop", "length"])

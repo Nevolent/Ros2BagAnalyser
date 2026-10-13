@@ -18,6 +18,7 @@ from rosbag_analyser.imu_series import (
     ImuSourceDescriptor,
 )
 from rosbag_analyser.job_control import JobControlToken
+from .sqlite_messages import ordered_topic_messages
 
 
 MAX_SERIALIZED_IMU_BYTES = 1024 * 1024
@@ -104,6 +105,7 @@ class ImuSeriesProcessor:
                     descriptor, message_type=self.message_type,
                     max_serialized_bytes=self.max_serialized_bytes,
                     label=self.label, prefix=self.prefix,
+                    control=control,
                 ):
                     if control is not None:
                         control.checkpoint("processing")
@@ -134,16 +136,10 @@ class ImuSeriesProcessor:
                         first_timestamp = record_timestamp
                     last_timestamp = record_timestamp
 
-                    encoded_values: list[str] = []
+                    finite_values: list[float | None] = []
                     for index, value in enumerate(values):
                         if math.isfinite(value):
-                            encoded_values.append(
-                                json.dumps(
-                                    value,
-                                    allow_nan=False,
-                                    separators=(",", ":"),
-                                )
-                            )
+                            finite_values.append(value)
                             finite_counts[index] += 1
                             minimum_values[index] = (
                                 value
@@ -156,16 +152,14 @@ class ImuSeriesProcessor:
                                 else max(maximum_values[index], value)
                             )
                         else:
-                            encoded_values.append("null")
+                            finite_values.append(None)
                             non_finite_counts[index] += 1
 
                     bag_time_ns = record_timestamp - descriptor.bag_start_ns
-                    sample = (
-                        "["
-                        + json.dumps(str(bag_time_ns))
-                        + ","
-                        + ",".join(encoded_values)
-                        + "]"
+                    sample = json.dumps(
+                        [str(bag_time_ns), *finite_values],
+                        allow_nan=False,
+                        separators=(",", ":"),
                     )
                     prefix = "" if first_sample else ","
                     written = self._write_bounded(
@@ -260,6 +254,7 @@ def _iter_topic_messages(
     *, message_type: str = IMU_MESSAGE_TYPE,
     max_serialized_bytes: int = MAX_SERIALIZED_IMU_BYTES,
     label: str = "IMU", prefix: str = "imu",
+    control: JobControlToken | None = None,
 ) -> Iterator[tuple[int, bytes]]:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -303,34 +298,27 @@ def _iter_topic_messages(
                 f"{prefix}_topic_contract_changed",
                 f"The {label} topic no longer matches its catalogued type.",
             )
-        cursor = connection.execute(
-            """
-            SELECT timestamp, length(data),
-                   CASE WHEN length(data) BETWEEN 1 AND ? THEN data ELSE NULL END
-            FROM messages
-            WHERE topic_id = ?
-            ORDER BY timestamp, id
-            """,
-            (max_serialized_bytes, topic_id),
-        )
-        for timestamp, serialized_size, data in cursor:
-            if (
-                not isinstance(serialized_size, int)
-                or serialized_size <= 0
-                or serialized_size > max_serialized_bytes
-            ):
-                raise ImuSeriesProcessingError(
-                    f"{prefix}_serialized_payload_invalid",
-                    f"An {label} message exceeds the supported serialized size.",
-                )
-            if data is None:
-                raise ImuSeriesProcessingError(
-                    f"{prefix}_database_read_failed",
-                    f"The {label} stream could not be read from the ROS database.",
-                )
-            if not isinstance(data, bytes):
-                data = bytes(data)
-            yield int(timestamp), data
+        with ordered_topic_messages(
+            connection, topic_id, max_serialized_bytes, control=control,
+        ) as cursor:
+            for timestamp, serialized_size, data in cursor:
+                if (
+                    not isinstance(serialized_size, int)
+                    or serialized_size <= 0
+                    or serialized_size > max_serialized_bytes
+                ):
+                    raise ImuSeriesProcessingError(
+                        f"{prefix}_serialized_payload_invalid",
+                        f"An {label} message exceeds the supported serialized size.",
+                    )
+                if data is None:
+                    raise ImuSeriesProcessingError(
+                        f"{prefix}_database_read_failed",
+                        f"The {label} stream could not be read from the ROS database.",
+                    )
+                if not isinstance(data, bytes):
+                    data = bytes(data)
+                yield int(timestamp), data
         after = os.fstat(file_descriptor)
         if source_file_identity(after) != before_identity:
             raise ImuSeriesProcessingError(

@@ -25,7 +25,7 @@ from rosbag_analyser.catalog.paths import (
     source_file_identity,
 )
 from rosbag_analyser.catalog.types import SafeDiagnostic
-from rosbag_analyser.topic_selection import select_topic, usable_topics, is_uint16_camera_topic
+from rosbag_analyser.topic_selection import select_topic, usable_topics, thumbnail_topics, is_uint16_camera_topic
 from rosbag_analyser.config import PreviewProfile
 from rosbag_analyser.persistence.processing_repository import (
     ArtifactRecord,
@@ -105,7 +105,7 @@ class FrontSourceResolver:
         self.profile = profile
         self.encoder_identity = encoder_identity
 
-    def resolve(self, recording_id: int) -> SourceResolution:
+    def resolve(self, recording_id: int, *, thumbnail: bool = False) -> SourceResolution:
         record = self.repository.get_source(recording_id)
         if record is None:
             return SourceResolution(recording_exists=False)
@@ -163,7 +163,8 @@ class FrontSourceResolver:
                     "catalog_source_changed",
                     "The recording changed after its last scan. Rescan before processing.",
                 )
-            topic = select_topic(metadata.topics, self.topic_name, IMAGE_MESSAGE_TYPE)
+            candidates = thumbnail_topics(metadata.topics) if thumbnail else usable_topics(metadata.topics, IMAGE_MESSAGE_TYPE)
+            topic = candidates[0] if candidates else None
             if topic is None:
                 return self._unavailable(
                     record,
@@ -216,7 +217,7 @@ class FrontSourceResolver:
                 bag_start_ns=record.start_time_ns,
                 bag_duration_ns=record.duration_ns,
                 topic=topic,
-                topics=usable_topics(metadata.topics, IMAGE_MESSAGE_TYPE),
+                topics=candidates,
                 cache_identity=identity,
             ),
             duration_ns=record.duration_ns,

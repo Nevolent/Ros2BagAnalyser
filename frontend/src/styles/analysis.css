@@ -956,6 +956,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.recording-topics-list li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
 .recording-errors p {
   white-space: normal;
   overflow-wrap: anywhere;

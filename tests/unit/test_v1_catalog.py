@@ -70,7 +70,7 @@ class FakePreparation:
     def __init__(self) -> None:
         self.calls: list[tuple[tuple[int, ...], int | None]] = []
 
-    def states_for_recordings(self, recording_ids, *, generation=None):
+    def states_for_recordings(self, recording_ids, *, generation=None, validate_artifacts=True):
         self.calls.append((recording_ids, generation))
         state_by_id = {1: "ready", 2: "failed", 3: "not_planned"}
         return tuple(

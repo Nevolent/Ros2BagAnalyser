@@ -26,7 +26,7 @@ export interface OutputFailure {
   code: string;
 }
 export interface Job {
-  outputDetails?: { name: string; state: string; runtime: number | null }[];
+  outputDetails?: { name: string; state: string; runtime: number | null; size?: string }[];
   jobIds?: number[];
   recordingId?: string;
   readyIn?: number | null;

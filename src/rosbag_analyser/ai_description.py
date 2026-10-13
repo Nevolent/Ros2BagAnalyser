@@ -6,8 +6,9 @@ import json
 import re
 
 from rosbag_analyser.model_runtime import RUNTIME_ID, FRAME_COUNT, MAX_FRAME_SIDE, MAX_NEW_TOKENS
+from rosbag_analyser.thumbnail import THUMBNAIL_POLICY, thumbnail_cache_identity
 
-DESCRIPTION_POLICY = f"ai-description-v2:{RUNTIME_ID}:ordered-images:frames{FRAME_COUNT}:side{MAX_FRAME_SIDE}:tokens{MAX_NEW_TOKENS}:prompt-v1:formatter-v1"
+DESCRIPTION_POLICY = f"ai-description-v3:{RUNTIME_ID}:{THUMBNAIL_POLICY}:shared-images:tokens{MAX_NEW_TOKENS}:prompt-v1:formatter-v1"
 DESCRIPTION_PLANNER_IDENTITY = hashlib.sha256(DESCRIPTION_POLICY.encode()).hexdigest()
 MAX_DESCRIPTION_BYTES = 8192
 
@@ -27,13 +28,14 @@ def validate_description_result(value: object) -> dict[str, str | bool]:
 
 
 def validate_description_manifest(manifest: dict) -> None:
-    front = manifest.get("front_preview_identity")
-    if (manifest.get("schema_version") != 1
+    front = manifest.get("visual_source_identity")
+    if (manifest.get("schema_version") != 2
             or manifest.get("artifact_kind") != "ai_description"
             or manifest.get("processor_version") != DESCRIPTION_POLICY
             or not isinstance(front, str) or len(front) != 64
             or any(c not in "0123456789abcdef" for c in front)
             or manifest.get("cache_identity") != description_cache_identity(front)
+            or manifest.get("thumbnail_identity") != thumbnail_cache_identity(front)
             or not isinstance(manifest.get("output"), dict)
             or manifest["output"].get("file_name") != "description.json"):
         raise ValueError("Invalid AI description provenance")

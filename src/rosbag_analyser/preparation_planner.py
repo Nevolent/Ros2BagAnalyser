@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from rosbag_analyser.thumbnail import THUMBNAIL_PLANNER_IDENTITY, thumbnail_cache_identity
+from rosbag_analyser.thumbnail import THUMBNAIL_PLANNER_IDENTITY, thumbnail_cache_identity, thumbnail_source_identity
 import hashlib
 import json
 
@@ -23,7 +23,7 @@ from rosbag_analyser.catalog.types import (
 )
 from rosbag_analyser.config import PreviewProfile
 from rosbag_analyser.topic_selection import (
-    select_topic, TOPIC_SELECTION_POLICY, is_uint16_camera_topic, UINT16_IMAGE_MESSAGE_TYPE,
+    select_topic, thumbnail_topics, TOPIC_SELECTION_POLICY, is_uint16_camera_topic, UINT16_IMAGE_MESSAGE_TYPE,
 )
 from rosbag_analyser.front_preview import (
     CDR_SERIALIZATION,
@@ -62,11 +62,11 @@ from rosbag_analyser.topdown_preview import (
 
 PREPARATION_KINDS = (
     FRONT_PREVIEW_KIND,
+    THUMBNAIL_KIND,
     AI_DESCRIPTION_KIND,
     TOPDOWN_PREVIEW_KIND,
     IMU_SERIES_KIND,
     ENCODER_SERIES_KIND,
-    THUMBNAIL_KIND,
 )
 
 
@@ -229,30 +229,33 @@ class PreparationPlanner:
             cache_identity_relative_path=cache_identity_relative_path,
         )
         front = self._plan_front(source, recording, facts)
+        thumbnail = self._plan_thumbnail(source, recording, facts)
         return (
             front,
+            thumbnail,
             PreparationTargetPlan(
                 kind=AI_DESCRIPTION_KIND,
                 planner_identity=DESCRIPTION_PLANNER_IDENTITY,
-                target_state=front.target_state,
-                cache_identity=(None if front.cache_identity is None
-                                else description_cache_identity(front.cache_identity)),
-                diagnostic=front.diagnostic,
-                work_units=front.work_units,
+                target_state=thumbnail.target_state,
+                cache_identity=(None if thumbnail.cache_identity is None else description_cache_identity(
+                    thumbnail_source_identity(source, facts.metadata_identity, facts.database_identity, facts.video_identity))),
+                diagnostic=thumbnail.diagnostic,
+                work_units=1 if thumbnail.target_state == "available" else None,
             ),
             self._plan_topdown(source, recording, facts),
             self._plan_imu(source, recording, facts),
             self._plan_encoder(source, recording, facts),
-            PreparationTargetPlan(
-                kind=THUMBNAIL_KIND,
-                planner_identity=THUMBNAIL_PLANNER_IDENTITY,
-                target_state=front.target_state,
-                cache_identity=(None if front.cache_identity is None
-                                else thumbnail_cache_identity(front.cache_identity)),
-                diagnostic=front.diagnostic,
-                work_units=1 if front.target_state == "available" else None,
-            ),
         )
+
+    def _plan_thumbnail(self, source, recording, facts) -> PreparationTargetPlan:
+        common = self._ros_prerequisite(recording, facts)
+        if common is not None:
+            return self._unavailable(THUMBNAIL_KIND, common.code, common.message)
+        if not thumbnail_topics(facts.metadata.topics) and facts.video_identity is None:
+            return self._unavailable(THUMBNAIL_KIND, "thumbnail_camera_unavailable",
+                                     "No camera frames or companion video are available for a thumbnail.")
+        identity = thumbnail_source_identity(source, facts.metadata_identity, facts.database_identity, facts.video_identity)
+        return self._available(THUMBNAIL_KIND, thumbnail_cache_identity(identity), 1)
 
     def unavailable_targets(
         self,

@@ -359,14 +359,12 @@ export function ProcessingPage() {
                         </td>
                         <td className="bag-number processing-centered-cell">
                           <StatusDiagnostic
+                            className="processing-cell-hover"
+                            tooltipClassName="processing-cell-tooltip"
                             status={String(job.outputs)}
                             tone="muted"
                             raw
-                            issues={
-                              job.outputDetails?.map(
-                                (output) => `${output.name}: ${output.state}`,
-                              ) ?? []
-                            }
+                            issues={job.outputDetails?.map((output) => output.name) ?? []}
                           />
                         </td>
                         <td>
@@ -411,22 +409,37 @@ export function ProcessingPage() {
                         </td>
                         <td className="bag-number">
                           <StatusDiagnostic
+                            className="processing-cell-hover"
+                            tooltipClassName="processing-cell-tooltip"
                             status={job.runtimeKnown === false ? '—' : formatDuration(job.duration)}
                             tone="muted"
                             raw
-                            issues={[
-                              ...(job.outputDetails?.map(
+                            issues={
+                              job.outputDetails?.map(
                                 (output) =>
                                   `${output.name}: ${output.runtime === null ? 'Unavailable' : formatDuration(output.runtime)}`,
-                              ) ?? []),
-                              `Total: ${job.runtimeKnown === false ? 'Unavailable' : formatDuration(job.duration)}`,
-                            ]}
+                              ) ?? []
+                            }
                           />
                         </td>
-                        <td className="bag-number">{job.size}</td>
+                        <td className="bag-number">
+                          <StatusDiagnostic
+                            className="processing-cell-hover"
+                            tooltipClassName="processing-cell-tooltip"
+                            status={job.size}
+                            tone="muted"
+                            raw
+                            issues={
+                              job.outputDetails?.map(
+                                (output) => `${output.name}: ${output.size ?? 'Unavailable'}`,
+                              ) ?? []
+                            }
+                          />
+                        </td>
                         <td className="bag-number processing-centered-cell">
                           <StatusDiagnostic
-                            className="processing-history-outputs"
+                            className="processing-history-outputs processing-cell-hover"
+                            tooltipClassName="processing-cell-tooltip"
                             status={String(job.outputs)}
                             tone="muted"
                             raw

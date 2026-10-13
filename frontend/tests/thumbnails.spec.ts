@@ -117,33 +117,53 @@ test('Thumbnail placeholders truthfully track queued, processing, missing, faile
     'No Thumbnail',
     'Queued',
     'Processing',
-    'Thumbnail failed',
-    'Thumbnail failed',
+    'No Thumbnail',
+    'No Thumbnail',
     'No Thumbnail',
   ]);
-  await placeholders.nth(3).hover();
   const tooltip = page.getByRole('tooltip');
-  await expect(tooltip).toHaveText('Synthetic thumbnail failure.');
-  const thumbnailBox = (await placeholders.nth(3).boundingBox())!;
-  const tooltipBox = (await tooltip.boundingBox())!;
-  expect(tooltipBox.x).toBeGreaterThanOrEqual(thumbnailBox.x + thumbnailBox.width);
-  expect(tooltipBox.y + tooltipBox.height / 2).toBeCloseTo(
-    thumbnailBox.y + thumbnailBox.height / 2,
-    0,
-  );
-  await tooltip.screenshot({ path: test.info().outputPath('thumbnail-error-right.png') });
-  await page.keyboard.press('Escape');
-  await expect(tooltip).toHaveCount(0);
-  await placeholders.nth(5).hover();
-  await expect(tooltip).toHaveText('No supported colour camera is available for a thumbnail.');
+  const mutedColor = await placeholders
+    .first()
+    .evaluate((element) => getComputedStyle(element).color);
+  for (const index of [3, 4, 5]) {
+    const placeholder = placeholders.nth(index);
+    await expect(placeholder.locator('span')).toHaveCSS('color', mutedColor);
+    await placeholder.hover();
+    await expect(tooltip).toHaveCount(0);
+    await placeholder.locator('..').focus();
+    await expect(tooltip).toHaveCount(0);
+  }
   await page.setViewportSize({ width: 390, height: 1000 });
   await placeholders.nth(5).hover();
-  await expect(tooltip).toBeVisible();
-  const narrowBox = (await tooltip.boundingBox())!;
-  expect(narrowBox.x).toBeGreaterThanOrEqual(8);
-  expect(narrowBox.x + narrowBox.width).toBeLessThanOrEqual(382);
-  await page.keyboard.press('Escape');
+  await expect(placeholders.nth(5).locator('span')).toHaveCSS('color', mutedColor);
+  await expect(tooltip).toHaveCount(0);
 });
+
+for (const state of ['failed', 'unavailable'] as const) {
+  test(`thumbnail ${state} diagnostics appear safely in Analysis with a muted list placeholder`, async ({
+    page,
+  }) => {
+    const api = await apiFixture(page);
+    const message = 'Thumbnail: <script>not markup</script> No usable image could be decoded.';
+    api.recording.outputs.push({
+      kind: 'thumbnail',
+      state,
+      diagnostic: { code: 'thumbnail_processing_failed', message },
+    });
+    api.catalog.recordings = [api.recording];
+    await page.goto('/');
+    const thumbnail = page.locator('.recording-thumbnail');
+    await expect(thumbnail).toHaveText('No Thumbnail');
+    await expect(thumbnail.locator('.status-error')).toHaveCount(0);
+    await thumbnail.hover();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await thumbnail.click();
+    await expect(page).toHaveURL(/#\/analysis\/42$/);
+    const errors = page.getByRole('region', { name: 'Recording errors' });
+    await expect(errors).toContainText(message);
+    await expect(errors.locator('script')).toHaveCount(0);
+  });
+}
 
 for (const width of [1440, 390]) {
   test(`long AI text is safely truncated and row controls stay usable at ${width}px`, async ({
@@ -222,4 +242,66 @@ test('thumbnail navigation supports keyboard activation', async ({ page }) => {
   await link.focus();
   await link.press('Enter');
   await expect(page).toHaveURL(/#\/analysis\/42$/);
+});
+
+test('hovering any row cell immediately advances the thumbnail and cycles every 750 ms', async ({
+  page,
+}) => {
+  const api = await apiFixture(page);
+  api.recording.outputs.push({ kind: 'thumbnail', state: 'ready', diagnostic: null });
+  api.recording.thumbnail_url = '/api/recordings/42/thumbnail/media/8';
+  api.recording.thumbnail_frame_count = 6;
+  api.catalog.recordings = [api.recording];
+  const png = await readFile('public/assets/front-camera-lunar-bunker.png');
+  api.override = async (route, path) => {
+    if (path !== api.recording.thumbnail_url) return false;
+    await route.fulfill({ contentType: 'image/png', body: png });
+    return true;
+  };
+  await page.clock.install();
+  await page.goto('/');
+  const row = page.locator('.bag-table tbody tr');
+  const thumbnail = row.locator('.recording-thumbnail');
+  await expect(row.locator('.thumbnail-loading')).toHaveCount(0);
+  await expect(thumbnail).toHaveAttribute('data-thumbnail-frame', '3');
+  await row.locator('td').nth(2).hover();
+  await expect(thumbnail).toHaveAttribute('data-thumbnail-frame', '4');
+  await page.clock.runFor(700);
+  await expect(thumbnail).toHaveAttribute('data-thumbnail-frame', '4');
+  await page.clock.runFor(60);
+  await expect(thumbnail).toHaveAttribute('data-thumbnail-frame', '5');
+  await page.getByRole('heading', { name: 'Recordings', exact: true }).hover();
+  await expect(thumbnail).toHaveAttribute('data-thumbnail-frame', '3');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await row.locator('td').nth(2).hover();
+  await page.clock.runFor(1600);
+  await expect(thumbnail).toHaveAttribute('data-thumbnail-frame', '3');
+});
+
+test('phone touch input keeps the thumbnail still', async ({ browser }) => {
+  const context = await browser.newContext({
+    baseURL: test.info().project.use.baseURL,
+    viewport: { width: 390, height: 900 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  const api = await apiFixture(page);
+  api.recording.outputs.push({ kind: 'thumbnail', state: 'ready', diagnostic: null });
+  api.recording.thumbnail_url = '/api/recordings/42/thumbnail/media/8';
+  api.recording.thumbnail_frame_count = 6;
+  api.catalog.recordings = [api.recording];
+  const png = await readFile('public/assets/front-camera-lunar-bunker.png');
+  api.override = async (route, path) => {
+    if (path !== api.recording.thumbnail_url) return false;
+    await route.fulfill({ contentType: 'image/png', body: png });
+    return true;
+  };
+  await page.clock.install();
+  await page.goto('/');
+  const thumbnail = page.locator('.recording-thumbnail');
+  await thumbnail.hover();
+  await page.clock.runFor(1500);
+  await expect(thumbnail).toHaveAttribute('data-thumbnail-frame', '3');
+  await context.close();
 });

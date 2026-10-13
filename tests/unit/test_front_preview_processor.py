@@ -638,7 +638,7 @@ def test_all_zero_fallback_rejects_unordered_record_timestamps(
     monkeypatch.setattr(
         front_preview_module,
         "_iter_topic_messages",
-        lambda descriptor: iter(
+        lambda descriptor, **options: iter(
             (
                 (100_000_000, b"\x01"),
                 (300_000_000, b"\x02"),

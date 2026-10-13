@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -57,7 +58,7 @@ from .thumbnail_routes import router as thumbnail_router
 from .imu_series_routes import router as imu_series_router
 from .encoder_series_routes import router as encoder_series_router
 from .topdown_preview_routes import router as topdown_preview_router
-from .v1_routes import router as v1_router
+from .v1_routes import router as v1_router, discovery_future
 
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
@@ -107,6 +108,7 @@ def create_app(
                 CatalogScanner(
                     config.archive_root,
                     limits=config.catalog_scan_limits,
+                    settle_seconds=30,
                 ),
                 catalog_repository,
                 source_admission_check=admission_guard.source_diagnostic,
@@ -236,6 +238,9 @@ def create_app(
             application.state.catalog_service.rescan_scheduler = (
                 application.state.preparation_service.prepare_rescan
             )
+            application.state.catalog_service.discovery_scheduler = (
+                application.state.preparation_service.prepare_discovery
+            )
         # These pools keep bounded catalog calls off the event loop while reserving
         # read capacity when a scan is active. They are not artifact workers.
         application.state.catalog_read_executor = ThreadPoolExecutor(
@@ -252,9 +257,13 @@ def create_app(
             max_workers=2,
             thread_name_prefix="media-read",
         )
+        monitor = asyncio.create_task(_monitor_recordings(application)) if service is None else None
         try:
             yield
         finally:
+            if monitor is not None:
+                monitor.cancel()
+                await asyncio.gather(monitor, return_exceptions=True)
             application.state.media_read_executor.shutdown(
                 wait=True,
                 cancel_futures=True,
@@ -360,6 +369,28 @@ def create_app(
         return HTMLResponse(INDEX_HTML, headers=FRONTEND_RESPONSE_HEADERS)
 
     return application
+
+
+async def _monitor_recordings(application: FastAPI, interval: float = 15) -> None:
+    """Poll for additions even with no browser open; share bounded scan work."""
+    last_error = None
+    while True:
+        await asyncio.sleep(interval)
+        if deployment_in_progress():
+            continue
+        rescan = getattr(application.state, "catalog_rescan_future", None)
+        if rescan is not None and not rescan.done():
+            continue
+        try:
+            await asyncio.shield(discovery_future(application))
+            last_error = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            code = getattr(getattr(error, "diagnostic", None), "code", type(error).__name__)
+            if code != last_error:
+                logging.getLogger(__name__).warning("Automatic discovery deferred: %s", code)
+                last_error = code
 
 
 app = create_app()

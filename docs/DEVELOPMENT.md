@@ -57,7 +57,7 @@ Keep these files out of Git.
 ./dev open real
 ./dev status
 ./dev logs
-./dev rescan          # Explicit source scan; startup does not scan
+./dev rescan          # Full reconciliation; automatic discovery also runs in the API
 ./dev stop
 ./dev install        # Install local Windows shortcuts
 ```
@@ -89,15 +89,18 @@ Main front-camera discovery and selection use `front-preview-v8`, including name
 grayscale cameras and the validated KuupKulgur UInt16 array layout. After
 updating an existing installation, explicitly rescan and prepare recordings to
 save current targets and generate output with the new selection policy.
-Five-frame thumbnail strips use `thumbnail-v2`; rescan updates their targets.
-Other compatible output is reused. No additional migration is needed for these policy changes.
+Shared thumbnail strips and AI use `thumbnail-v3` and `ai-description-v3`.
+Apply all migrations through `0014_comparable_estimates.sql`, then run one Full
+rescan to save current visual identities and fixed-unit AI estimates. Compatible
+front videos and telemetry are reused. No source files are changed.
 
 ## Frontend
 
 Thumbnail support requires migration `0013_thumbnail.sql`. Upgrade creates saved
-targets without source access or jobs. **Full rescan** queues missing thumbnails,
-retries failed/cancelled attempts and completes available outputs for recordings with
-prior preparation work. Compatible validated output and active jobs are reused.
+targets without source access or jobs. **Full rescan** completes available outputs
+for all recordings and retries failed/cancelled attempts. Automatic addition discovery
+queues the complete pipeline after a 30-second quiet period, checking every 15 seconds.
+Compatible validated output and active jobs are reused.
 Prepare Selected also includes thumbnails. No additional dependency or model is required.
 
 The React/TypeScript source is in `frontend/`. Use Node.js 22.12+ or 24:
